@@ -1,0 +1,25 @@
+name: Bug report
+description: Report a reproducible application or developer-tooling defect.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include secrets or private agent data. Use private reporting for security concerns."
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed and expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include commands, commit SHA, Python version and operating system.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Include relevant output and checks already attempted.

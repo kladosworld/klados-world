@@ -1,0 +1,26 @@
+minimum_pre_commit_version: '4.5.1'
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: Ruff lint
+        entry: .venv/bin/ruff check
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: Ruff format
+        entry: .venv/bin/ruff format --check
+        language: system
+        types: [python]
+      - id: pyright
+        name: Pyright
+        entry: .venv/bin/pyright
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: pytest
+        name: pytest
+        entry: .venv/bin/python -m pytest
+        language: system
+        pass_filenames: false
+        always_run: true

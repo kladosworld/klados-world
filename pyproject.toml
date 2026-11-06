@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "klados-world"
+version = "0.1.0.dev0"
+description = "Application foundation for the Klados World AI society platform"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Repository = "https://github.com/kladosworld/klados-world"
+Issues = "https://github.com/kladosworld/klados-world/issues"
+
+[project.optional-dependencies]
+dev = [
+  "build==1.3.0",
+  "pre-commit==4.5.1",
+  "pyright==1.1.408",
+  "pytest==9.0.2",
+  "ruff==0.15.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/klados_world"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "docs", "pyproject.toml", "README.md", "CHANGELOG.md"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-config", "--strict-markers", "--import-mode=importlib", "-ra"]
+filterwarnings = ["error"]
