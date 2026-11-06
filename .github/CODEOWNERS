@@ -1,0 +1,11 @@
+# Code owners for platform, CI/CD and security configuration.
+# Application paths are assigned by application engineering when they land.
+# Code-owner review is enforced by the main-branch ruleset (docs/platform/rulesets.md).
+#
+# OWNER ACTION: replace the individual owner below with an organisation team
+# (for example a "platform" team) once teams exist in the kladosworld organisation.
+
+/.github/                @travello0r
+/SECURITY.md             @travello0r
+/.gitleaks.toml          @travello0r
+/docs/platform/          @travello0r

@@ -1,0 +1,55 @@
+# Dependabot version updates. Security updates are enabled separately in repository
+# settings (see docs/platform/github-settings.md).
+#
+# A 7-day cooldown avoids adopting brand-new releases immediately (supply-chain hygiene);
+# security updates are not delayed by the cooldown.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Bucharest
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+    open-pull-requests-limit: 5
+
+  # Application dependencies declared in pyproject.toml (owned by application engineering).
+  # If the project adopts uv with uv.lock, switch this entry to package-ecosystem: uv.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Bucharest
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: deps
+    open-pull-requests-limit: 10
+
+  # Hash-pinned CI tooling (.github/tools/requirements-*.txt).
+  - package-ecosystem: pip
+    directory: /.github/tools
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Bucharest
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+    open-pull-requests-limit: 3

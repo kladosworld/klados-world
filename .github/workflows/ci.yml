@@ -1,0 +1,144 @@
+# Application CI: lint, format check, type check and tests.
+#
+# The Python project configuration (pyproject.toml, tool settings, tests) is owned by
+# application engineering. This workflow only invokes the tools; their configuration
+# lives in pyproject.toml. Contract and assumptions: docs/platform/ci.md.
+#
+# Required status check for branch protection: "ci-required" (aggregates every job below).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  detect:
+    name: detect
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      python: ${{ steps.detect.outputs.python }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: detect
+        name: Detect Python project
+        run: |
+          if [ -f pyproject.toml ]; then
+            echo "python=true" >> "$GITHUB_OUTPUT"
+          else
+            # Bootstrap only: before the application lands there is nothing to test.
+            echo "::warning::pyproject.toml not found; Python jobs are skipped. See docs/platform/ci.md."
+            echo "python=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  lint:
+    name: lint
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install project and dev tools
+        run: bash .github/scripts/install-python-deps.sh
+      - name: Ruff lint
+        run: python -m ruff check --output-format=github .
+      - name: Ruff format check
+        run: python -m ruff format --check --diff .
+
+  typecheck:
+    name: typecheck
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install project and dev tools
+        run: bash .github/scripts/install-python-deps.sh
+      - name: Mypy
+        # Targets and strictness come from [tool.mypy] in pyproject.toml.
+        run: python -m mypy
+
+  test:
+    name: test (py${{ matrix.python-version }})
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install project and dev tools
+        run: bash .github/scripts/install-python-deps.sh
+      - name: Pytest
+        # Tests must not need network credentials: no secrets are exposed to this job.
+        run: python -m pytest
+
+  ci-required:
+    # Single stable check name for rulesets, independent of matrix/job changes.
+    name: ci-required
+    if: always()
+    needs: [detect, lint, typecheck, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Evaluate job results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | python3 -c '
+          import json, sys
+          needs = json.load(sys.stdin)
+          bad = {k: v["result"] for k, v in needs.items() if v["result"] not in ("success", "skipped")}
+          if needs["detect"]["result"] != "success":
+              bad["detect"] = needs["detect"]["result"]
+          for name, info in needs.items():
+              print(name + ": " + info["result"])
+          if bad:
+              print(f"::error::Required CI jobs did not succeed: {bad}")
+              sys.exit(1)
+          '
