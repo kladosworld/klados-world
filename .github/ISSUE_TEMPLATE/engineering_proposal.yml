@@ -1,0 +1,25 @@
+name: Engineering proposal
+description: Propose a scoped application change or migration task.
+title: "[Engineering]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and scope
+      description: Explain the need and acceptance criteria. Identify any product or society behavior changes.
+    validations:
+      required: true
+  - type: textarea
+    id: design
+    attributes:
+      label: Proposed approach and boundaries
+      description: Note affected modules, ADRs and application/platform ownership.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and risks
+      description: Describe tests, compatibility, privacy considerations and open decisions.
+    validations:
+      required: true

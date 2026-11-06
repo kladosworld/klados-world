@@ -1,0 +1,61 @@
+# Python bytecode, builds and package metadata
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+site/
+# Environments and tooling caches
+.venv/
+venv/
+env/
+.tox/
+.nox/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.pyre/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+junit*.xml
+# Local credentials and configuration (examples may be committed)
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+# Runtime state, dumps and private agent material
+*.log
+*.pid
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+/backups/
+/data/
+/logs/
+/private/
+/secrets/
+# Editors and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+# Local JS tooling, if introduced later
+node_modules/
