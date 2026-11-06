@@ -87,7 +87,7 @@ To verify the built wheel independently of the source checkout:
 
 ```bash
 python3.12 -m venv /tmp/klados-wheel-check
-/tmp/klados-wheel-check/bin/python -m pip install dist/klados_world-0.1.0.dev0-py3-none-any.whl 'pytest==9.0.2'
+/tmp/klados-wheel-check/bin/python -m pip install dist/klados_world-0.1.0.dev0-py3-none-any.whl 'pytest==9.0.3'
 (cd /tmp && /tmp/klados-wheel-check/bin/python -m pytest /path/to/klados-world/tests/test_package.py /path/to/klados-world/tests/test_clock.py)
 ```
 
