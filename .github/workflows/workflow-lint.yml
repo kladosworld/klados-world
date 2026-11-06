@@ -49,6 +49,9 @@ jobs:
           echo "::add-matcher::.github/actionlint-matcher.json"
           "$RUNNER_TEMP/actionlint" -color
       - name: Install zizmor (hash-pinned)
-        run: python3 -m pip install --user --require-hashes --no-deps -r .github/tools/requirements-workflow-lint.txt
+        # A dedicated venv: the runner's system Python is externally managed (PEP 668).
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zizmor-venv"
+          "$RUNNER_TEMP/zizmor-venv/bin/python" -m pip install --require-hashes --no-deps -r .github/tools/requirements-workflow-lint.txt
       - name: zizmor
-        run: python3 -m zizmor --offline --format=github --min-severity=low .github/workflows
+        run: '"$RUNNER_TEMP/zizmor-venv/bin/zizmor" --offline --format=github --min-severity=low .github/workflows'
