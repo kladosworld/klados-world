@@ -1,0 +1,60 @@
+# Static analysis of GitHub Actions workflows.
+#   actionlint: syntax, expressions, runner labels, embedded shellcheck.
+#   self-test:  scenario tests for .github/scripts/ci-detect.sh and ci-gate.py.
+#   zizmor:     security audit (template injection, excessive permissions, unpinned actions,
+#               credential persistence, dangerous triggers).
+# Both tools are installed with integrity checks (SHA-256 / pip --require-hashes).
+#
+# Required status check: "workflow-lint".
+name: Workflow lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: workflow-lint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ACTIONLINT_VERSION: "1.7.12"
+  ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  workflow-lint:
+    name: workflow-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install actionlint (checksum-verified)
+        run: |
+          set -euo pipefail
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" actionlint
+      - name: actionlint
+        run: |
+          echo "::add-matcher::.github/actionlint-matcher.json"
+          "$RUNNER_TEMP/actionlint" -color
+      - name: Self-test of the fail-closed CI gating scripts
+        run: bash .github/scripts/test-ci-gating.sh
+      - name: Install zizmor (hash-pinned)
+        # A dedicated venv: the runner's system Python is externally managed (PEP 668).
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zizmor-venv"
+          "$RUNNER_TEMP/zizmor-venv/bin/python" -m pip install --require-hashes --no-deps -r .github/tools/requirements-workflow-lint.txt
+      - name: zizmor
+        run: '"$RUNNER_TEMP/zizmor-venv/bin/zizmor" --offline --format=github --min-severity=low .github/workflows'

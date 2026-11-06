@@ -1,0 +1,36 @@
+# Blocks pull requests that introduce dependencies with known vulnerabilities.
+# Requires the dependency graph (enabled by default on public repositories).
+#
+# Required status check: "dependency-review".
+name: Dependency review
+
+on:
+  pull_request:
+  merge_group:
+
+permissions: {}
+
+jobs:
+  dependency-review:
+    name: dependency-review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Skip for merge queue
+        # The merge queue re-tests code already reviewed on the pull request.
+        if: github.event_name == 'merge_group'
+        run: echo "Dependency review runs on pull_request; nothing to do in the merge queue."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          persist-credentials: false
+      - name: Review dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          fail-on-scopes: runtime, development, unknown
+          comment-summary-in-pr: never
+          show-openssf-scorecard: true

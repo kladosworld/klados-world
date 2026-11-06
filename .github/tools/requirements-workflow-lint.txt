@@ -1,0 +1,4 @@
+# Hash-pinned tooling for .github/workflows/workflow-lint.yml.
+# Installed with `pip install --require-hashes --no-deps`; updated by Dependabot (pip).
+zizmor==1.32.0 \
+    --hash=sha256:84a6acb975accc13408786a2bd274b572537ca19c933ebbc13e78f3988562071

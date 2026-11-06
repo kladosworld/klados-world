@@ -1,0 +1,17 @@
+# Gitleaks configuration for klados-world (public repository).
+# Extends the upstream default ruleset; see .github/workflows/secret-scan.yml.
+#
+# Policy: never allowlist a file path wholesale. Only obvious placeholder values are
+# ignored, so a real secret pasted into an example file is still detected.
+title = "klados-world gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Documented placeholder values (never real credentials)"
+regexTarget = "secret"
+regexes = [
+  '''(?i)^(change[_-]?me|placeholder|example|dummy|redacted|not[_-]?a[_-]?secret|x{8,}|set[_-][a-z0-9_-]+)$''',
+  '''^\$\{[A-Za-z_][A-Za-z0-9_]*(:[?-][^}]*)?\}$''',
+]

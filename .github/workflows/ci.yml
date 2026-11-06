@@ -1,0 +1,159 @@
+# Application CI: lint, format check, type check, tests and package build.
+#
+# The Python project configuration (pyproject.toml, tool settings, tests) is owned by
+# application engineering. This workflow only invokes the tools; their configuration
+# lives in pyproject.toml. Contract and assumptions: docs/platform/ci.md.
+#
+# Required status check for branch protection: "ci-required" (aggregates every job below).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  detect:
+    name: detect
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      python: ${{ steps.detect.outputs.python }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The parent revision is needed to tell bootstrap apart from a removed pyproject.toml.
+          fetch-depth: 2
+      - id: detect
+        name: Detect Python project (fail closed)
+        run: bash .github/scripts/ci-detect.sh >> "$GITHUB_OUTPUT"
+
+  lint:
+    name: lint
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install project and dev tools
+        run: bash .github/scripts/install-python-deps.sh
+      - name: Ruff lint
+        run: .venv/bin/ruff check --output-format=github .
+      - name: Ruff format check
+        run: .venv/bin/ruff format --check --diff .
+
+  typecheck:
+    name: typecheck
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install project and dev tools
+        run: bash .github/scripts/install-python-deps.sh
+      - name: Pyright
+        # Targets and strictness come from [tool.pyright] in pyproject.toml.
+        run: .venv/bin/pyright
+
+  test:
+    name: test (py${{ matrix.python-version }})
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install project and dev tools
+        run: bash .github/scripts/install-python-deps.sh
+      - name: Pytest
+        # Tests must not need network credentials: no secrets are exposed to this job.
+        run: .venv/bin/python -m pytest
+
+  package:
+    name: package
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install project and dev tools
+        run: bash .github/scripts/install-python-deps.sh
+      - name: Build sdist and wheel
+        run: .venv/bin/python -m build --outdir dist .
+      - name: Install the built wheel in a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-check"
+          "$RUNNER_TEMP/wheel-check/bin/python" -m pip install --no-deps dist/*.whl
+          cd "$RUNNER_TEMP" && "$RUNNER_TEMP/wheel-check/bin/python" -c "import klados_world"
+
+  ci-required:
+    # Single stable check name for rulesets, independent of matrix/job changes.
+    # Fail closed: once Python CI is required, every Python job must succeed (never skip).
+    name: ci-required
+    if: always()
+    needs: [detect, lint, typecheck, test, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Evaluate job results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          PYTHON_REQUIRED: ${{ needs.detect.outputs.python }}
+        run: echo "$RESULTS" | python3 .github/scripts/ci-gate.py
