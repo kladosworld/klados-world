@@ -1,0 +1,6 @@
+# Security vulnerabilities must not be reported in public issues.
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/kladosworld/klados-world/security/advisories/new
+    about: Please report vulnerabilities privately. See SECURITY.md.
