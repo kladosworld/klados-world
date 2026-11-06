@@ -1,5 +1,6 @@
 # Static analysis of GitHub Actions workflows.
 #   actionlint: syntax, expressions, runner labels, embedded shellcheck.
+#   self-test:  scenario tests for .github/scripts/ci-detect.sh and ci-gate.py.
 #   zizmor:     security audit (template injection, excessive permissions, unpinned actions,
 #               credential persistence, dangerous triggers).
 # Both tools are installed with integrity checks (SHA-256 / pip --require-hashes).
@@ -48,6 +49,8 @@ jobs:
         run: |
           echo "::add-matcher::.github/actionlint-matcher.json"
           "$RUNNER_TEMP/actionlint" -color
+      - name: Self-test of the fail-closed CI gating scripts
+        run: bash .github/scripts/test-ci-gating.sh
       - name: Install zizmor (hash-pinned)
         # A dedicated venv: the runner's system Python is externally managed (PEP 668).
         run: |

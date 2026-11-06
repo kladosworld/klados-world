@@ -38,16 +38,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The parent revision is needed to tell bootstrap apart from a removed pyproject.toml.
+          fetch-depth: 2
       - id: detect
-        name: Detect Python project
-        run: |
-          if [ -f pyproject.toml ]; then
-            echo "python=true" >> "$GITHUB_OUTPUT"
-          else
-            # Bootstrap only: before the application lands there is nothing to test.
-            echo "::warning::pyproject.toml not found; Python jobs are skipped. See docs/platform/ci.md."
-            echo "python=false" >> "$GITHUB_OUTPUT"
-          fi
+        name: Detect Python project (fail closed)
+        run: bash .github/scripts/ci-detect.sh >> "$GITHUB_OUTPUT"
 
   lint:
     name: lint
@@ -144,26 +139,21 @@ jobs:
 
   ci-required:
     # Single stable check name for rulesets, independent of matrix/job changes.
+    # Fail closed: once Python CI is required, every Python job must succeed (never skip).
     name: ci-required
     if: always()
     needs: [detect, lint, typecheck, test, package]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
       - name: Evaluate job results
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: |
-          echo "$RESULTS" | python3 -c '
-          import json, sys
-          needs = json.load(sys.stdin)
-          bad = {k: v["result"] for k, v in needs.items() if v["result"] not in ("success", "skipped")}
-          if needs["detect"]["result"] != "success":
-              bad["detect"] = needs["detect"]["result"]
-          for name, info in needs.items():
-              print(name + ": " + info["result"])
-          if bad:
-              print(f"::error::Required CI jobs did not succeed: {bad}")
-              sys.exit(1)
-          '
+          PYTHON_REQUIRED: ${{ needs.detect.outputs.python }}
+        run: echo "$RESULTS" | python3 .github/scripts/ci-gate.py

@@ -12,7 +12,31 @@
 | Scorecard | `scorecard.yml` | push to `main`, weekly | `scorecard` | No (informational) |
 
 `ci-required` combines the results of every CI job, so its name stays the same
-when jobs or the test matrix change. It fails if any job fails or is cancelled.
+when jobs or the test matrix change.
+
+### Fail-closed Python gating
+
+The Python jobs (`lint`, `typecheck`, `test`, `package`) **cannot be skipped
+silently**:
+
+| Situation | `detect` | Python jobs | `ci-required` |
+| --------- | -------- | ----------- | ------------- |
+| `pyproject.toml` is present in the tested revision | `python=true` | must all be `success` | fails if any of them is skipped, cancelled or failed |
+| `pyproject.toml` is absent here but present on the base or parent revision (removed or renamed) | **fails** | not run | fails |
+| The parent revision cannot be resolved | **fails** | not run | fails |
+| Absent here **and** on the base (bootstrap only, before the application lands) | `python=false`, with a warning | must be `skipped` | passes |
+
+`detect` (`.github/scripts/ci-detect.sh`) checks the tested revision and its
+first parent (`fetch-depth: 2`). For pull requests, GitHub tests the merge ref,
+whose first parent is the base branch tip. For merge-queue commits the first
+parent is also the base. For a push to `main` (squash merges only), it is the
+previous `main` commit. The gate (`.github/scripts/ci-gate.py`) requires
+`success` whenever Python CI is required, and `skipped` only in the bootstrap
+state. `.github/scripts/test-ci-gating.sh` covers 15 scenarios and runs in the
+`workflow-lint` job.
+
+Once `pyproject.toml` reaches `main`, the bootstrap row can never apply to a pull
+request against `main` again.
 
 ## Workflow security baseline
 
