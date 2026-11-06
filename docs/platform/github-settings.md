@@ -18,7 +18,7 @@ and when in the pull request that follows.
   - turn off **Allow GitHub Actions to create and approve pull requests**;
   - set fork pull request workflows to **Require approval for all external contributors**.
 - [ ] Review installed **GitHub Apps** (Claude, Codex and others) and limit each one to the repositories it needs.
-- [ ] Create teams, for example `platform`, `application` and `maintainers`, then replace the individual owner in `.github/CODEOWNERS` with a team.
+- [ ] Create teams, for example `platform`, `application` and `maintainers`, with real members who have write access. Then activate `.github/CODEOWNERS` following `docs/codeowners-proposal.md`. This is a joint decision between application and platform; until then, CODEOWNERS stays an inactive placeholder.
 
 ## Repository `klados-world`: *Settings → General*
 

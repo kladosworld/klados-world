@@ -45,9 +45,12 @@ which `ci-required` already covers.
    who has write access. AI agents never approve or merge pull requests, and the
    Actions setting *Allow GitHub Actions to create and approve pull requests*
    stays off.
-3. **Code owners** must approve changes to platform files, which include
-   workflows, Dependabot, rulesets, `SECURITY.md` and `.gitleaks.toml`, as listed
-   in `.github/CODEOWNERS`.
+3. **Code owners**: the ruleset requires code-owner review. It takes effect only
+   once `.github/CODEOWNERS` holds active owner lines. That file is currently an
+   inactive placeholder, maintained jointly with application engineering
+   (`docs/codeowners-proposal.md`). When it is activated, platform paths are
+   workflows, Dependabot, rulesets, `SECURITY.md`, `.gitleaks.toml` and
+   `docs/platform/`.
 4. **Approving the latest push**: approvals are dismissed when new commits are
    pushed, and the reviewer must approve the final state of the branch.
 5. **Changes to workflows get an extra security review**. Look for added

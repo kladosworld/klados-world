@@ -4,7 +4,7 @@
 
 | Workflow | File | Runs on | Check name(s) | Required |
 | -------- | ---- | ------- | ------------- | -------- |
-| CI | `ci.yml` | PR, push to `main`, merge queue | `lint`, `typecheck`, `test (py3.12)`, `test (py3.13)`, **`ci-required`** | `ci-required` |
+| CI | `ci.yml` | PR, push to `main`, merge queue | `lint`, `typecheck`, `test (py3.12)`, `test (py3.13)`, `package`, **`ci-required`** | `ci-required` |
 | Secret scan | `secret-scan.yml` | PR, push, merge queue, weekly | **`gitleaks`** | Yes |
 | Workflow lint | `workflow-lint.yml` | PR, push, merge queue | **`workflow-lint`** | Yes |
 | Dependency review | `dependency-review.yml` | PR, merge queue | **`dependency-review`** | Yes |
@@ -39,49 +39,57 @@ zizmor.
 
 ## CI contract with `pyproject.toml`
 
-> **Status: assumption, not yet validated.** When this was written, application
-> engineering had not yet published a branch with `pyproject.toml`. The CI jobs
-> are skipped, with a warning, until `pyproject.toml` exists. Once it lands, every
-> failure blocks merging. The contract below must be confirmed against the real
-> `pyproject.toml`. Platform will then run CI on the application branch and update
-> this section.
+> **Status: validated** against application engineering's branch `codex/foundation-v1`
+> (commit `92e9096`) and its interface document `docs/platform-interface.md`. Every
+> CI step below was replayed locally on that branch merged with this one, under
+> Python 3.12 and 3.13: ruff, ruff format, pyright (0 errors), pytest (12 passed),
+> the build, and a clean install of the wheel all pass. The jobs are skipped, with a
+> warning, only while `pyproject.toml` does not exist.
 
-CI runs exactly these commands. Their configuration lives in `pyproject.toml`.
+CI runs exactly the commands that application engineering publishes in
+`docs/platform-interface.md`. Their configuration lives in `pyproject.toml`.
 
-| Step | Command | Expected configuration |
-| ---- | ------- | ---------------------- |
-| Install | `.github/scripts/install-python-deps.sh` | The project installs from the repository root. Dev tools are declared as a PEP 735 group `[dependency-groups] dev` (preferred) or as the extra `[project.optional-dependencies] dev`. |
-| Lint | `python -m ruff check .` | `[tool.ruff]` / `[tool.ruff.lint]` |
-| Format | `python -m ruff format --check .` | `[tool.ruff.format]` |
-| Types | `python -m mypy` | `[tool.mypy]` with `files = [...]` or `packages = [...]`. Without targets, mypy exits with an error. |
-| Tests | `python -m pytest` | `[tool.pytest.ini_options]` (testpaths, addopts, coverage thresholds if used) |
+| Step | Command | Configuration source |
+| ---- | ------- | -------------------- |
+| Install | `.github/scripts/install-python-deps.sh`, which runs `python -m venv .venv` and then `.venv/bin/python -m pip install -e '.[dev]'`. A PEP 735 `dev` group is also accepted | `[project.optional-dependencies] dev` |
+| Lint | `.venv/bin/ruff check .` | `[tool.ruff]`, `[tool.ruff.lint]` |
+| Format | `.venv/bin/ruff format --check .` | `[tool.ruff]` |
+| Types | `.venv/bin/pyright` | `[tool.pyright]` (strict mode, which expects `venv = ".venv"`) |
+| Tests | `.venv/bin/python -m pytest` | `[tool.pytest.ini_options]` |
+| Package | `.venv/bin/python -m build`, then installs the wheel into a clean venv and imports `klados_world` | `[build-system]`, `[tool.hatch.*]` |
 
-Other assumptions:
+Notes:
 
-- **Python 3.12 and 3.13** are both tested, matching the legacy project's
-  `requires-python = ">=3.12"`. If `requires-python` changes, update the test
+- **Python 3.12 and 3.13** are tested. `requires-python = ">=3.12"`, and the
+  classifiers list 3.12. Testing 3.13 as well catches forward-compatibility
+  problems early. If application engineering prefers 3.12 only, change the
   matrix in `ci.yml`.
-- `ruff`, `mypy` and `pytest` (plus any plugins, such as `pytest-cov`) are listed
-  in the `dev` group with pinned or bounded versions.
-- Tests run **without network credentials or model API keys**. Tests that need
-  a database or an external service must skip themselves, or be marked and run in
-  a separate job that is added later.
-- If the project adopts `uv` with a lockfile, platform will switch the install
-  step to `uv sync --locked`. It will also change the Dependabot pip entry to
-  `package-ecosystem: uv`.
+- `pre-commit run --all-files` is **not** run in CI. Its local hooks call the
+  same ruff, pyright and pytest commands, so running it would only repeat them.
+- `pyright` (the PyPI wheel) bundles the type checker and runs on the Node.js
+  already installed on GitHub runners. It downloads nothing at run time.
+- Direct dev dependencies are pinned exactly in `pyproject.toml`, but transitive
+  dependencies are not locked. A lock file (for example `uv.lock`, or
+  `requirements-dev.txt` with hashes) is an open decision for application
+  engineering (`docs/platform-interface.md`, decision 2). If `uv` is adopted,
+  platform will switch the install step to `uv sync --locked` and the Dependabot
+  pip entry to `package-ecosystem: uv`.
+- Tests run **without network credentials or model API keys**. When PostgreSQL
+  integration tests arrive, platform will add a job with a `postgres` service
+  container, pinned to the version used in deployment.
 
-To change the contract, for example to replace mypy with pyright, application
-engineering and platform agree on it in a pull request that updates this document
-and `ci.yml` together.
+To change the contract, application engineering and platform agree on it in a
+pull request that updates `docs/platform-interface.md`, this document and
+`ci.yml` together.
 
 ## Running the same checks locally
 
 ```bash
-python -m pip install -e . --group dev
+python -m venv .venv && .venv/bin/python -m pip install -e '.[dev]'
 ```
 
 ```bash
-python -m ruff check . && python -m ruff format --check . && python -m mypy && python -m pytest
+.venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/pyright && .venv/bin/python -m pytest
 ```
 
 Workflow and secret checks:

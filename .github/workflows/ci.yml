@@ -1,4 +1,4 @@
-# Application CI: lint, format check, type check and tests.
+# Application CI: lint, format check, type check, tests and package build.
 #
 # The Python project configuration (pyproject.toml, tool settings, tests) is owned by
 # application engineering. This workflow only invokes the tools; their configuration
@@ -67,9 +67,9 @@ jobs:
       - name: Install project and dev tools
         run: bash .github/scripts/install-python-deps.sh
       - name: Ruff lint
-        run: python -m ruff check --output-format=github .
+        run: .venv/bin/ruff check --output-format=github .
       - name: Ruff format check
-        run: python -m ruff format --check --diff .
+        run: .venv/bin/ruff format --check --diff .
 
   typecheck:
     name: typecheck
@@ -88,9 +88,9 @@ jobs:
           python-version: "3.12"
       - name: Install project and dev tools
         run: bash .github/scripts/install-python-deps.sh
-      - name: Mypy
-        # Targets and strictness come from [tool.mypy] in pyproject.toml.
-        run: python -m mypy
+      - name: Pyright
+        # Targets and strictness come from [tool.pyright] in pyproject.toml.
+        run: .venv/bin/pyright
 
   test:
     name: test (py${{ matrix.python-version }})
@@ -115,13 +115,38 @@ jobs:
         run: bash .github/scripts/install-python-deps.sh
       - name: Pytest
         # Tests must not need network credentials: no secrets are exposed to this job.
-        run: python -m pytest
+        run: .venv/bin/python -m pytest
+
+  package:
+    name: package
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install project and dev tools
+        run: bash .github/scripts/install-python-deps.sh
+      - name: Build sdist and wheel
+        run: .venv/bin/python -m build --outdir dist .
+      - name: Install the built wheel in a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-check"
+          "$RUNNER_TEMP/wheel-check/bin/python" -m pip install --no-deps dist/*.whl
+          cd "$RUNNER_TEMP" && "$RUNNER_TEMP/wheel-check/bin/python" -c "import klados_world"
 
   ci-required:
     # Single stable check name for rulesets, independent of matrix/job changes.
     name: ci-required
     if: always()
-    needs: [detect, lint, typecheck, test]
+    needs: [detect, lint, typecheck, test, package]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}

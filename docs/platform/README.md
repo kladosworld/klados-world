@@ -16,12 +16,18 @@ separately by application engineering.
 | Area | Owner |
 | ---- | ----- |
 | `.github/workflows/`, `.github/dependabot.yml`, `.github/scripts/`, `.github/tools/`, `.github/rulesets/`, `.gitleaks.toml`, `SECURITY.md`, `docs/platform/` | Platform and security (Claude) |
-| `pyproject.toml`, application packages, `tests/`, developer documentation | Application engineering (Codex) |
+| `pyproject.toml`, `src/`, `tests/`, `.pre-commit-config.yaml`, `.gitignore`, `.editorconfig`, community and developer docs, application docs in `docs/`, `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md` | Application engineering (Codex) |
+| `.github/CODEOWNERS`, `docs/platform-interface.md` | Shared: changes need both roles to review |
 | Architecture and integration review | Technical lead (ChatGPT) |
 | Merges, repository settings, secrets | Repository owner (a person) |
 
-Do not edit files in another area without coordinating with its owner first. CI
-reads tool settings from `pyproject.toml` and never overrides them.
+Ownership follows `docs/platform-interface.md`, which application engineering
+maintains. Do not edit files in another area without coordinating with its owner
+first. CI reads tool settings from `pyproject.toml` and never overrides them.
+
+`.github/ISSUE_TEMPLATE/config.yml` is in application engineering's directory.
+Platform adds it only to send security reports to private reporting. Application
+engineering may move it or merge it into their templates.
 
 ## Public versus internal
 
