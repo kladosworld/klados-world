@@ -7,7 +7,11 @@
   const message = text => { byId("session-status").textContent = text; };
   function changed() {
     panel.hidden = !active;
-    byId("society-sign-in").hidden = !active || !!session.authenticated;
+    const signIn = byId("society-sign-in"); signIn.textContent = "";
+    signIn.hidden = !active || !!session.authenticated || session.github_enabled !== true;
+    if (!signIn.hidden) {
+      const link = document.createElement("a"); link.href = "/auth/github"; link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = "Sign in with GitHub"; signIn.appendChild(link);
+    }
     byId("society-guest").hidden = !active || !!session.authenticated || !session.guest_enabled;
     byId("society-age-label").hidden = !active || !session.authenticated || !!session.adult_confirmed;
     byId("society-guest-start").disabled = busy || !byId("society-guest-adult").checked;
@@ -33,7 +37,12 @@
     try {
       const response = await fetch("/auth/guest", { method: "POST", credentials: "same-origin",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify({ token, adult_confirmed: true }) });
-      if (!response.ok) { failed("Guest verification failed. Please try again."); return; }
+      if (!response.ok) {
+        if (response.status === 503) failed("Guest access is temporarily unavailable.");
+        else if (response.status === 429 && response.headers?.get("Retry-After")) failed("Too many new guest sessions from this network. Please try again in a few minutes.");
+        else failed("Guest verification failed. Please try again.");
+        return;
+      }
       if (widget !== null) globalThis.turnstile.remove(widget);
       widget = null; busy = false; await refresh(); message("Ready to like posts.");
     } catch (_) { failed("Connection interrupted. Reload to check your session."); }
@@ -52,7 +61,7 @@
     busy = true; changed(); message("Checking your guest session…");
     try {
       const response = await fetch("/auth/guest", { credentials: "same-origin", cache: "no-store" });
-      if (!response.ok) { failed("Guest access is unavailable. Please sign in with GitHub."); return; }
+      if (!response.ok) { failed("Guest access is temporarily unavailable."); return; }
       const data = await response.json(); challenge = data.csrf_token;
       await loadWidget();
       widget = globalThis.turnstile.render(byId("society-turnstile"), {

@@ -18,7 +18,7 @@ function element(tag) {
     querySelectorAll() { return all(this).filter(n => n.tag === "article" && n.id); } };
 }
 function all(root) { return [root, ...root.children.flatMap(all)]; }
-function browser(view, data, { live = false, replies = [], id = "sample-agent", session = null, configFailure = false, realSession = false } = {}) {
+function browser(view, data, { live = false, replies = [], id = "sample-agent", session = null, configFailure = false, realSession = false, windowDays = null, aiMode = live ? "live" : "unknown" } = {}) {
   const elements = new Map(), calls = [], timers = [], listeners = new Map(), scrolls = [];
   const byId = id => {
     const dynamic = [...elements.values()].flatMap(all).find(n => n.id === id);
@@ -36,11 +36,12 @@ function browser(view, data, { live = false, replies = [], id = "sample-agent", 
       dispatchEvent(event) { listeners.get(event.type)?.(event); } },
     fetch: async (url, options) => {
       calls.push({ url, options });
-      if (url === "/society/config.json") return { ok: !configFailure, json: async () => ({ live }) };
+      if (url === "/docs/content.json") return { ok: true, json: async () => ({ window_days: windowDays }) };
+      if (url === "/society/config.json") return { ok: !configFailure, json: async () => ({ live, ai_mode: aiMode }) };
       if (options.method === "POST" || url.startsWith("/auth/")) {
         const reply = replies.shift(); assert.ok(reply, "Unexpected auth/like request: " + url);
         if (reply instanceof Error) throw reply;
-        return { ok: reply.status === 200, status: reply.status, json: async () => reply.data };
+        return { ok: reply.status === 200, status: reply.status, headers: { get: name => reply.headers?.[name] }, json: async () => reply.data };
       }
       const part = live ? url.replace("/api/society/", "") : url.replace("/static/fixtures/", "").replace(/\.json$/, "");
       if (context.failPublic) return { ok: false, status: 503 };
@@ -210,4 +211,65 @@ test("all text uses safe DOM operations and example labels remain in HTML", () =
     const html = fs.readFileSync(path.join(__dirname, "../arena/static", page), "utf8");
     assert.match(html, /Example data — these are not real events\./); assert.ok(!html.includes("onclick="));
   }
+});
+
+
+test("held, closed and daily-limit replies use the approved copy", async () => {
+  for (const [reply, expected] of [
+    [{ status: 200, data: { held: true, likes: 99 } }, "Thanks! Your like is recorded and will be counted after a quick check."],
+    [{ status: 409, data: { detail: "likes_closed" } }, "This post can no longer be liked."],
+    [{ status: 429, data: { detail: "daily_limit" } }, "You've used your three likes for today."]
+  ]) {
+    const b = browser("square", liveData("square.json"), { live: true, session: signedIn(), replies: [reply] });
+    await tick(); b.click(controls(b)[0]); await tick();
+    assert.equal(b.byId("status").textContent, expected);
+    if (reply.data.held) assert.doesNotMatch(b.byId("society-results").textContent, /99 likes/);
+  }
+});
+
+test("publication windows hide old actions without inferring a date from hours_ago", async () => {
+  const data = liveData("square.json"); data.posts[0].published_at = "2000-01-01T00:00:00Z";
+  const b = browser("square", data, { live: true, windowDays: 29, session: signedIn() }); await tick();
+  assert.equal(controls(b).length, 1);
+  delete data.posts[0].published_at; data.posts[0].hours_ago = 999999;
+  const unknown = browser("square", data, { live: true, windowDays: 29, session: signedIn() }); await tick();
+  assert.equal(controls(unknown).length, 2);
+});
+
+for (const enabled of [false, true]) test(`GitHub controls are conditional on github_enabled=${enabled}`, async () => {
+  const b = browser("square", liveData("square.json"), { live: true, realSession: true, replies: [
+    { status: 200, data: { authenticated: false, guest_enabled: true, github_enabled: enabled } }
+  ] }); await tick();
+  assert.equal(all(b.byId("society-sign-in")).some(n => n.href === "/auth/github"), enabled);
+});
+
+for (const [reply, expected] of [
+  [{ status: 429, headers: { "Retry-After": "60" } }, "Too many new guest sessions from this network. Please try again in a few minutes."],
+  [{ status: 503 }, "Guest access is temporarily unavailable."]
+]) test(`guest ${reply.status} uses the approved copy`, async () => {
+  const b = browser("square", liveData("square.json"), { live: true, realSession: true, replies: [
+    { status: 200, data: { authenticated: false, guest_enabled: true, github_enabled: false } },
+    { status: 200, data: { sitekey: "key", csrf_token: "test" } }, reply
+  ] }); await tick(); b.byId("society-guest-adult").checked = true;
+  b.byId("society-guest-start").listeners.get("click")(); await tick(); b.context.widgetOptions.callback("token"); await tick();
+  assert.equal(b.byId("session-status").textContent, expected);
+});
+
+test("mock and unknown sources are visible and cannot enable likes", async () => {
+  for (const aiMode of ["mock", "unknown"]) {
+    const b = browser("square", liveData("square.json"), { live: true, aiMode, session: signedIn() }); await tick();
+    assert.equal(b.byId("demo-notice").hidden, false);
+    assert.match(b.byId("demo-notice").textContent, aiMode === "mock" ? /Mock AI mode/ : /unverified/);
+    assert.ok(controls(b).every(button => button.disabled));
+  }
+});
+
+test("stored timestamps render as UTC times and old mock posts remain labelled in live mode", async () => {
+  const data = liveData("square.json"); data.posts[0].text = "Mock activity from a development run.";
+  const b = browser("square", data, { live: true, session: signedIn() }); await tick();
+  const times = all(b.byId("society-results")).filter(n => n.tag === "time");
+  assert.ok(times.length > 0); assert.match(times[0].textContent, /UTC/);
+  assert.match(times[0].attributes.datetime, /^2026-11-03T/);
+  assert.match(b.byId("society-results").textContent, /Mock activity · development demonstration/);
+  assert.equal(controls(b)[0].disabled, true);
 });

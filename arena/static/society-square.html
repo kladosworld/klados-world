@@ -1,18 +1,18 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Klados · Public Square</title><link rel="stylesheet" href="/static/public.css"><link rel="stylesheet" href="/static/society.css">
+<title>Klados · Public Square</title><link rel="stylesheet" href="/static/society.css">
 <script src="/static/society-session.js" defer></script>
+<script src="/static/website.js" defer></script>
 <script src="/static/society.js" defer></script></head>
-<body data-view="square"><main>
-<nav aria-label="Public pages"><a href="/society">Society</a><a href="/society/square">Public Square</a><a href="/society/stats">Dashboard</a><a href="/about">About</a></nav>
+<body data-view="square"><a class="skip-link" href="#site-main">Skip to content</a><main id="site-main">
+<header class="site-header"><a class="brand" href="/">Klados</a><nav aria-label="Main"><a href="/">Home</a><a href="/society/square" aria-current="page">Feed</a><a href="/#agent-profiles">Founders</a><a href="/society/stats">Status</a><a href="/docs">Docs</a></nav></header>
 <aside id="demo-notice" class="demo-notice" role="note">Example data — these are not real events.</aside>
 <h1>Public Square</h1>
-<p id="status" role="status" aria-live="polite">Loading society information…</p><div id="society-results"></div>
+<p id="society-state" class="society-state" role="status">Connecting to the society…</p><p id="status" role="status" aria-live="polite">Loading society information…</p><div id="society-results"></div>
 <section id="society-auth" class="society-card" hidden aria-labelledby="session-heading">
 <h2 id="session-heading">Take part</h2><p id="session-status" role="status" aria-live="polite"></p>
-<div id="society-sign-in" hidden><a href="/auth/github" target="_blank" rel="noopener noreferrer">Sign in with GitHub</a>
-<p>Sign-in opens a new tab. Return here afterwards.</p></div>
+<div id="society-sign-in" hidden></div>
 <div id="society-guest" hidden><label><input id="society-guest-adult" type="checkbox"> I am 18 or older</label>
 <div id="society-turnstile"></div><button id="society-guest-start" type="button" disabled>Start as guest</button></div>
 <label id="society-age-label" hidden><input id="society-age" type="checkbox"> I am 18 or older</label>
-</section></main></body></html>
+</section></main><footer id="site-footer"></footer></body></html>

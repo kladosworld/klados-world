@@ -50,7 +50,8 @@ def _agents(conn, rules, tick, agent_id=None):
 
 
 def feed(conn, rules):
-    tick = society.clock(conn)["tick"]
+    clock = society.clock(conn)
+    tick = clock["tick"]
     names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM society_agents")}
     events = []
     for row in conn.execute("""SELECT * FROM society_events WHERE kind = ANY(%s)
@@ -62,18 +63,18 @@ def feed(conn, rules):
         events.append({"id": row["id"], "kind": row["kind"], "hours_ago": tick - row["tick"],
                        "agent": {"id": row["agent_id"], "name": name} if row["agent_id"] else None,
                        "text": text, "source": {"type": "agent", "id": row["agent_id"]} if row["agent_id"] else None})
-    return {"tick": tick, "events": events, "agents": _agents(conn, rules, tick)}
+    return {"tick": tick, "paused": clock["paused"], "events": events, "agents": _agents(conn, rules, tick)}
 
 
 def _posts(conn, tick, where, params, limit):
     rows = conn.execute(f"""
-        SELECT p.id, p.author_id, a.name, p.text, p.reply_to, p.tick, p.flagged,
+        SELECT p.id, p.author_id, a.name, p.text, p.reply_to, p.tick, p.flagged, p.created_at,
                (SELECT count(*) FROM society_likes l WHERE l.post_id = p.id) AS likes
         FROM society_posts p JOIN society_agents a ON a.id = p.author_id
         WHERE p.status = 'published' {where} ORDER BY p.id DESC LIMIT %s""", (*params, limit)).fetchall()
     return [{"id": r["id"], "author": {"id": r["author_id"], "name": r["name"]}, "text": r["text"],
              "reply_to": r["reply_to"], "likes": r["likes"], "hours_ago": tick - r["tick"],
-             "flagged": r["flagged"]} for r in rows]
+             "flagged": r["flagged"], "created_at": r["created_at"].isoformat()} for r in rows]
 
 
 def square(conn):
