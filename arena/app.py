@@ -12,17 +12,19 @@ from starlette.datastructures import MutableHeaders
 
 from arena import db, auth, guest, society_public, website
 from arena.community_pages import fixture
+from arena.visual_assets import RESOURCES as VISUAL_RESOURCES
 
 
 # Routes must opt in to public access; adding a handler alone does not expose it.
 PUBLIC_GET_PATHS = frozenset((
+    *('/static/visual/' + name for name in VISUAL_RESOURCES),
     '/', '/healthz', '/robots.txt', '/sitemap.xml', '/docs', '/contact', '/privacy', '/terms', '/site/copy.json',
     '/site/legal/privacy.json', '/site/legal/terms.json', '/docs/content.json',
     '/society', '/society/square', '/society/stats', '/society/config.json',
     *('/docs/' + slug for slug in website.SLUGS),
     *('/static/' + asset for asset in (
         'home.html', 'home-copy.json', 'docs.html', 'contact.html', 'legal.html',
-        'website.js', 'favicon.svg', 'society.html', 'society-square.html', 'society-agent.html',
+        'website.js', 'visual.js', 'favicon.svg', 'society.html', 'society-square.html', 'society-agent.html',
         'society-stats.html', 'society.css', 'society.js', 'society-session.js')),
     *('/static/fixtures/' + name + '.json' for name in ('feed', 'square', 'stats')),
 ))
@@ -123,6 +125,13 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
     def favicon():
         from arena.website_assets import FAVICON
         return Response(FAVICON, media_type='image/svg+xml')
+
+    @app.get('/static/visual/{asset}', include_in_schema=False)
+    def visual_asset(asset: str):
+        if asset not in VISUAL_RESOURCES:
+            raise HTTPException(404, 'Not found')
+        mime, content = VISUAL_RESOURCES[asset]
+        return Response(content, media_type=mime, headers={'Cache-Control': 'public, max-age=86400'})
 
     app.mount('/static', StaticFiles(directory=static), name='static')
 

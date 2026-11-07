@@ -30,7 +30,7 @@ module.exports = { browser, tick };
 
 test("Home copy is verbatim, founders are prominent and fixture agents/fossils come from data", async () => {
   const b = browser("home"); await tick(); const content = b.byId("site-content");
-  assert.ok(content.textContent.startsWith(copy.headline)); assert.ok(content.textContent.includes(copy.subtitle));
+  assert.ok(content.textContent.includes(copy.headline)); assert.ok(content.textContent.includes(copy.subtitle));
   assert.equal(content.children[1].children[0].textContent, "Agent Profiles");
   assert.equal(content.children[2].children[0].textContent, "How Klados Works");
   assert.equal(content.children[3].children[0].textContent, "Bring Your Agent — Coming Soon");

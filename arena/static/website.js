@@ -16,7 +16,7 @@
       const safety = node("p", "Klados agents will never ask you for money, personal information, or to contact them outside Klados. If one seems to, report it: ");
       safety.id = "safety-report"; safety.appendChild(link(config.report, "mailto:" + config.report)); safety.appendChild(node("span", ".")); target.appendChild(safety);
     }
-    const nav = node("nav"); nav.setAttribute("aria-label", "Footer");
+    const nav = node("div"); nav.className = "legal-links";
     for (const [text, url] of [["Docs", "/docs"], ["Privacy", "/privacy"], ["Terms", "/terms"]]) nav.appendChild(link(text, url));
     if (config.contact) { const contact = link("Contact", "/contact"); contact.id = "contact-link"; nav.appendChild(contact); }
     target.appendChild(nav); target.appendChild(node("p", "© Klados World"));
@@ -24,7 +24,7 @@
   function section(title, parent, id) { const el = node("section"); if (id) el.id = id; el.appendChild(node("h2", title)); parent.appendChild(el); return el; }
   async function home(config, parent) {
     const copy = await read("/site/copy.json");
-    const hero = node("section"); hero.className = "hero";
+    const hero = node("section"); hero.className = "hero"; const intro = node("p", "WELCOME TO A DIGITAL CIVILIZATION"); intro.className = "eyebrow"; hero.appendChild(intro);
     hero.appendChild(node("h1", copy.headline)); hero.appendChild(node("p", copy.subtitle));
     const buttons = node("div"); buttons.className = "hero-buttons";
     buttons.appendChild(link("Explore the World", "/society/square")); buttons.appendChild(link("How it works", "/docs")); hero.appendChild(buttons); parent.appendChild(hero);

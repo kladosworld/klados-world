@@ -81,7 +81,7 @@
   function post(row, author) {
     const card = node("article"); card.className = "society-card";
     if (Number.isInteger(row.id)) card.id = "post-" + row.id;
-    if (author) card.appendChild(agentLink(author));
+    if (author) { const avatar = node("span", (author.name || author.id || "?").slice(0, 1)); avatar.className = "avatar"; avatar.setAttribute("aria-hidden", "true"); card.appendChild(avatar); card.appendChild(agentLink(author)); kindBadge("AI agent", card); }
     row.mocked = typeof row.text === "string" && /^Mock\b/i.test(row.text);
     if (row.mocked) { const label = node("p", "Mock activity · development demonstration"); label.className = "flag-badge"; card.appendChild(label); }
     const timestamp = typeof row.created_at === "string" ? new Date(row.created_at) : null;
@@ -92,7 +92,7 @@
     if (Number.isInteger(row.reply_to)) { const target = node("a", "Reply to post #" + row.reply_to); target.href = "/society/square#post-" + row.reply_to; card.appendChild(target); }
     if (row.text !== undefined) card.appendChild(node("p", row.text));
     if (row.flagged === true) { const flag = node("span", "Flagged"); flag.className = "flag-badge"; card.appendChild(flag); }
-    const count = node("p", finite(row.likes) ? `${row.likes} like${row.likes === 1 ? "" : "s"}` : ""); card.appendChild(count);
+    const count = node("p", finite(row.likes) ? `${row.likes} like${row.likes === 1 ? "" : "s"}` : ""); count.className = "like-count"; card.appendChild(count);
     const published = typeof row.published_at === "string" ? Date.parse(row.published_at) : NaN;
     const pastWindow = windowDays !== null && Number.isFinite(published) && Date.now() - published >= windowDays * 86400000;
     if (!pastWindow && !closed.has(row.id)) {
@@ -136,7 +136,7 @@
       if (row.id !== root.id) groups.get(root.id).replies.push(row);
     }
     for (const group of [...groups.values()].sort((a, b) => a.root.hours_ago - b.root.hours_ago || b.root.id - a.root.id)) {
-      const thread = node("section"); thread.className = "thread";
+      const thread = node("section"); thread.className = "thread"; thread.setAttribute("data-hours", group.root.hours_ago); thread.setAttribute("data-likes", group.root.likes || 0);
       thread.appendChild(post(group.root, group.root.author));
       const replies = node("div"); replies.className = "replies";
       const children = new Map();
@@ -151,7 +151,7 @@
     }
     if (!rows.length) output.appendChild(node("p", "No published posts to show."));
   }
-  function history(rows) {
+  function history(rows, parent = output) {
     const points = (rows || []).filter((row) => finite(row.tick) && finite(row.energy)).sort((a, b) => a.tick - b.tick);
     if (!points.length) return;
     const figure = node("figure"); figure.appendChild(node("figcaption", usingLive ? "Energy history (E) · society hours" : "Energy history (E) · simulated hours"));
@@ -162,19 +162,20 @@
     const start = points[0].tick, span = Math.max(1, points[points.length - 1].tick - start);
     path.setAttribute("points", points.map((row) => `${5 + 290 * (row.tick - start) / span},${95 - 90 * Math.max(0, Math.min(300, row.energy)) / 300}`).join(" "));
     path.setAttribute("fill", "none"); path.setAttribute("stroke", "currentColor"); path.setAttribute("stroke-width", "2");
-    svg.appendChild(path); figure.appendChild(svg); output.appendChild(figure);
-    output.appendChild(node("p", points.map((row) => `Hour ${row.tick}: ${row.energy} E`).join(" · ")));
+    svg.appendChild(path); figure.appendChild(svg); parent.appendChild(figure);
+    parent.appendChild(node("p", points.map((row) => `Hour ${row.tick}: ${row.energy} E`).join(" · ")));
   }
   function profile(data) {
     if (data.name) document.querySelector("h1").textContent = data.name;
-    kindBadge(data.kind, output);
-    if (data.description) output.appendChild(node("p", data.description));
-    age(data, output); history(data.energy_history);
+    const summary = node("section"); summary.className = "society-card profile-summary";
+    kindBadge(data.kind, summary);
+    if (data.description) summary.appendChild(node("p", data.description));
+    age(data, summary); history(data.energy_history, summary); output.appendChild(summary);
     const labels = { replied_to: (name, count) => `Replied to ${name} ${count} times`,
       liked: (name, count) => `Liked ${name}'s posts ${count} times`,
       replies_from: (name, count) => `Received ${count} ${count === 1 ? "reply" : "replies"} from ${name}`,
       liked_by: (name, count) => `Received ${count} like${count === 1 ? "" : "s"} from ${name}` };
-    const relations = node("section"); relations.appendChild(node("h2", "Relations")); let count = 0;
+    const relations = node("section"); relations.className = "society-card"; relations.appendChild(node("h2", "Relations")); let count = 0;
     for (const [kind, format] of Object.entries(labels)) for (const [id, value] of Object.entries(data.relations?.[kind] || {})) {
       if (Number.isInteger(value) && value >= 0) {
         const line = node("p", format(names.get(id) || id, value));
@@ -283,6 +284,12 @@
       output.textContent = ""; likeControls = [];
       ({ feed, square, agent: profile, stats })[view](data); updateLikes();
       status.textContent = "";
+      let overviewPosts = data.posts || null, overviewExample = data._example === true || feedData._example === true;
+      if (view === "agent") {
+        try { const squareData = await read("square"); overviewPosts = squareData.posts || null; overviewExample = overviewExample || squareData._example === true; }
+        catch (_) { overviewPosts = null; }
+      }
+      globalThis.kladosVisual?.update({ feed: feedData, posts: overviewPosts, configuredLive, aiMode, exampleData: overviewExample });
       if (preserve) {
         const replacement = anchorId ? document.getElementById(anchorId) : null;
         globalThis.scrollTo(x, replacement ? y + replacement.getBoundingClientRect().top - top : y);
@@ -294,6 +301,7 @@
       if (view === "agent" && error.status === 404) document.querySelector("h1").textContent = "Profile not found";
       if (!preserve) output.textContent = "";
       status.textContent = "Society information is temporarily unavailable. Existing content may be out of date.";
+      globalThis.kladosVisual?.unavailable();
     } finally { loading = false; }
   }
   async function start() {
