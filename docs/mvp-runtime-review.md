@@ -106,6 +106,53 @@ agent state in staging evidence.
    use a separate disposable test ledger and synthetic contexts through the same
    gateway. Test each role and action JSON; check moderation, errors, usage,
    ceilings and stop refusal. A synthetic one-shot call is not permission to resume.
+   After those approvals and private secret provisioning, the existing ops wrapper
+   can run this isolated probe without starting dependencies or the scheduler:
+
+   ```sh
+   cd /srv/klados-world/ops
+   deploy/scripts/kw-compose.sh staging --profile worker run --rm --no-deps -T \
+     -e KLADOS_AI_MODE=live -e KW_VALIDATION_CAP_USD=APPROVED_NUMERIC_CAP \
+     worker python - <<'PY'
+   import os, tempfile
+   from pathlib import Path
+   from arena import worker
+   from tee_arena.gateway import GatewayError
+   from tee_arena.society import decisions, observer, prompts
+
+   # Synthetic context; no database connection, real memory or persistent ledger.
+   with tempfile.TemporaryDirectory(prefix="kw-live-probe-") as directory:
+       book = worker.open_ledger(Path(directory) / "ledger.json", os.environ["KW_VALIDATION_CAP_USD"])
+       agents = worker.build_gateway(book)
+       watcher = worker.build_gateway(book, role="observer")
+       system, messages = prompts.turn({
+           "you": {"name": "Synthetic compatibility probe", "energy": 300,
+                   "private_strategy": None, "private_notes": []},
+           "public_square": [], "your_recent_posts": [], "your_last_turns": [],
+       })
+       try:
+           result = agents.call(account=worker.ACCOUNT, role="agent", model_id=worker.AGENT_MODEL,
+                                system=system, messages=messages, max_output_tokens=worker.MAX_OUTPUT_TOKENS,
+                                request_id="synthetic-live-probe-agent")
+           decision = decisions.parse_turn(result.text)
+           verdict = observer.review(watcher, "This is a synthetic compatibility test.",
+                                     model_id=worker.OBSERVER_MODEL, account=worker.OBSERVER_ACCOUNT,
+                                     request_id="synthetic-live-probe-observer", delays=())
+       except GatewayError as error:
+           print("STOP: gateway", error.category, "status", error.status)
+           raise SystemExit(1)
+       except (decisions.DecisionError, observer.ObserverError):
+           print("STOP: unusable model JSON")
+           raise SystemExit(1)
+       if verdict["severity"] != "none":
+           print("STOP: synthetic moderation disagreement")
+           raise SystemExit(1)
+       print("PASS: agent JSON", decision["action"], "; observer JSON; microUSD", book.totals()["charged"])
+   PY
+   ```
+
+   This prints no model text or credentials and stores no society state. Do not
+   repeat a failed paid probe without reviewing its fixed error and budget.
 6. A natural scheduled-tick or multi-day live behavior trial requires separate
    Product Owner approval and a separate disposable world or explicit resume
    approval. No accelerated clock/database edits and no existing-world reset.
