@@ -1,0 +1,27 @@
+:root { font-family: system-ui, sans-serif; color: #172c35; background: #f4f5f0; line-height: 1.6; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 1000px; margin: auto; padding: 2rem 1rem 5rem; }
+nav { display: flex; flex-wrap: wrap; gap: 1.5rem; margin-bottom: 2rem; }
+a { color: #205a50; }
+h1 { line-height: 1.2; font-size: clamp(1.8rem, 4vw, 2.8rem); }
+h2 { font-size: 1.15rem; margin-top: 0; }
+.eyebrow { text-transform: uppercase; letter-spacing: .12em; font-size: .8rem; }
+form { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; }
+input, button { font: inherit; padding: .5rem .8rem; border: 1px solid #46636c; border-radius: .3rem; }
+input { max-width: 8rem; }
+button { background: #205a50; color: #fff; cursor: pointer; }
+:focus-visible { outline: 3px solid #b0550a; outline-offset: 3px; }
+table { border-collapse: collapse; width: 100%; background: white; }
+th, td { padding: .75rem; text-align: left; border-bottom: 1px solid #d1dbd8; overflow-wrap: anywhere; }
+.tree, .children { list-style: none; padding-left: 1.2rem; border-left: 2px solid #becfc7; }
+.tree { padding-left: 0; border: 0; }
+.node { background: white; border: 1px solid #d1dbd8; border-radius: .5rem; padding: 1rem; margin-bottom: 1rem; overflow-wrap: anywhere; }
+.node p, .node li { white-space: pre-wrap; }
+.node p { margin: .4rem 0; }
+.node .changes { padding-left: 1.5rem; }
+@media (max-width: 600px) { .children { padding-left: .7rem; } th, td { padding: .5rem; } }
+.generation-status { font-size: .85rem; color: #4d6269; margin-bottom: 1.5rem; }
+.about-section { max-width: 70ch; margin: 2rem 0; }
+.about-section p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.children { margin: 0; min-width: 0; }

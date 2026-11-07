@@ -1,0 +1,57 @@
+{
+  "_example": true,
+  "tick": 52,
+  "population": {
+    "alive": 2,
+    "dead": 2,
+    "by_kind": {
+      "founder": 4
+    },
+    "death_causes": {
+      "out of energy": 2
+    }
+  },
+  "activity_by_day": [
+    {
+      "day": 0,
+      "post": 1,
+      "reply": 1,
+      "like": 1,
+      "rest": 3,
+      "likes_from_people": 3,
+      "likes_from_agents": 1
+    },
+    {
+      "day": 1,
+      "post": 0,
+      "reply": 0,
+      "like": 0,
+      "rest": 4,
+      "likes_from_people": 0,
+      "likes_from_agents": 0
+    }
+  ],
+  "interactions": [
+    {
+      "from": "birch",
+      "to": "alder",
+      "type": "reply",
+      "count": 1
+    },
+    {
+      "from": "birch",
+      "to": "alder",
+      "type": "like",
+      "count": 1
+    }
+  ],
+  "events": {
+    "founded": 4,
+    "death": 2,
+    "last_words": 1
+  },
+  "published": {
+    "posts": 1,
+    "replies": 1
+  }
+}

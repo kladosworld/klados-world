@@ -1,0 +1,152 @@
+# Local/isolated development only. No external volumes, host paths, or Docker socket.
+name: klados-dev
+
+x-app: &app
+  image: ${COMPOSE_PROJECT_NAME:-klados-dev}-app:local
+  build:
+    context: ../..
+    dockerfile: deployment/local/Dockerfile
+    target: runtime
+  init: true
+  user: "10001:10001"
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 128
+  cpus: 1.0
+  mem_limit: 512m
+  stop_grace_period: 20s
+  logging:
+    driver: json-file
+    options:
+      max-size: "5m"
+      max-file: "2"
+
+x-database-env: &database-env
+  ARENA_DATABASE_URL: postgresql://klados:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deployment/local/.env}@db:5432/klados_dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: klados_dev
+      POSTGRES_USER: klados
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    command: [postgres, -c, log_error_verbosity=terse, -c, log_min_error_statement=panic, -c, log_statement=none]
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U klados -d klados_dev']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 128
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "2"}
+
+  init:
+    <<: *app
+    command: [python, -m, arena.runtime, bootstrap]
+    environment:
+      <<: *database-env
+      KLADOS_AI_MODE: mock
+    volumes: [state:/data]
+    networks: [database]
+    depends_on:
+      db: {condition: service_healthy}
+    restart: "no"
+
+  web:
+    <<: *app
+    environment:
+      <<: *database-env
+      KLADOS_SOCIETY_PUBLIC: "1"
+      KLADOS_AI_MODE: ${KLADOS_AI_MODE:-mock}
+      # Read-only public views work without authentication. Write actions fail closed.
+      ARENA_AUTH: ""
+      ARENA_DEV_AUTH: "0"
+    ports: ["127.0.0.1:${KLADOS_PORT:-8080}:8000"]
+    networks: [database]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).close()"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+
+  worker:
+    <<: *app
+    command: [python, -m, arena.scheduler, --ledger, /data/ledger.json, --reports, /data/reports]
+    environment:
+      <<: *database-env
+      KLADOS_SOCIETY_PUBLIC: "0"
+      KLADOS_AI_MODE: ${KLADOS_AI_MODE:-mock}
+      OPENROUTER_API_KEY_AGENTS: ${OPENROUTER_API_KEY_AGENTS:-}
+      OPENROUTER_API_KEY_OBSERVER: ${OPENROUTER_API_KEY_OBSERVER:-}
+      OPENROUTER_API_KEY: ""
+    volumes:
+      - state:/data
+      - control:/etc/klados-control:ro
+    networks: [database, outbound]
+    depends_on:
+      init: {condition: service_completed_successfully}
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, python, -m, arena.runtime, worker-health]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  tools:
+    <<: *app
+    profiles: [tools]
+    entrypoint: [python, -m, arena.runtime]
+    command: [status]
+    environment:
+      <<: *database-env
+      KLADOS_SOCIETY_PUBLIC: "0"
+      KLADOS_AI_MODE: ${KLADOS_AI_MODE:-mock}
+    volumes:
+      - state:/data
+      - control:/etc/klados-control
+    networks: [database]
+    depends_on:
+      db: {condition: service_healthy}
+    restart: "no"
+
+  tests:
+    <<: *app
+    image: ${COMPOSE_PROJECT_NAME:-klados-dev}-tests:local
+    build:
+      context: ../..
+      dockerfile: deployment/local/Dockerfile
+      target: tests
+    profiles: [tests]
+    environment:
+      <<: *database-env
+      ARENA_TEST_DSN: postgresql://klados:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/klados_dev
+      ARENA_REQUIRE_DB: "1"
+    networks: [database]
+    depends_on:
+      db: {condition: service_healthy}
+    restart: "no"
+
+volumes:
+  postgres_data:
+  state:
+  control:
+networks:
+  database:
+    internal: true
+  outbound:
