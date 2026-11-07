@@ -1,15 +1,19 @@
-"""Synthetic layer tests only; no approved purpose text or activation is implied."""
+"""Offline prompt/configuration contracts; no live activation or provider calls."""
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
+from hashlib import sha256
 import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from tee_arena.society import constitution, prompts, shared_purpose as purpose
+from tee_arena.society import constitution, decisions, prompts, shared_purpose as purpose
 
 SYNTHETIC = purpose.Purpose("synthetic-test-v1", "Synthetic test-only motivation.")
+APPROVED_VERSION = "building-a-society-v1"
+APPROVED_TEXT_SHA256 = "871041773852a433d19ba6d55afa313bf5bb377b7cedc327a45d329c6fd20065"
+APPROVED_LAYER_SHA256 = "e7d80cd0b482f19422d3c20ca0b96691fb6d322b7d17001aa7691c569135548f"
 
 
 class CompositionTests(unittest.TestCase):
@@ -86,7 +90,32 @@ class ConfigurationTests(unittest.TestCase):
                 with self.subTest(document=document), self.assertRaises(purpose.PurposeConfigurationError):
                     purpose.load_registry(path)
 
-    def test_missing_attachment_draft_cannot_activate_the_planned_version(self):
-        self.assertEqual(purpose.load_registry(), {})
-        with self.assertRaisesRegex(purpose.PurposeConfigurationError, "purpose_version_unavailable"):
-            purpose.from_environ({purpose.VARIABLE: "building-a-society-v1"})
+    def test_approved_text_and_complete_layer_match_reviewed_fingerprints(self):
+        registered = purpose.load_registry()
+        self.assertEqual(set(registered), {APPROVED_VERSION})
+        selected = purpose.from_environ({purpose.VARIABLE: APPROVED_VERSION})
+        self.assertEqual(selected, registered[APPROVED_VERSION])
+        self.assertEqual(sha256(selected.text.encode("utf-8")).hexdigest(), APPROVED_TEXT_SHA256)
+        self.assertEqual(selected.fingerprint(), APPROVED_LAYER_SHA256)
+
+    def test_approved_layer_is_separate_and_disabling_restores_all_original_prompts(self):
+        context = {"you": {"name": "Alder", "private_notes": ["Existing memory"]}}
+        original = deepcopy(context)
+        selected = purpose.from_environ({purpose.VARIABLE: APPROVED_VERSION})
+        for build in (prompts.turn, prompts.reflection, prompts.last_words):
+            baseline = build(context)
+            enabled, messages = build(context, purpose=selected)
+            self.assertEqual(enabled, selected.prefix() + baseline[0])
+            self.assertEqual(messages, baseline[1])
+            self.assertEqual(build(context, purpose=purpose.from_environ({purpose.VARIABLE: "off"})), baseline)
+        self.assertEqual(context, original)
+        self.assertIsNone(purpose.from_environ({}))
+
+    def test_governance_and_economy_language_does_not_add_action_capabilities(self):
+        selected = purpose.from_environ({purpose.VARIABLE: APPROVED_VERSION})
+        self.assertIn("governance", selected.text)
+        self.assertIn("economic cooperation", selected.text)
+        for action in ("vote", "transact", "create_organization", "change_rules", "change_infrastructure"):
+            with self.subTest(action=action), self.assertRaises(decisions.DecisionError) as caught:
+                decisions.parse_turn(json.dumps({"action": action}))
+            self.assertEqual(caught.exception.code, "unknown_action")

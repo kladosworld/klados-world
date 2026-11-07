@@ -1,20 +1,31 @@
-# Shared purpose: draft implementation and evaluation plan
+# Shared purpose: implementation and evaluation plan
 
-**Blocked on the exact Product Owner text.** The referenced “Shared Purpose —
-Building a Society” attachment was not available in this session or workspace.
-No replacement wording has been inferred. `config/shared-purposes-v1.json` therefore
-contains no selectable purpose. Selecting `building-a-society-v1` fails closed.
-All enabled-layer tests use explicitly synthetic text and fake providers.
+The Product Owner's exact **Shared Purpose — Building a Society** instruction is
+registered as `building-a-society-v1` in `config/shared-purposes-v1.json`, including
+its supplied heading and paragraph/list formatting. Registration is not activation:
+the default remains **off**, and no operational setting has been changed.
+
+Canonical text uses UTF-8 with LF line breaks and no terminal newline:
+
+- Text SHA256: `871041773852a433d19ba6d55afa313bf5bb377b7cedc327a45d329c6fd20065`
+- Complete layer SHA256 (including the autonomy boundary):
+  `e7d80cd0b482f19422d3c20ca0b96691fb6d322b7d17001aa7691c569135548f`
+
+Offline tests pin both fingerprints, test the approved layer with fake providers,
+and verify that turning it off restores the original prompts and context exactly.
+Its governance/economic language concerns discussion and proposals only; the action
+parser still rejects voting, transactions, institution creation, rule changes and
+infrastructure changes as unsupported actions.
 
 This branch is stacked on PR #9 at
 `ec90171fd4a0bcacf694601696672353426c18c0`; that PR is neither changed nor merged.
-This draft does not activate a purpose, call a live model, resume a society or deploy.
+This change does not activate a purpose, call a live model, resume a society or deploy.
 
 ## Composition contract
 
 - Default/unset `KLADOS_SHARED_PURPOSE`, or exact `off`: original prompts byte for byte.
   Disabled mode does not even read the purpose registry.
-- A future approved version may be selected only from the packaged registry. No
+- An approved version may be selected only from the packaged registry. No
   environment-provided instruction text, arbitrary file paths, remote instructions,
   public API setting or agent context can enable or replace it.
 - Each purpose has an immutable version, exact text and SHA256 fingerprint of the
@@ -42,19 +53,18 @@ automatically forward the new worker setting; any future platform wiring/activat
 requires explicit operator approval and Claude review. No Compose, Docker, system
 service, secret, network or permission file is changed here.
 
-## Required completion before review-ready status
+## Review and approval gates
 
-1. Receive and review the exact common instruction against the Product Owner's
-   stated autonomy, capability and safety boundaries. Resolve any contradiction
-   with the owner; do not rewrite approved text silently.
-2. Add that text verbatim under a reviewed version such as `building-a-society-v1`.
-   Record the exact layer fingerprint and revise the pending-attachment regression
-   into an exact-content/configuration regression. Keep default selection `off`.
-3. Re-run prompt/configuration, native worker/scheduler and full PR #9 regressions.
+1. Review the registered text and the pinned text/layer fingerprints. The approved
+   instruction encourages cooperation without requiring agreement or collective
+   interests over personal ones; no predetermined political system is added.
+2. Keep default selection `off`. Text approval does not approve merging, deploying
+   or activating this version. No platform setting has been forwarded or enabled.
+3. Run prompt/configuration, native worker/scheduler and full PR #9 regressions.
    Compare hashes of founder definitions, constitution, rules, moderation and action
    parser. Test compatibility with the frontend branch without merging either PR.
 4. Obtain separate PR merge, staging deployment and activation approvals. A merge or
-   a successful test is not approval to activate. No trial is run as part of this draft.
+   a successful test is not approval to activate. No trial is run as part of this change.
 
 ## A/B evaluation: protocol to approve before paid execution
 
@@ -130,9 +140,10 @@ out of the manifest. Retention and access to private test artifacts need owner a
 
 ## Product Owner / Claude decisions
 
-Exact instruction text and version, merge/deploy/activation approvals, trial host and
-resource capacity, budget, duration/replications, privacy/retention policy and preregistered
-acceptance rubric remain required. Governance, transactions, reproduction, external
+The exact instruction text and version are now registered. Merge/deploy/activation
+approvals, trial host and resource capacity, budget, duration/replications,
+privacy/retention policy and preregistered acceptance rubric remain required.
+Governance, transactions, reproduction, external
 registration and new capabilities remain out of scope. Claude receives the unchanged
 runtime contract plus the proposed worker-only non-secret setting for later review;
 no infrastructure acceptance or activation is claimed.
