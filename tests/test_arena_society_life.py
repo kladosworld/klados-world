@@ -3,6 +3,8 @@ from datetime import timedelta
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from tests.test_arena_society import RULES, SocietyCase
 
@@ -99,6 +101,17 @@ class ActTests(LifeCase):
 
 
 class ContextTests(LifeCase):
+    def test_recent_turns_distinguish_chosen_rest_from_failed_calls_and_refused_actions(self):
+        self.turn("alder", action="rest")
+        self.next_hour()
+        self.assertTrue(society.claim_turn(self.conn, "alder", self.tick, self.now))
+        society_life.fail_turn(self.conn, "alder", self.tick, "reply_invalid_json")
+        self.next_hour()
+        self.turn("alder", action="reply", post_id=999, text="Hello?")
+        recent = society_life.turn_context(self.conn, RULES, "alder")["your_last_turns"]
+        self.assertEqual([(r["action"], r["error"]) for r in recent],
+                         [("rest", "no_such_post"), ("rest", "reply_invalid_json"), ("rest", None)])
+
     def test_a_founder_sees_only_its_own_private_memory(self):
         self.publish(self.turn("alder", action="post", text="Hello.", note="alder secret")["post_id"])
         self.conn.execute("""INSERT INTO society_strategies (agent_id, version, text, tick, created_at)
@@ -134,6 +147,19 @@ class ContextTests(LifeCase):
 
 
 class ReflectionTests(LifeCase):
+    def test_daily_likes_count_receipt_time_including_older_posts_and_exclude_later_likes(self):
+        post = self.publish(self.turn("alder", action="post", text="A thought from yesterday.")["post_id"])
+        self.turn("birch", action="like", post_id=post)
+        self.hours(24)
+        self.tick = society.clock(self.conn)["tick"]
+        self.turn("cedar", action="like", post_id=post)
+        self.hours(23)
+        day0 = society_life.reflection_context(self.conn, RULES, "alder", 0)["the_day"]
+        day1 = society_life.reflection_context(self.conn, RULES, "alder", 1)["the_day"]
+        self.assertEqual(day0["likes_received"], {"from_people": 0, "from_founders": 1})
+        self.assertEqual(day1["likes_received"], {"from_people": 0, "from_founders": 1})
+        self.assertEqual(day1["your_posts"], [])
+
     def test_one_reflection_per_day_with_versioned_strategy(self):
         self.assertEqual(society_life.reflections_due(self.conn), [])
         self.hours(23)
@@ -187,6 +213,29 @@ class WorkerCase(LifeCase):
 
 
 class WorkerTests(WorkerCase):
+    def test_reflection_retry_cap_refusal_pauses_immediately(self):
+        run = self.make({"Alder": '{"action": "rest"}'})
+        self.hours(23)
+        with patch.object(run, "call", side_effect=[SimpleNamespace(text="thinking", charged_microusd=7),
+                                                    GatewayError("cap_exceeded")]):
+            self.assertEqual(run.reflect("alder", 0, 24), "stop")
+        self.assertTrue(society.clock(self.conn)["paused"])
+        row = self.conn.execute("SELECT * FROM society_reflections WHERE agent_id='alder'").fetchone()
+        self.assertEqual(row["charged_microusd"], 7)
+        self.assertEqual(row["private"]["error"], "call_cap_exceeded")
+
+    def test_reflection_retry_provider_failure_counts_charge_and_failure_threshold(self):
+        run = self.make({"Alder": '{"action": "rest"}'})
+        run.max_failures = 1
+        self.hours(23)
+        error = GatewayError("provider_failure", sent=True, charged_microusd=11)
+        with patch.object(run, "call", side_effect=[SimpleNamespace(text="thinking", charged_microusd=7), error]):
+            self.assertEqual(run.reflect("alder", 0, 24), "stop")
+        self.assertTrue(society.clock(self.conn)["paused"])
+        row = self.conn.execute("SELECT * FROM society_reflections WHERE agent_id='alder'").fetchone()
+        self.assertEqual(row["charged_microusd"], 18)
+        self.assertEqual(row["private"]["error"], "call_provider_failure")
+
     def test_founders_decide_and_unusable_replies_are_rests(self):
         script = {"Alder": '{"action": "post", "text": "I will speak rarely.", "reason": "save energy"}',
                   "Birch": "Let me think about it...",

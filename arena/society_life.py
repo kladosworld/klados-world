@@ -170,7 +170,9 @@ def turn_context(conn, rules, agent_id):
                                          WHERE kind = ANY(%s) AND id <> %s ORDER BY id""",
                                       (list(society.LIVING_KINDS), agent_id))]
     current = strategy(conn, agent_id)
-    recent = conn.execute("""SELECT tick, action, private->'outcome' AS outcome FROM society_turns
+    recent = conn.execute("""SELECT tick, action,
+                                    coalesce(private->'outcome'->>'error', private->>'error') AS error
+                             FROM society_turns
                              WHERE agent_id = %s AND status <> 'claimed' ORDER BY tick DESC LIMIT 5""",
                           (agent_id,)).fetchall()
     return {
@@ -197,7 +199,7 @@ def turn_context(conn, rules, agent_id):
         "your_recent_posts": _own_posts(conn, agent_id, tick),
         "recent_replies_to_you": _replies_to(conn, agent_id, tick, names),
         "your_last_turns": [{"hours_ago": tick - r["tick"], "action": r["action"],
-                             "error": (r["outcome"] or {}).get("error")} for r in recent],
+                             "error": r["error"]} for r in recent],
     }
 
 
@@ -238,6 +240,10 @@ def reflection_context(conn, rules, agent_id, day):
         """SELECT action, count(*) AS n FROM society_turns WHERE agent_id = %s AND tick BETWEEN %s AND %s
            GROUP BY action""", (agent_id, first, last))}
     current = strategy(conn, agent_id)
+    received = {r["from_kind"]: r["n"] for r in conn.execute(
+        """SELECT from_kind, count(*) AS n FROM society_likes
+           WHERE target_id = %s AND tick BETWEEN %s AND %s GROUP BY from_kind""",
+        (agent_id, first, last))}
     return {
         "you": {"name": agent["name"], "day_of_life_ended": day, "max_days": rules.max_days,
                 "personality": agent["public_description"],
@@ -251,8 +257,8 @@ def reflection_context(conn, rules, agent_id, day):
                                     "likes": _likes_by_source(conn, p["id"]), "replies": p["replies"]}
                                    for p in posts],
                     "likes_received": {
-                        "from_people": sum(_likes_by_source(conn, p["id"])["from_people"] for p in posts),
-                        "from_founders": sum(_likes_by_source(conn, p["id"])["from_founders"] for p in posts)},
+                        "from_people": received.get("human", 0),
+                        "from_founders": received.get("agent", 0)},
                     "replies_to_you": [{"from": names[r["author_id"]], "text": r["text"]} for r in replies]},
     }
 

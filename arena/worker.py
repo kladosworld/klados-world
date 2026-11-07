@@ -152,12 +152,16 @@ class Worker:
                 charged += result.charged_microusd
                 decision = decisions.parse_reflection(result.text)
             except (decisions.DecisionError, gateway_module.GatewayError) as error:
+                if isinstance(error, gateway_module.GatewayError):
+                    charged += error.charged_microusd
                 code = "reply_" + getattr(error, "code", None) if isinstance(error, decisions.DecisionError) \
                     else "call_" + error.category
                 society_life.record_reflection(self.conn, agent_id, day, tick, None, self.now(),
                                                charged_microusd=charged, error=code)
                 self.conn.commit()
                 self.log.append({"agent": agent_id, "day": day, "tick": tick, "error": "reflection " + code})
+                if isinstance(error, gateway_module.GatewayError) and self._failed(error):
+                    return "stop"
                 return "failed"
         outcome = society_life.record_reflection(self.conn, agent_id, day, tick, decision, self.now(),
                                                  charged_microusd=charged)

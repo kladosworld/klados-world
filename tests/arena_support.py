@@ -1,5 +1,10 @@
 """Isolated PostgreSQL fixtures; no external services or model calls."""
 import os
+import atexit
+from pathlib import Path
+import socket
+import subprocess
+import tempfile
 import unittest
 from uuid import uuid4
 
@@ -10,6 +15,48 @@ try:
 except ImportError:
     psycopg = None
 
+def _ci_database():
+    """Use an ephemeral, loopback-only DB from runner binaries; no service or package changes.
+
+    Explicit test DSNs always win. CI must fail rather than silently skip DB regressions.
+    Never runs on the deployment host or during ordinary application startup.
+    """
+    if os.getenv('ARENA_TEST_DSN') or os.getenv('GITHUB_ACTIONS') != 'true' or os.name != 'posix':
+        return
+    candidates = sorted(Path('/usr/lib/postgresql').glob('*/bin'), reverse=True)
+    binary = next((p for p in candidates if (p / 'initdb').is_file() and (p / 'pg_ctl').is_file()), None)
+    if binary is None or psycopg is None:
+        raise RuntimeError('CI requires preinstalled PostgreSQL binaries and psycopg; no DB skips allowed')
+    directory = tempfile.TemporaryDirectory(prefix='kw-pg-')
+    root = Path(directory.name)
+    data = root / 'data'
+    started = False
+
+    def stop():
+        if started or (data / 'postmaster.pid').exists():
+            subprocess.run([str(binary / 'pg_ctl'), '-D', str(data), '-m', 'fast', '-w', 'stop'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
+        directory.cleanup()
+
+    try:
+        subprocess.run([str(binary / 'initdb'), '-D', str(data), '-U', 'kw_test_runner',
+                        '-A', 'trust', '--no-sync'], check=True, capture_output=True, timeout=30)
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0))
+            port = listener.getsockname()[1]
+        subprocess.run([str(binary / 'pg_ctl'), '-D', str(data), '-l', str(root / 'postgres.log'),
+                        '-o', f'-h 127.0.0.1 -p {port} -k {root}', '-w', 'start'],
+                       check=True, capture_output=True, timeout=30)
+        started = True
+        os.environ['ARENA_TEST_DSN'] = f'host=127.0.0.1 port={port} dbname=postgres user=kw_test_runner'
+        os.environ['ARENA_REQUIRE_DB'] = '1'
+    except Exception:
+        stop()
+        raise
+    atexit.register(stop)
+
+
+_ci_database()
 DSN = os.getenv('ARENA_TEST_DSN')
 if os.getenv('ARENA_REQUIRE_DB') == '1' and not (DSN and psycopg):
     raise RuntimeError('ARENA_REQUIRE_DB=1 requires psycopg and ARENA_TEST_DSN')
