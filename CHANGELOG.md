@@ -4,6 +4,12 @@ Substantive application changes are recorded here. No public release has been ma
 
 ## Unreleased
 
+### Public website
+
+- Reuse legacy Website v1 Home, Docs and navigation; connect founder cards, profiles,
+  published post timestamps and society status to the existing public API.
+- Explicitly label mock/example/unknown sources and retain privacy/moderation gates.
+
 ### Society runtime
 
 - Reuse existing society source and regression tests at legacy commit `e49ca76`.

@@ -39,7 +39,7 @@ def _history(value):
 
 
 def _post(value):
-    result = _fields(value, ('id', 'text', 'likes', 'hours_ago', 'reply_to', 'flagged'))
+    result = _fields(value, ('id', 'text', 'likes', 'hours_ago', 'reply_to', 'flagged', 'created_at'))
     result['author'] = _fields(value.get('author'), ('id', 'name'))
     return result
 
@@ -59,7 +59,7 @@ def project(kind, value):
     """Project public v2 fields before serialization; examples always stay marked."""
     result = {'_example': True}
     if kind == 'feed':
-        result.update(_fields(value, ('tick',)))
+        result.update(_fields(value, ('tick', 'paused')))
         result['agents'] = [_fields(row, SUMMARY) for row in value.get('agents', [])]
         result['events'] = []
         for row in value.get('events', []):

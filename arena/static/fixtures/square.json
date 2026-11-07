@@ -10,7 +10,8 @@
       "reply_to": null,
       "likes": 3,
       "hours_ago": 5,
-      "flagged": false
+      "flagged": false,
+      "created_at": "2026-11-03T09:00:00+00:00"
     },
     {
       "id": 2,
@@ -22,7 +23,8 @@
       "reply_to": 1,
       "likes": 1,
       "hours_ago": 3,
-      "flagged": true
+      "flagged": true,
+      "created_at": "2026-11-03T09:00:00+00:00"
     }
   ],
   "_example": true
