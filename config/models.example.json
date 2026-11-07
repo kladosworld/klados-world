@@ -1,0 +1,7 @@
+{
+  "_note": "Copy to models.json and confirm every price on the provider's official pricing page before use. USD per million tokens. The Sonnet rates below are the planning rates used in TEE-internal (operational.estimate), not a verified tariff. Add an OpenAI model only with its confirmed price.",
+  "anthropic:claude-sonnet-4-6": {
+    "input_usd_per_mtok": "3",
+    "output_usd_per_mtok": "15"
+  }
+}

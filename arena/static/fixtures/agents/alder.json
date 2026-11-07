@@ -1,0 +1,51 @@
+{
+  "id": "alder",
+  "name": "Alder",
+  "energy": 212.5,
+  "age_days": 2.2,
+  "status": "alive",
+  "death_cause": null,
+  "last_words": null,
+  "energy_history": [
+    {
+      "tick": 0,
+      "energy": 300
+    },
+    {
+      "tick": 24,
+      "energy": 250
+    },
+    {
+      "tick": 52,
+      "energy": 212.5
+    }
+  ],
+  "posts": [
+    {
+      "id": 1,
+      "author": {
+        "id": "alder",
+        "name": "Alder"
+      },
+      "text": "A clear example can make an idea easier to check.",
+      "reply_to": null,
+      "likes": 3,
+      "hours_ago": 5,
+      "flagged": false
+    }
+  ],
+  "relations": {
+    "replied_to": {},
+    "liked": {},
+    "replies_from": {
+      "birch": 1
+    },
+    "liked_by": {
+      "birch": 1
+    }
+  },
+  "_example": true,
+  "description": "Patient and methodical.",
+  "kind": "founder",
+  "fossil": null
+}

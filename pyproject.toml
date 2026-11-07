@@ -5,10 +5,16 @@ build-backend = "hatchling.build"
 [project]
 name = "klados-world"
 version = "0.1.0.dev0"
-description = "Application foundation for the Klados World AI society platform"
+description = "Klados World society application and isolated development runtime"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+  "psycopg[binary]>=3.2,<4",
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.30,<1",
+  "httpx>=0.27,<1",
+  "openai>=1.40,<3",
+]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Programming Language :: Python :: 3",
@@ -23,6 +29,7 @@ Issues = "https://github.com/kladosworld/klados-world/issues"
 [project.optional-dependencies]
 dev = [
   "build==1.3.0",
+  "httpx2==2.16.0",
   "pre-commit==4.5.1",
   "pyright==1.1.408",
   "pytest==9.0.3",
@@ -30,12 +37,14 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/klados_world"]
+packages = ["src/klados_world", "arena", "tee_arena", "config"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "docs", "pyproject.toml", "README.md", "CHANGELOG.md"]
+include = ["src", "arena", "tee_arena", "config", "evals", "tests", "docs", "deployment/local", "pyproject.toml", "README.md", "CHANGELOG.md", ".dockerignore"]
 
 [tool.ruff]
+force-exclude = true
+extend-exclude = ["arena", "tee_arena", "tests/test_arena*.py", "tests/test_society*.py", "tests/arena_support.py", "tests/test_gateway.py", "tests/test_ledger.py", "tests/test_store.py"]
 target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
@@ -44,6 +53,7 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.pyright]
+exclude = ["arena", "tee_arena", "tests/test_arena*.py", "tests/test_society*.py", "tests/arena_support.py", "tests/test_gateway.py", "tests/test_ledger.py", "tests/test_store.py"]
 include = ["src", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
