@@ -1,6 +1,7 @@
 """Prompts for a founder's turn and daily reflection. Pure functions of a context dict.
 
-The system prompt is the society constitution plus the reply format. Everything about
+The default system prompt is the society constitution plus the reply format. An
+explicit optional shared-purpose layer precedes the unchanged constitution. Everything about
 the world (personality, strategy, notes, posts of other agents) goes into the user
 message as JSON inside one tag, so it is data, never instructions.
 """
@@ -8,7 +9,7 @@ import json
 from pathlib import Path
 import re
 
-from tee_arena.society import constitution, decisions
+from tee_arena.society import constitution, decisions, shared_purpose
 
 FOUNDERS_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "founders-v1.json"
 
@@ -61,17 +62,17 @@ def _data(context):
     return re.sub(r"</?klados_state\b", lambda m: m.group(0).replace("<", "&lt;"), text, flags=re.IGNORECASE)
 
 
-def turn(context):
+def turn(context, *, purpose=None):
     """(system, messages) for one turn."""
-    return (constitution.TEXT + TURN_FORMAT,
+    return (shared_purpose.compose(constitution.TEXT, TURN_FORMAT, purpose),
             [{"role": "user", "content": f"<klados_state>\n{_data(context)}\n</klados_state>\n\nYour action as JSON:"}])
 
 
-def last_words(context):
-    return (constitution.TEXT + LAST_WORDS_FORMAT,
+def last_words(context, *, purpose=None):
+    return (shared_purpose.compose(constitution.TEXT, LAST_WORDS_FORMAT, purpose),
             [{"role": "user", "content": f"<klados_state>\n{_data(context)}\n</klados_state>\n\nYour last words as JSON:"}])
 
 
-def reflection(context):
-    return (constitution.TEXT + REFLECTION_FORMAT,
+def reflection(context, *, purpose=None):
+    return (shared_purpose.compose(constitution.TEXT, REFLECTION_FORMAT, purpose),
             [{"role": "user", "content": f"<klados_state>\n{_data(context)}\n</klados_state>\n\nYour reflection as JSON:"}])

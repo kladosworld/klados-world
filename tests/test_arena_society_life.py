@@ -14,7 +14,7 @@ except ImportError:  # psycopg missing: the cases are skipped anyway
     society = society_life = society_moderation = worker = None
 from tee_arena import ledger as ledger_module
 from tee_arena.gateway import Gateway, GatewayError, ModelPrice, ProviderResponse
-from tee_arena.society import decisions, prompts
+from tee_arena.society import decisions, prompts, shared_purpose
 
 FOUNDERS = prompts.load_founders()
 MODEL = "openrouter:anthropic/claude-haiku-5.5"
@@ -198,7 +198,7 @@ class ScriptedProvider:
 
 
 class WorkerCase(LifeCase):
-    def make(self, script, cap=5_000_000):
+    def make(self, script, cap=5_000_000, purpose=None):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         book = ledger_module.Ledger.create(Path(directory.name) / "ledger.json", global_cap=cap)
@@ -208,11 +208,26 @@ class WorkerCase(LifeCase):
         models = {MODEL: ModelPrice("0.10", "0.50"), OBSERVER: ModelPrice("0.10", "0.50")}
         gateway = Gateway(ledger=book, models=models, providers={"openrouter": self.provider}, stop_file=None)
         return worker.Worker(self.conn, RULES, gateway, observer_gateway=gateway, sleep=lambda s: None,
-                             now=lambda: self.now.replace(minute=59))
+                             now=lambda: self.now.replace(minute=59), purpose=purpose)
 
 
 
 class WorkerTests(WorkerCase):
+    def test_shared_layer_is_common_to_founders_and_absent_from_observer(self):
+        purpose = shared_purpose.Purpose("synthetic-test-v1", "Synthetic test-only motivation.")
+        run = self.make({"Alder": '{"action":"post","text":"A synthetic idea."}',
+                         "Birch": '{"action":"rest"}', "Cedar": '{"action":"rest"}',
+                         "Hazel": '{"action":"rest"}'}, purpose=purpose)
+        self.assertEqual(run.run()["turns"], 4)
+        agent_calls = [r for r in self.provider.requests if "<klados_state>" in r.messages[0]["content"]]
+        observer_calls = [r for r in self.provider.requests if "<post>" in r.messages[0]["content"]]
+        self.assertEqual(len(agent_calls), 4)
+        self.assertTrue(all(r.system.startswith(purpose.prefix()) for r in agent_calls))
+        self.assertTrue(observer_calls)
+        self.assertTrue(all(purpose.text not in r.system for r in observer_calls))
+        self.assertEqual(self.agent("alder")["name"], "Alder")
+        self.assertEqual(society_life.notes(self.conn, "alder"), [])
+
     def test_reflection_retry_cap_refusal_pauses_immediately(self):
         run = self.make({"Alder": '{"action": "rest"}'})
         self.hours(23)

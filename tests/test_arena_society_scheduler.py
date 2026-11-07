@@ -1,6 +1,8 @@
 from datetime import timedelta
 from pathlib import Path
 import tempfile
+import os
+from unittest.mock import patch
 
 from tests.arena_support import DSN, psycopg
 from tests.test_arena_society import RULES
@@ -21,6 +23,14 @@ class SchedulerTests(WorkerCase):
 
     def step(self, at):
         return scheduler.step(self.conn, RULES, self.gateway, self.gateway, at)
+
+    def test_invalid_purpose_config_cannot_advance_time_or_call_a_provider(self):
+        before = society.clock(self.conn)["tick"]
+        with patch.dict(os.environ, KLADOS_SHARED_PURPOSE="unavailable-test-v1"):
+            with self.assertRaises(scheduler.worker.shared_purpose.PurposeConfigurationError):
+                self.step(self.now + timedelta(hours=6))
+        self.assertEqual(society.clock(self.conn)["tick"], before)
+        self.assertEqual(self.provider.requests, [])
 
     def test_one_tick_per_hour_and_no_turn_twice_even_after_a_restart(self):
         start = self.now + timedelta(minutes=59)

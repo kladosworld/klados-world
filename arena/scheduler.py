@@ -39,6 +39,8 @@ def tick_due(state, now):
 
 def step(conn, rules, agents, watcher, now):
     """One pass. Returns a summary of counts (safe to log)."""
+    # Validate before any tick, claim, database mutation or provider call.
+    purpose = worker.shared_purpose.from_environ()
     state = society.clock(conn)
     result = {"tick": state["tick"], "paused": state["paused"]}
     if state["paused"]:
@@ -47,7 +49,8 @@ def step(conn, rules, agents, watcher, now):
         ticked = society.tick(conn, rules, now)
         conn.commit()
         result.update(tick=ticked["tick"], ticked=ticked["ticked"], deaths=len(ticked.get("deaths", [])))
-    summary = worker.Worker(conn, rules, agents, observer_gateway=watcher, now=lambda: now).run()
+    summary = worker.Worker(conn, rules, agents, observer_gateway=watcher, now=lambda: now,
+                            purpose=purpose).run()
     result.update({k: v for k, v in summary.items()})
     return result
 

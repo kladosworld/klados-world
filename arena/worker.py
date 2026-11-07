@@ -22,7 +22,7 @@ import time
 
 from arena import db, society, society_death, society_life, society_moderation
 from tee_arena import gateway as gateway_module, ledger as ledger_module
-from tee_arena.society import decisions, observer, prompts, rules as rules_module
+from tee_arena.society import decisions, observer, prompts, shared_purpose, rules as rules_module
 
 ROOT = Path(__file__).resolve().parent.parent
 MODELS_PATH = ROOT / "config" / "society-models.json"
@@ -38,7 +38,11 @@ BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
 
 class Worker:
     def __init__(self, conn, rules, gateway, *, observer_gateway=None, model_id=AGENT_MODEL,
-                 account=ACCOUNT, max_failures=3, delays=(10, 20, 40), sleep=time.sleep, now=None):
+                 account=ACCOUNT, max_failures=3, delays=(10, 20, 40), sleep=time.sleep, now=None,
+                 purpose=None):
+        if purpose is not None and not isinstance(purpose, shared_purpose.Purpose):
+            raise shared_purpose.PurposeConfigurationError("invalid_purpose")
+        self.purpose = purpose
         self.conn, self.rules, self.gateway = conn, rules, gateway
         self.observer_gateway = observer_gateway  # None: posts stay unpublished
         self.model_id, self.account, self.max_failures = model_id, account, max_failures
@@ -76,7 +80,7 @@ class Worker:
             return None
         self.conn.commit()  # the turn is spent even if everything below fails
         context = society_life.turn_context(self.conn, self.rules, agent_id)
-        system, messages = prompts.turn(context)
+        system, messages = prompts.turn(context, purpose=self.purpose)
         try:
             result = self.call(system, messages, f"klados.turn.{agent_id}.{tick}")
         except gateway_module.GatewayError as error:
@@ -133,7 +137,7 @@ class Worker:
 
     def reflect(self, agent_id, day, tick):
         context = society_life.reflection_context(self.conn, self.rules, agent_id, day)
-        system, messages = prompts.reflection(context)
+        system, messages = prompts.reflection(context, purpose=self.purpose)
         try:
             result = self.call(system, messages, f"klados.reflect.{agent_id}.{day}")
         except gateway_module.GatewayError as error:
@@ -178,7 +182,8 @@ class Worker:
             return None
         for fossil in society_death.pending(self.conn):
             agent_id = fossil["agent_id"]
-            system, messages = prompts.last_words(society_death.context(self.conn, self.rules, agent_id))
+            system, messages = prompts.last_words(society_death.context(self.conn, self.rules, agent_id),
+                                                 purpose=self.purpose)
             request = f"klados.lastwords.{agent_id}.{fossil['last_words_attempts']}"
             try:
                 result = self.call(system, messages, request)
@@ -274,10 +279,11 @@ def main(argv=None):
         print("error: ARENA_DATABASE_URL is required", file=sys.stderr)
         return 1
     rules = rules_module.load(os.environ.get("KLADOS_RULES") or rules_module.DEFAULT_PATH)
+    purpose = shared_purpose.from_environ()
     book = open_ledger(args.ledger, args.create_cap_usd)
     gateway, watcher = build_gateway(book), build_gateway(book, role="observer")
     with db.connect(dsn) as conn:
-        summary = Worker(conn, rules, gateway, observer_gateway=watcher).run()
+        summary = Worker(conn, rules, gateway, observer_gateway=watcher, purpose=purpose).run()
     print(summary)
     return 0
 
