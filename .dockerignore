@@ -26,3 +26,9 @@
 !tests/*.cjs
 !evals/
 !evals/society-observer-v1.json
+
+!requirements-runtime.lock
+!requirements-build.lock
+!requirements-dev.lock
+!requirements-build.in
+!build-inputs.json
