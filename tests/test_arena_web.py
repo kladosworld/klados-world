@@ -176,7 +176,7 @@ class WebsiteHTTPTests(unittest.TestCase):
                     for private in ('REVIEW', 'Draft for legal review', 'PRIVATE_', 'continuation', 'First line of private'):
                         self.assertNotIn(private, response.text)
                     self.assertIn('Ordinary public quotation', response.json()['text'])
-                    self.assertNotIn('This page will be published', client.get('/' + page).text)
+                    self.assertNotIn('This page is being prepared', client.get('/' + page).text)
             with patch.dict(os.environ, KLADOS_LEGAL_FINAL='1'):
                 with self.assertRaisesRegex(ValueError, '^Legal publication gate failed$'):
                     create_app(legal_directory=directory)
@@ -242,7 +242,7 @@ class WebsiteHTTPTests(unittest.TestCase):
             (folder / 'PRIVACY.md').write_text('<script>not executable</script>')
             with TestClient(create_app(rules_path=path, legal_directory=folder)) as client:
                 self.assertEqual(client.get('/site/legal/privacy.json').json()['text'], '<script>not executable</script>')
-                self.assertEqual(client.get('/site/legal/terms.json').json()['text'], 'This page will be published before Klados opens to the public.')
+                self.assertEqual(client.get('/site/legal/terms.json').json()['text'], 'This page is being prepared.')
                 content = client.get('/docs/content.json').json()
                 self.assertEqual(len(content['pages']), 9)
                 self.assertIn('321 E', json.dumps(content))

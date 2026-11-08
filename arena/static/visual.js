@@ -48,7 +48,7 @@
       card.hidden = !card.textContent.toLocaleLowerCase().includes(query);
     }
     const message = byId("feed-empty");
-    if (message) { message.hidden = visible > 0; message.textContent = query ? "No published activity matches your search." : "No activity in this view yet."; }
+    if (message) { message.hidden = visible > 0; message.textContent = query ? "No matches in this feed." : "Nothing to explore in this view yet."; }
     for (const button of document.querySelectorAll("[data-feed-filter]")) button.setAttribute("aria-pressed", String(button.dataset.feedFilter === selected));
   }
   search?.addEventListener("input", filter);
@@ -68,14 +68,14 @@
     const rows = Array.isArray(posts) ? posts : [];
     summary.replaceChildren();
     const energies = agents.filter(a => a.status === "alive" && finite(a.energy)).map(a => a.energy);
-    for (const [value, label] of [[Array.isArray(feed.agents) ? agents.length : "—", "Agents"], [Array.isArray(posts) ? rows.length : "—", "Feed posts"],
-      [energies.length ? (energies.reduce((a, b) => a + b, 0) / energies.length).toFixed(1) : "—", "Avg. alive E"],
+    for (const [value, label] of [[Array.isArray(feed.agents) ? agents.length : "—", "Agents"], [Array.isArray(posts) ? rows.length : "—", "Posts here"],
+      [energies.length ? (energies.reduce((a, b) => a + b, 0) / energies.length).toFixed(1) : "—", "Avg. energy (E)"],
       [Number.isInteger(feed.tick) ? feed.tick : "—", "Society hour"]]) {
       const item = node("div"); item.append(node("strong", value), node("span", label)); summary.appendChild(item);
     }
-    const source = !configuredLive || feed._example === true || exampleData ? "Example snapshot — not real society activity."
-      : aiMode === "mock" ? "Mock AI activity — scripted responses."
-      : aiMode === "live" ? "Public API · current visible posts, not a 24-hour ranking."
+    const source = !configuredLive || feed._example === true || exampleData ? "Example snapshot · illustrative data."
+      : aiMode === "mock" ? "Mock AI activity · scripted responses."
+      : aiMode === "live" ? "This feed · counts reflect the loaded posts and replies."
       : "AI source unverified.";
     byId("overview-source").textContent = source;
     const topics = new Map(), activity = new Map();
@@ -93,7 +93,7 @@
       line.append(node("span", tag), node("span", `${count} ${count === 1 ? "post" : "posts"}`));
       line.addEventListener("click", () => { if (search) { search.value = tag; selected = "latest"; filter(); search.focus(); } }); target.appendChild(line);
     }
-    if (!topics.size) target.appendChild(node("p", Array.isArray(posts) ? "No hashtags in the loaded public feed." : "Feed data unavailable.", "empty-note"));
+    if (!topics.size) target.appendChild(node("p", Array.isArray(posts) ? "No hashtags here yet." : "This feed is out of reach.", "empty-note"));
     const active = byId("world-agents"); active.replaceChildren();
     const ranking = [...activity.values()].sort((a, b) => b.count - a.count || String(a.author.name).localeCompare(String(b.author.name)));
     for (const [index, row] of ranking.slice(0, 5).entries()) {
@@ -103,13 +103,13 @@
       bar.setAttribute("aria-label", `${row.author.name || row.author.id}: ${row.count} visible posts and replies`);
       line.append(node("span", index + 1, "rank-number"), link, bar, node("span", row.count)); active.appendChild(line);
     }
-    if (!ranking.length) active.appendChild(node("p", Array.isArray(posts) ? "No published posts to rank." : "Feed data unavailable.", "empty-note"));
+    if (!ranking.length) active.appendChild(node("p", Array.isArray(posts) ? "No posts to rank yet." : "This feed is out of reach.", "empty-note"));
     const events = Array.isArray(feed.events) ? feed.events : [];
     const recent = byId("world-events"); recent.replaceChildren();
     for (const event of events.slice(0, 4)) {
       const item = node("p", undefined, "timeline-item"); item.append(node("span", finite(event.hours_ago) ? `${event.hours_ago} society h ago` : "World event"), node("span", event.text || "")); recent.appendChild(item);
     }
-    if (!events.length) recent.appendChild(node("p", "No public world events yet.", "empty-note"));
+    if (!events.length) recent.appendChild(node("p", "No world events to show.", "empty-note"));
     const output = byId("society-results");
     if (output && byId("feed-controls-marker")) {
       for (const old of output.querySelectorAll(":scope > .world-event")) old.remove();
@@ -124,7 +124,7 @@
     }
   }
   function unavailable() {
-    const source = byId("overview-source"); if (source) source.textContent = "Connection unavailable — any displayed overview is from the last loaded response and may be stale.";
+    const source = byId("overview-source"); if (source) source.textContent = "Connection lost · this overview may be stale.";
   }
   globalThis.kladosVisual = { update, unavailable };
 })();

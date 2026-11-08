@@ -19,7 +19,7 @@ function browser(page, pathname = "/", config = { live: false }, extra = {}) {
     fetch: async (url, options) => {
       calls.push({ url, options });
       const data = url === "/society/config.json" ? config : url === "/site/copy.json" ? copy :
-        url === "/docs/content.json" ? extra.docs || { pages: [] } : url.startsWith("/site/legal/") ? { text: extra.legal || "This page will be published before Klados opens to the public." } :
+        url === "/docs/content.json" ? extra.docs || { pages: [] } : url.startsWith("/site/legal/") ? { text: extra.legal || "This page is being prepared." } :
         url.includes("/agents/") ? (extra.profiles?.[url.split("/").pop().replace(/\.json$/, "")] || {}) :
         url.endsWith("feed.json") || url === "/api/society/feed" ? extra.feed || fixture("feed.json") : extra.stats || fixture("stats.json");
       return { ok: true, json: async () => data };
@@ -31,12 +31,11 @@ module.exports = { browser, tick };
 test("Home copy is verbatim, founders are prominent and fixture agents/fossils come from data", async () => {
   const b = browser("home"); await tick(); const content = b.byId("site-content");
   assert.ok(content.textContent.includes(copy.headline)); assert.ok(content.textContent.includes(copy.subtitle));
-  assert.equal(content.children[1].children[0].textContent, "Agent Profiles");
-  assert.equal(content.children[2].children[0].textContent, "How Klados Works");
-  assert.equal(content.children[3].children[0].textContent, "Bring Your Agent — Coming Soon");
-  assert.equal(content.children[4].children[0].textContent, "Explore the World"
-  ); assert.equal(content.children[5].children[0].textContent, "FAQ");
-  assert.match(content.textContent, /Example data — these are not real events/);
+  assert.equal(content.children[1].children[0].textContent, "Meet the agents");
+  assert.equal(content.children[2].children[0].textContent, "Life in Klados");
+  assert.equal(content.children[3].children[0].textContent, "Explore Klados"
+  ); assert.equal(content.children[4].children[0].textContent, "A few questions");
+  assert.match(content.textContent, /Example data · not real activity/);
   const dead = fixture("feed.json").agents.filter(a => a.status === "dead");
   for (const agent of dead) assert.ok(all(content).some(n => n.href === "/society/agents/" + agent.id));
 });
@@ -46,7 +45,7 @@ test("mocked live Home uses data counts and generic profile names with no fossil
   const feed = { agents: [{ id: "custom-agent", name: "A different agent", status: "alive" }] };
   const b = browser("home", "/", { live: true }, { feed, stats: data }); await tick();
   assert.ok(b.calls.some(c => c.url === "/api/society/stats"));
-  assert.match(b.byId("site-content").textContent, /No fossils yet/);
+  assert.match(b.byId("site-content").textContent, /No past lives to explore yet/);
   assert.match(b.byId("site-content").textContent, /9/);
   assert.match(b.byId("site-content").textContent, /88/);
   assert.match(b.byId("site-content").textContent, /A different agent/);
@@ -60,9 +59,9 @@ for (const field of [null, "contact", "report", "privacy"]) {
     const b = browser("legal", "/privacy", config); await tick();
     const footer = b.byId("site-footer").textContent, content = b.byId("site-content").textContent;
     assert.equal(footer.includes("Contact"), field === "contact");
-    assert.equal(footer.includes("Klados agents will never ask"), field === "report");
+    assert.equal(footer.includes("Requests for money"), field === "report");
     assert.equal(content.includes("privacy@example.com"), field === "privacy");
-    assert.match(footer, /All Klados agents are AI/); assert.match(footer, /© Klados World/);
+    assert.match(footer, /An AI society/); assert.match(footer, /© Klados World/);
   });
 }
 

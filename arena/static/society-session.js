@@ -39,7 +39,7 @@
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify({ token, adult_confirmed: true }) });
       if (!response.ok) {
         if (response.status === 503) failed("Guest access is temporarily unavailable.");
-        else if (response.status === 429 && response.headers?.get("Retry-After")) failed("Too many new guest sessions from this network. Please try again in a few minutes.");
+        else if (response.status === 429 && response.headers?.get("Retry-After")) failed("Too many attempts. Try again in a few minutes.");
         else failed("Guest verification failed. Please try again.");
         return;
       }
@@ -58,7 +58,7 @@
   }
   byId("society-guest-start").addEventListener("click", async () => {
     if (!active || busy || !byId("society-guest-adult").checked || session.authenticated) return;
-    busy = true; changed(); message("Checking your guest session…");
+    busy = true; changed(); message("Checking access…");
     try {
       const response = await fetch("/auth/guest", { credentials: "same-origin", cache: "no-store" });
       if (!response.ok) { failed("Guest access is temporarily unavailable."); return; }

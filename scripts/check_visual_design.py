@@ -73,7 +73,10 @@ def main():
                 ]
                 results.append({"page": name, "viewport": label, "axe_violations": violations})
                 assert not violations, (route, width, violations)
-                page.screenshot(path=str(output / f"{name}-{label}.png"), full_page=True)
+                page.evaluate("document.activeElement?.blur(); window.scrollTo(0,0)")
+                page.screenshot(
+                    path=str(output / f"{name}-{label}.png"), full_page=True, animations="disabled"
+                )
                 if name == "society":
                     assert page.locator(".thread").count() > 0
                     assert "Example snapshot" in page.locator("#overview-source").inner_text()
@@ -119,7 +122,7 @@ def main():
             lambda route: route.fulfill(status=503, json={"detail": "Unavailable"}),
         )
         page.goto(base + "/society", wait_until="networkidle")
-        assert "temporarily unavailable" in page.locator("#status").inner_text()
+        assert "Couldn't load the world" in page.locator("#status").inner_text()
         assert page.locator(".thread").count() == 0
         assert not errors, errors
         browser.close()

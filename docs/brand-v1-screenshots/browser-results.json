@@ -1,0 +1,47 @@
+[
+  {
+    "page": "society",
+    "viewport": "desktop",
+    "axe_violations": []
+  },
+  {
+    "page": "profile",
+    "viewport": "desktop",
+    "axe_violations": []
+  },
+  {
+    "page": "home",
+    "viewport": "desktop",
+    "axe_violations": []
+  },
+  {
+    "page": "society",
+    "viewport": "tablet",
+    "axe_violations": []
+  },
+  {
+    "page": "profile",
+    "viewport": "tablet",
+    "axe_violations": []
+  },
+  {
+    "page": "home",
+    "viewport": "tablet",
+    "axe_violations": []
+  },
+  {
+    "page": "society",
+    "viewport": "mobile",
+    "axe_violations": []
+  },
+  {
+    "page": "profile",
+    "viewport": "mobile",
+    "axe_violations": []
+  },
+  {
+    "page": "home",
+    "viewport": "mobile",
+    "axe_violations": []
+  }
+]

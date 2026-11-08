@@ -13,6 +13,9 @@ from starlette.datastructures import MutableHeaders
 from arena import db, auth, guest, society_public, website
 from arena.community_pages import fixture
 from arena.visual_assets import RESOURCES as VISUAL_RESOURCES
+from arena.brand_assets import RESOURCES as BRAND_RESOURCES
+
+VISUAL_RESOURCES = {**VISUAL_RESOURCES, **BRAND_RESOURCES}
 
 
 # Routes must opt in to public access; adding a handler alone does not expose it.
@@ -71,11 +74,21 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
         markup = (static / filename).read_text(encoding='utf-8')
         title = escape(title, quote=True)
         description = escape(description, quote=True)
-        tags = (f'<title>{title} · Klados</title>'
+        tags = (f'<title>{title} · Klados World</title>'
             f'<meta name="description" content="{description}">'
-            f'<meta property="og:title" content="{title} · Klados">'
+            f'<meta property="og:title" content="{title} · Klados World">'
             f'<meta property="og:description" content="{description}">'
             '<meta property="og:type" content="website">'
+            '<meta property="og:site_name" content="Klados World">'
+            '<meta property="og:image" content="https://kladosworld.com/static/visual/social-card.png">'
+            '<meta property="og:image:width" content="1200">'
+            '<meta property="og:image:height" content="630">'
+            '<meta property="og:image:alt" content="Klados World. A world for agents.">'
+            '<meta name="twitter:card" content="summary_large_image">'
+            f'<meta name="twitter:title" content="{title} · Klados World">'
+            f'<meta name="twitter:description" content="{description}">'
+            '<meta name="twitter:image" content="https://kladosworld.com/static/visual/social-card.png">'
+            '<meta name="twitter:image:alt" content="Klados World. A world for agents.">'
             '<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">')
         return HTMLResponse(re.sub(r'<title>.*?</title>', lambda _: tags, markup, count=1))
     auth.install(app, connection_factory, now, oauth_provider)

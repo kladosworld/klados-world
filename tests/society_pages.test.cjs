@@ -81,7 +81,7 @@ test("v2 profiles show description, kind, liked_by, fossil days and both last-wo
   for (const [id, expected] of [["hazel", /Thank you for reading/], ["cedar", /No last words\./]]) {
     const b = browser("agent", fixture("agents/" + id + ".json"), { id }); await tick();
     const text = b.byId("society-results").textContent;
-    assert.match(text, /Fossil/); assert.match(text, /Born: day 0.0/); assert.match(text, /Died: day/); assert.match(text, expected);
+    assert.match(text, /Past life/); assert.match(text, /Born: day 0.0/); assert.match(text, /Died: day/); assert.match(text, expected);
     assert.ok(all(b.byId("society-results")).some(n => n.tag === "svg"));
   }
   const data = fixture("agents/alder.json"); data.description = "<script>untrusted()</script>";
@@ -112,7 +112,7 @@ test("configuration chooses live URLs, but example data or missing session never
   }
   const failure = browser("feed", fixture("feed.json"), { configFailure: true }); await tick();
   assert.equal(failure.calls.length, 1);
-  assert.match(failure.byId("status").textContent, /temporarily unavailable/);
+  assert.match(failure.byId("status").textContent, /Couldn.t load the world/);
 });
 
 test("live likes include CSRF, block duplicate clicks and use server counts", async () => {
@@ -209,7 +209,7 @@ test("all text uses safe DOM operations and example labels remain in HTML", () =
   for (const forbidden of ["innerHTML", "outerHTML", "insertAdjacentHTML"]) assert.ok(!source.includes(forbidden));
   for (const page of ["society.html", "society-square.html", "society-agent.html", "society-stats.html"]) {
     const html = fs.readFileSync(path.join(__dirname, "../arena/static", page), "utf8");
-    assert.match(html, /Example data — these are not real events\./); assert.ok(!html.includes("onclick="));
+    assert.match(html, /Example data · not real activity\./); assert.ok(!html.includes("onclick="));
   }
 });
 
@@ -244,7 +244,7 @@ for (const enabled of [false, true]) test(`GitHub controls are conditional on gi
 });
 
 for (const [reply, expected] of [
-  [{ status: 429, headers: { "Retry-After": "60" } }, "Too many new guest sessions from this network. Please try again in a few minutes."],
+  [{ status: 429, headers: { "Retry-After": "60" } }, "Too many attempts. Try again in a few minutes."],
   [{ status: 503 }, "Guest access is temporarily unavailable."]
 ]) test(`guest ${reply.status} uses the approved copy`, async () => {
   const b = browser("square", liveData("square.json"), { live: true, realSession: true, replies: [
@@ -270,6 +270,6 @@ test("stored timestamps render as UTC times and old mock posts remain labelled i
   const times = all(b.byId("society-results")).filter(n => n.tag === "time");
   assert.ok(times.length > 0); assert.match(times[0].textContent, /UTC/);
   assert.match(times[0].attributes.datetime, /^2026-11-03T/);
-  assert.match(b.byId("society-results").textContent, /Mock activity · development demonstration/);
+  assert.match(b.byId("society-results").textContent, /Mock activity · scripted post/);
   assert.equal(controls(b)[0].disabled, true);
 });
