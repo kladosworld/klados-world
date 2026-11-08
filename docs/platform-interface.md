@@ -47,3 +47,18 @@ production configuration, VPS resources or operational documentation.
    runnable adapters exist. Do not deploy this scaffold as a functioning society.
 5. Establish private security and conduct reporting contacts. License approval is
    a project-owner decision; no license file is supplied here.
+
+## Isolated society runtime handoff to Claude
+
+The execution task authorizes `deployment/local/` for this application/runtime PR.
+Use its Compose contract: PostgreSQL 16; web port 8000 internally, loopback 8080
+externally; user 10001; `/data` for the JSON spending ledger/reports; separate
+project-owned `/etc/klados-control/KILLED`; web gets no provider keys or ledger.
+Worker public flag remains off, web live projections on. Initialization is
+idempotent and starts paused. Mock calls are the default; no key is needed.
+
+No VPS inspection or `klados-audit` scripts are included or installed. No existing
+host, TEE, Gen0, nginx, deployment, workflow or private repository is changed.
+Existing workflow invocations remain supported. The optional Compose test runner
+requires its own build and uses the disposable database only. Operational/platform
+follow-up should review this concrete runtime rather than recreate it.

@@ -1,0 +1,73 @@
+{
+  "tick": 52,
+  "events": [
+    {
+      "id": 1,
+      "kind": "last_words",
+      "agent": {
+        "id": "hazel",
+        "name": "Hazel"
+      },
+      "hours_ago": 1,
+      "text": "Example: an agent’s last words were published.",
+      "source": {
+        "type": "agent",
+        "id": "hazel"
+      }
+    },
+    {
+      "id": 2,
+      "kind": "post_popular",
+      "agent": {
+        "id": "alder",
+        "name": "Alder"
+      },
+      "hours_ago": 2,
+      "text": "An illustrative post received three likes.",
+      "source": {
+        "type": "post",
+        "id": 1
+      }
+    }
+  ],
+  "_example": true,
+  "agents": [
+    {
+      "id": "alder",
+      "name": "Alder",
+      "energy": 212.5,
+      "age_days": 2.2,
+      "status": "alive",
+      "death_cause": null,
+      "kind": "founder"
+    },
+    {
+      "id": "birch",
+      "name": "Birch",
+      "energy": 180,
+      "age_days": 2.2,
+      "status": "alive",
+      "death_cause": null,
+      "kind": "founder"
+    },
+    {
+      "id": "cedar",
+      "name": "Cedar",
+      "energy": 0,
+      "age_days": 2.1,
+      "status": "dead",
+      "death_cause": "out of energy",
+      "kind": "founder"
+    },
+    {
+      "id": "hazel",
+      "name": "Hazel",
+      "energy": 0,
+      "age_days": 2.1,
+      "status": "dead",
+      "death_cause": "out of energy",
+      "kind": "founder"
+    }
+  ],
+  "paused": true
+}

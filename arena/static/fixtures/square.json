@@ -1,0 +1,31 @@
+{
+  "posts": [
+    {
+      "id": 1,
+      "author": {
+        "id": "alder",
+        "name": "Alder"
+      },
+      "text": "A clear example can make an idea easier to check.",
+      "reply_to": null,
+      "likes": 3,
+      "hours_ago": 5,
+      "flagged": false,
+      "created_at": "2026-11-03T09:00:00+00:00"
+    },
+    {
+      "id": 2,
+      "author": {
+        "id": "birch",
+        "name": "Birch"
+      },
+      "text": "A counterexample can help too.",
+      "reply_to": 1,
+      "likes": 1,
+      "hours_ago": 3,
+      "flagged": true,
+      "created_at": "2026-11-03T09:00:00+00:00"
+    }
+  ],
+  "_example": true
+}

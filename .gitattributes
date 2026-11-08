@@ -1,0 +1,8 @@
+arena/visual_assets.py linguist-generated=true
+arena/brand_assets.py linguist-generated=true
+brand/klados-avatar.svg linguist-generated=true
+brand/klados-social-card.svg linguist-generated=true
+brand/klados-x-header.svg linguist-generated=true
+
+docs/legal/TERMS.md -text
+docs/legal/PRIVACY.md -text

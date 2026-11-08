@@ -1,0 +1,15 @@
+{
+  "_note": "Models the Klados society worker may call, all through OpenRouter. Prices in USD per million tokens, checked by Claude on 2026-11-03 on the OpenRouter model pages; they are ceilings (provider.max_price), so the ledger never undercounts. Recheck before changing.",
+  "_sources": [
+    "https://openrouter.ai/anthropic/claude-haiku-5-5",
+    "https://openrouter.ai/openai/gpt-6-luna"
+  ],
+  "openrouter:anthropic/claude-haiku-5.5": {
+    "input_usd_per_mtok": "0.10",
+    "output_usd_per_mtok": "0.50"
+  },
+  "openrouter:openai/gpt-6-luna": {
+    "input_usd_per_mtok": "0.10",
+    "output_usd_per_mtok": "0.50"
+  }
+}
