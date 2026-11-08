@@ -46,6 +46,28 @@ class BuildInputTests(unittest.TestCase):
         self.assertEqual(plans[0], plans[1])
         self.assertGreater(len(plans[0]), 20)
 
+    @unittest.skipUnless(os.getenv('GITHUB_ACTIONS') == 'true' and sys.version_info[:2] == (3, 13),
+                         'locked 3.12 suite runs in Docker; fresh 3.13 environment runs in CI')
+    def test_complete_suite_in_fresh_locked_python313_environment(self):
+        with tempfile.TemporaryDirectory(prefix='kw-locked-python-') as directory:
+            environment = Path(directory) / 'venv'
+            subprocess.run([sys.executable, '-m', 'venv', str(environment)], check=True,
+                           capture_output=True, timeout=60)
+            python = environment / 'bin' / 'python'
+            for arguments in [
+                ['--only-binary=:all:', '--require-hashes', '-r', str(ROOT / 'requirements-dev.lock')],
+                ['--no-deps', '--no-build-isolation', str(ROOT)],
+            ]:
+                result = subprocess.run([str(python), '-m', 'pip', 'install', *arguments],
+                    capture_output=True, text=True, timeout=240)
+                self.assertEqual(result.returncode, 0, result.stderr[-4000:])
+            result = subprocess.run([str(python), '-m', 'pytest', '-q', '-p', 'no:cacheprovider'],
+                cwd=ROOT, env=dict(os.environ, GITHUB_ACTIONS='false'),
+                capture_output=True, text=True, timeout=600)
+            self.assertEqual(result.returncode, 0, result.stdout[-6000:] + result.stderr[-2000:])
+            with self.output_capture.disabled():
+                print('LOCKED_PYTHON313_TESTS ' + result.stdout[-1800:], flush=True)
+
     @unittest.skipUnless(os.getenv('GITHUB_ACTIONS') == 'true' and sys.version_info[:2] == (3, 12),
                          'runtime image is Python 3.12; build once on isolated CI runner')
     def test_runtime_image_repeat_build_has_same_packages_and_records_provenance(self):

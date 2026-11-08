@@ -1,8 +1,8 @@
-﻿# Reproducible application inputs
+# Reproducible application inputs
 
 The application runtime uses `requirements-runtime.lock`; build tooling and test tooling use separate hash-verified locks. The locks were compiled by uv 0.13.7 with universal Python 3.12+ resolution. Every Docker install uses `--require-hashes` and binary distributions. The application wheel is built using locked Hatchling without isolated dependency downloads, then installed without dependency resolution. Package version ranges in project metadata remain compatibility declarations, not the deployed dependency selection.
 
-`build-inputs.json` records the exact Python base index digest, Dockerfile frontend digest, lock generator, platform, and normalized-LF input hashes. Both build stages use the same pinned Python 3.12 Bookworm base. Python 3.12 and 3.13 CI resolve each lock twice, comparing package versions and downloaded distribution hashes. Python 3.12 CI performs two uncached runtime builds, compares installed packages, and runs the complete application suite inside the locked test image against its disposable PostgreSQL database. No registry push or deployment occurs.
+`build-inputs.json` records the exact Python base index digest, Dockerfile frontend digest, lock generator, platform, and normalized-LF input hashes. Both build stages use the same pinned Python 3.12 Bookworm base. Python 3.12 and 3.13 CI resolve each lock twice, comparing package versions and downloaded distribution hashes. Python 3.12 CI performs two uncached runtime builds, compares installed packages, and runs the complete application suite inside the locked test image against its disposable PostgreSQL database. Python 3.13 also runs the complete suite in a fresh environment installed exclusively from the hash lock. No registry push or deployment occurs.
 
 To regenerate deliberately, install `uv==0.13.7`, then run:
 
