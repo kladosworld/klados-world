@@ -15,7 +15,7 @@
     "requirements-build.in": "ed0b4e11d5643fe4d17eddc2a1500686c9fb6b4b1847680ac9a03ba92567856f",
     "pyproject.toml": "2cd520146336ee38bd4c174de01647d265924f6af9540a2df9e2d1225c55530c",
     "deployment/local/Dockerfile": "171fa0208d8b60dbaa539dd47f84c9e8c26b63c7d2fd21278f86e3a5ffa9a571",
-    ".dockerignore": "b29409cbc039e489a48a0e80df7047853831e15f736fb3fe630bdb35666de2cc"
+    ".dockerignore": "723bb4401bd445cbcbf0cad52147b20225836408a9fea9809b60e29f22a734c1"
   },
   "hash_encoding": "UTF-8 text normalized to LF"
 }

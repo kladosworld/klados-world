@@ -8,10 +8,16 @@ import sys
 import tempfile
 import unittest
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class BuildInputTests(unittest.TestCase):
+    @pytest.fixture(autouse=True)
+    def capture(self, capfd):
+        self.output_capture = capfd
+
     def test_reviewed_input_hashes_and_pinned_base(self):
         manifest = json.loads((ROOT / 'build-inputs.json').read_text())
         for name, expected in manifest['sha256'].items():
@@ -70,5 +76,17 @@ class BuildInputTests(unittest.TestCase):
             runtime_lock_sha256=manifest['sha256']['requirements-runtime.lock'],
             package_fingerprint=hashlib.sha256(packages[0].encode()).hexdigest())
         # Public metadata only. The exact validated image must be promoted, never a mutable tag.
-        sys.__stdout__.write('\nPILOT_IMAGE_PROVENANCE ' + json.dumps(record, sort_keys=True) + '\n')
-        sys.__stdout__.flush()
+        with self.output_capture.disabled():
+            print('PILOT_IMAGE_PROVENANCE ' + json.dumps(record, sort_keys=True), flush=True)
+        # Exercise the complete API/database/gateway suite with the locked runtime and dev set.
+        result = subprocess.run(['docker', 'build', '--target', 'tests', '--quiet',
+            '--file', str(ROOT / 'deployment/local/Dockerfile'), str(ROOT)],
+            env=dict(os.environ, DOCKER_BUILDKIT='1'), capture_output=True, text=True, timeout=600)
+        self.assertEqual(result.returncode, 0, result.stderr[-4000:])
+        test_image = result.stdout.strip().splitlines()[-1]
+        result = subprocess.run(['docker', 'run', '--rm', '--network', 'host',
+            '-e', 'ARENA_TEST_DSN', '-e', 'ARENA_REQUIRE_DB=1', test_image],
+            capture_output=True, text=True, timeout=600)
+        self.assertEqual(result.returncode, 0, result.stdout[-6000:] + result.stderr[-2000:])
+        with self.output_capture.disabled():
+            print('LOCKED_CONTAINER_TESTS ' + result.stdout[-1800:], flush=True)

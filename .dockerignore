@@ -32,3 +32,8 @@
 !requirements-dev.lock
 !requirements-build.in
 !build-inputs.json
+
+!.dockerignore
+!deployment/
+!deployment/local/
+!deployment/local/Dockerfile
