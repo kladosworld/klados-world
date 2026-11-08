@@ -1,4 +1,4 @@
-﻿# Application priority status and Claude handoff
+# Application priority status and Claude handoff
 
 Reviewed 2026-11-08. This note concerns application code only. Product Owner reports E1/E1b passed and Claude is handling E2. Application engineering has not reconnected to the VPS or repeated those operations.
 
@@ -7,7 +7,7 @@ Reviewed 2026-11-08. This note concerns application code only. Product Owner rep
 | P1 Society Engine | DONE in feature branches; review/merge pending | #7 foundation a4c690f; #9 safety ec90171; combined #12/#14. No founder, energy, quota or migration changes. |
 | P2 Shared Purpose | DONE in feature branch; activation pending approval | #11 e2496c7, default off, exact approved version building-a-society-v1, reversible prompt selection, autonomy and private memory preserved. #12 proves unchanged scheduled call counts. |
 | P3 Public website | DONE implementation; visual review pending | #10 1ff8712 on #8 f85432d. Exact approved reference, left-only navigation, existing APIs, truthful loaded-response metrics and explicit source/error states. |
-| P4 Integration readiness | IN PROGRESS until new regression passes; release security gates BLOCKED | #13 e2b27e7 locks/pins; #14 7465304 union passed native 3.12/3.13, DB/API/browser checks. New populated-state regression is stacked on #14. Historical gitleaks/workflow-lint downloads returned HTTP 504; these remain required, with no bypass. |
+| P4 Integration readiness | DONE application implementation and validation; approval pending | #13 e2b27e7 locks/pins; #14 7465304 union passed native 3.12/3.13, DB/API/browser checks. Populated-state regression is stacked on #14 and passes native 3.12/3.13. Previously blocked gitleaks/workflow-lint jobs on #13/#14 passed after download recovery, without changes or bypass. |
 
 ## Completed versus pending
 
@@ -44,4 +44,12 @@ Application-side test infrastructure uses disposable Linux PostgreSQL/Chrome and
 
 Required Product Owner decisions: review/merge each applicable PR, choose the application revision for any future staging upgrade, approve deployment separately, approve explicit purpose activation and any bounded paid pilot/resume/budget/monitoring plan. Existing purpose text, founder identities and rules do not need a new decision and are not changed.
 
-Recommended next implementation task after this regression: resolve any actual reviewer findings or measured pilot defects, with targeted tests. No speculative agent-policy, governance, economic transaction or frontend feature work is justified. Operational security-tool download failures belong in Claude's written gate list; do not loosen checks or duplicate his workflow changes. Meaningful interaction and autonomy evaluation follows the existing shared-purpose evaluation plan after separate pilot approval.
+Recommended next implementation task after this regression: resolve any actual reviewer findings or measured pilot defects, with targeted tests. No speculative agent-policy, governance, economic transaction or frontend feature work is justified. If operational security-tool downloads fail again, report the gate rather than loosening checks or duplicating Claude's workflow changes. Meaningful interaction and autonomy evaluation follows the existing shared-purpose evaluation plan after separate pilot approval.
+
+## Validation update
+
+The new regression code at 2c58f0c passed the complete native Linux matrix: Python 3.12 and 3.13 each 193 passed and one intentional cross-version-only skip, with no database skips. The fresh hash-locked Python 3.13 run passed 191 tests and 118 subtests (three nested CI-only skips). Locked-container details are retained in the CI logs. CI run: https://github.com/kladosworld/klados-world/actions/runs/42475617918 . All application and security checks are green. This final note update changes documentation only; the PR records the current head and subsequent CI.
+
+Fresh local Node regressions: 36 passed, one old optional graphical hook skipped; actual API-backed Chrome checks run independently in native CI. Windows pure purpose/visual tests: 14 passed and 31 subtests. The POSIX-ledger/database test cannot collect on Windows because fcntl is unavailable; its passing Linux matrix is the acceptance evidence. No application change or fcntl workaround was introduced.
+
+No outstanding proven P0/P1 application defect was found. Implementation status DONE does not authorize merging, deployment, paid inference, purpose activation or society resume. All relevant PRs remain unmerged; Claude owns E2 and runtime approval.
