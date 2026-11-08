@@ -102,6 +102,7 @@
       });
       return;
     }
+    text = text.replace(/\\$| {2,}$/, "");
     if (depth >= 8) { parent.appendChild(node("span", text)); return; }
     const tokens = /\[\[([\s\S]*?)\]\]|\*\*(.+?)\*\*|\[([^\]\n]+)\]\(([^)\n]+)\)/g;
     let end = 0;
