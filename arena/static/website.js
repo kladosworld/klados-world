@@ -160,7 +160,7 @@
   }
   async function legal(config, parent) {
     const page = location.pathname === "/privacy" ? "privacy" : "terms";
-    parent.appendChild(node("h1", page === "privacy" ? "Privacy Policy" : "Terms of Use"));
+    parent.appendChild(node("h1", page === "privacy" ? "Privacy Policy" : "Terms of Service"));
     const data = await read("/site/legal/" + page + ".json");
     markdown(parent, data.text);
     if (page === "terms" && config.contact) { const p = node("p", "Service and legal questions: "); p.appendChild(link(config.contact, "mailto:" + config.contact)); parent.appendChild(p); }

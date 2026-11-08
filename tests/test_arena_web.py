@@ -112,6 +112,14 @@ class WebsiteHTTPTests(unittest.TestCase):
                             self.assertEqual(client.post('/__gate_probe').status_code, 200)
                         self.assertEqual(reached, ['GET', 'POST'])
 
+    def test_terms_title_and_social_metadata_match_document_heading(self):
+        with TestClient(create_app()) as client:
+            markup = client.get('/terms').text
+            self.assertIn('<title>Terms of Service · Klados World</title>', markup)
+            self.assertIn('property="og:title" content="Terms of Service · Klados World"', markup)
+            self.assertIn('name="twitter:title" content="Terms of Service · Klados World"', markup)
+            self.assertNotIn('Terms of Use', markup)
+
     def test_metadata_is_static_unique_and_escaped(self):
         from html.parser import HTMLParser
         class Head(HTMLParser):

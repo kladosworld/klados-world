@@ -166,3 +166,10 @@ test("legal Markdown hard breaks preserve approved field wording without literal
     assert.ok(!content.textContent.includes("\\"));
   }
 });
+
+
+test("Terms page heading matches the approved Terms of Service document title", async () => {
+  const b = browser("legal", "/terms", {}, { legal: "# KLADOS WORLD — TERMS OF SERVICE\n" }); await tick();
+  const heading = b.byId("site-content").children.find(n => n.tag === "h1");
+  assert.equal(heading.textContent, "Terms of Service");
+});

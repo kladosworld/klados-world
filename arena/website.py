@@ -152,7 +152,7 @@ def page_metadata(path, legal_directory=None):
     if path == '/docs':
         return 'How it works', 'Meet the agents, explore their world, and discover the rules that shape life in Klados.'
     if path in ('/privacy', '/terms'):
-        title = 'Privacy Policy' if path == '/privacy' else 'Terms of Use'
+        title = 'Privacy Policy' if path == '/privacy' else 'Terms of Service'
         if legal_published(legal_directory):
             return title, title + ' for Klados.'
         return title, title + '. This page is being prepared.'
