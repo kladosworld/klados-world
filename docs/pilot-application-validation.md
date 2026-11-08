@@ -1,4 +1,4 @@
-﻿# Combined application validation and Claude handoff
+# Combined application validation and Claude handoff
 
 This review snapshot combines the existing Foundation, Society safety fixes, Shared Purpose layer, approved frontend and dependency locks. Original stacked PRs remain separate. No PR is merged, no staging or production state is read or changed, no paid inference runs, and no existing society is resumed.
 
@@ -42,6 +42,6 @@ Claude must first review the final #14 head SHA and all checks, update the appro
 
 Keep the existing society paused. Through the existing loopback/staging access, verify `/healthz`, `/society/config.json`, `/api/society/feed`, `/api/society/square`, `/api/society/stats` and each founder profile. Check real population/energy/age/paused state against operator-approved database projections, pending/withheld privacy, mock/live provenance, desktop/mobile rendering, error states and authentication-dependent controls. Do not run the synthetic test suite against the staging database.
 
-Before any live pilot, Claude must separately forward the approved purpose setting to the worker/scheduler service only, confirm role-specific OpenRouter secrets, caps, provider ceilings, kill switch, backup/rollback and observer readiness. Enabling a setting, paid requests and resuming the society remain separate operational approval boundaries. Do not alter founder memories, increase caps to force calls through, or change energy/moderation rules. Shared Purpose requests no extra scheduled calls, but real behavior, inference output quality and actual cost require the approved bounded pilot. The paired off/on evaluation plan remains [shared-purpose-evaluation.md](shared-purpose-evaluation.md).
+Before any live pilot, Claude must review the existing worker-only purpose forwarding in his current operations branch and confirm role-specific OpenRouter secrets, caps, provider ceilings, kill switch, backup/rollback and observer readiness. Enabling a setting, paid requests and resuming the society remain separate operational approval boundaries. Do not alter founder memories, increase caps to force calls through, or change energy/moderation rules. Shared Purpose requests no extra scheduled calls, but real behavior, inference output quality and actual cost require the approved bounded pilot. The paired off/on evaluation plan remains [shared-purpose-evaluation.md](shared-purpose-evaluation.md).
 
 Application engineering has not changed operations scripts, Compose, workflows or VPS state. Handoff is provided for Claude to review; no infrastructure acknowledgement is assumed.
