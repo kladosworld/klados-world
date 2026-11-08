@@ -40,7 +40,9 @@
 
 !hatch_build.py
 !docs/
+docs/**
 !docs/legal/
+docs/legal/**
 !docs/legal/TERMS.md
 !docs/legal/PRIVACY.md
 !docs/legal/APPROVED.json

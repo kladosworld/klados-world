@@ -124,6 +124,7 @@ class BuildInputTests(unittest.TestCase):
             hashes = approve(folder)
             # Unexpected legal-folder files must not enter Docker context or wheel.
             (folder / 'PRIVATE_REVIEW.txt').write_text('UNPUBLISHED_REVIEW_CANARY', encoding='utf-8')
+            (context / 'docs/PRIVATE_NOTE.md').write_text('UNPUBLISHED_NOTE_CANARY', encoding='utf-8')
             result = subprocess.run(['docker', 'build', '--target', 'runtime', '--quiet',
                 '--file', str(context / 'deployment/local/Dockerfile'), str(context)],
                 env=dict(os.environ, DOCKER_BUILDKIT='1'), capture_output=True, text=True, timeout=600)
@@ -139,6 +140,7 @@ root=legal_publication.directory()
 assert str(root).startswith('/usr/local/lib/python3.12/site-packages/arena/legal'),root
 assert not (root/'PRIVATE_REVIEW.txt').exists()
 assert not Path('/app/docs/legal/PRIVATE_REVIEW.txt').exists()
+assert not Path('/app/docs/PRIVATE_NOTE.md').exists()
 with TestClient(create_app()) as client:
     actual={}
     for page,name in legal_publication.FILES.items():
