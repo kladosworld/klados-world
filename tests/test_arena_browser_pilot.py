@@ -13,6 +13,8 @@ from tests.arena_support import DSN, psycopg
 from tests.test_arena_society_life import WorkerCase, RULES
 
 CHROME = shutil.which('google-chrome') or shutil.which('chromium')
+if os.getenv('GITHUB_ACTIONS') == 'true' and not CHROME:
+    raise RuntimeError('CI browser validation requires the runner installed Chrome')
 
 
 @unittest.skipUnless(DSN and psycopg and CHROME, 'requires disposable PostgreSQL and installed Chrome')
@@ -105,7 +107,7 @@ class PersistedBrowserTests(WorkerCase):
                         page.screenshot(path=str(root/f'{name}-{label}.png'), full_page=True)
                 self.assertFalse(errors,errors)
                 self.assertTrue(all(url.startswith(base) or url.startswith('data:') for url in requests),requests)
-                self.assertEqual(society.audit(self.conn,RULES),[])
+                self.assertEqual(society.audit(self.conn),[])
                 self.assertTrue(society.clock(self.conn)['paused'])
                 browser.close()
         # Screenshot files are temporary runner artifacts; public checked-in screenshots use example mode.
