@@ -28,9 +28,10 @@ still apply; do not raise the cap or call this a measured live-cost estimate.
 
 Claude's `claude/production-readiness` ops branch now reads the approved application
 SHA from `deploy/APP_COMMIT`, reuses existing revision-tagged images, and accepts an
-explicit expected SHA as the build script's second argument. That file still names
-`a4c690f`. Ops does not currently forward `KLADOS_SHARED_PURPOSE` into the worker.
-Claude must review the final application SHA and worker-only setting before a pilot;
+explicit expected SHA as the build script's second argument. The initial validation used
+`a4c690f`; the current operations review now selects the #11 pilot revision `e2496c7`
+and forwards `KLADOS_SHARED_PURPOSE` to the worker only, default `off`.
+Claude must review the approved application SHA and explicit setting before a pilot;
 no operational file is changed by this application branch. A standalone Git clone
 is required by the build script (`.git` must be a directory, not a worktree link).
 
