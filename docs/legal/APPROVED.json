@@ -1,6 +1,9 @@
 {
   "schema_version": 1,
-  "status": "pending",
-  "approval_reference": null,
-  "sha256": {}
+  "status": "approved",
+  "approval_reference": "Product Owner explicit final-publication approval in Codex chat, 2026-11-08: \"Approve final publication of this exact pair\". Approval binds the two SHA256 values below; no merge or deployment approval.",
+  "sha256": {
+    "TERMS.md": "fd35bf05367f96fd09eefea026e2ec7d80cbe6642616b30dbd4b0572bd93f2d2",
+    "PRIVACY.md": "0a8f2d464b00522d41dd39fbcf10f8b46b2f8cf6c7fac1f276fb9045638243e5"
+  }
 }

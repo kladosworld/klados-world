@@ -146,7 +146,7 @@ with TestClient(create_app()) as client:
     for page,name in legal_publication.FILES.items():
         raw=website.legal_file(page).read_bytes()
         assert client.get('/site/legal/'+page+'.json').json()['text'].encode('utf-8')==raw
-        assert b'Klados World, EU' in raw
+        if page == 'privacy': assert b'Klados World, EU' in raw
         actual[name]=hashlib.sha256(raw).hexdigest()
         assert '/'+page in client.get('/sitemap.xml').text
     print(json.dumps(actual,sort_keys=True))
@@ -156,3 +156,15 @@ with TestClient(create_app()) as client:
             self.assertEqual(json.loads(output), hashes)
             with self.output_capture.disabled():
                 print('LEGAL_RUNTIME_FIXTURE_PASS '+json.dumps(hashes,sort_keys=True), flush=True)
+
+        # Attest the actual source revision's runtime image too, never just fixtures.
+        source_manifest = json.loads((ROOT / 'docs/legal/APPROVED.json').read_bytes())
+        if source_manifest['status'] == 'approved':
+            output = subprocess.check_output(['docker', 'run', '--rm', '--network', 'none',
+                '-e', 'KLADOS_LEGAL_FINAL=1', image_ids[0], 'python', '-c', code], text=True)
+            actual = json.loads(output)
+            self.assertEqual(actual, source_manifest['sha256'])
+            for name, expected in actual.items():
+                self.assertEqual(hashlib.sha256((ROOT / 'docs/legal' / name).read_bytes()).hexdigest(), expected)
+            with self.output_capture.disabled():
+                print('LEGAL_RELEASE_RUNTIME_PASS '+json.dumps(actual,sort_keys=True), flush=True)

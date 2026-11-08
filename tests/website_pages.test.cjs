@@ -153,3 +153,16 @@ test("official contact page separates general, privacy and safety purposes", asy
   assert.match(terms.byId("site-content").textContent, /being prepared/);
   assert.ok(all(terms.byId("site-content")).some(n => n.href === "mailto:" + config.contact));
 });
+
+
+test("legal Markdown hard breaks preserve approved field wording without literal syntax", async () => {
+  for (const marker of ["\\", "  "]) {
+    const legal = "# Policy\n\n**Effective date:** 01.11.2026" + marker + "\n**Last updated:** 08.11.2026" + marker + "\n**Operator:** Klados World, EU\n";
+    const b = browser("legal", "/privacy", {}, { legal }); await tick();
+    const content = b.byId("site-content"), nodes = all(content);
+    assert.equal(nodes.filter(n => n.tag === "br").length, 2);
+    assert.match(content.textContent, /Effective date:\s+01.11.2026/);
+    assert.match(content.textContent, /Operator:\s+Klados World, EU/);
+    assert.ok(!content.textContent.includes("\\"));
+  }
+});

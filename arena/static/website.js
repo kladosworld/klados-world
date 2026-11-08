@@ -92,6 +92,16 @@
     }
   }
   function inline(parent, text, depth = 0) {
+    // Preserve approved Markdown hard breaks without changing document bytes.
+    if (depth < 8 && text.includes("\n")) {
+      const lines = text.split("\n");
+      lines.forEach((line, index) => {
+        const hardBreak = /\\$| {2,}$/.test(line);
+        inline(parent, hardBreak ? line.replace(/\\$| {2,}$/, "") : line, depth + 1);
+        if (index < lines.length - 1) parent.appendChild(hardBreak ? node("br") : node("span", "\n"));
+      });
+      return;
+    }
     if (depth >= 8) { parent.appendChild(node("span", text)); return; }
     const tokens = /\[\[([\s\S]*?)\]\]|\*\*(.+?)\*\*|\[([^\]\n]+)\]\(([^)\n]+)\)/g;
     let end = 0;

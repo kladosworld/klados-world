@@ -118,6 +118,9 @@ class LegalPublicationTests(unittest.TestCase):
                     self.assertEqual(hashlib.sha256(raw).hexdigest(), manifest['sha256'][name])
                     self.assertEqual(client.get('/site/legal/' + page + '.json').json()['text'].encode(), raw)
                     self.assertEqual(docs[page].encode(), raw)
+                    canonical = ROOT / 'docs/legal' / name
+                    if canonical.exists():
+                        self.assertEqual(raw, canonical.read_bytes())
         else:
             with patch.dict(os.environ, KLADOS_LEGAL_FINAL='0'):
                 self.assertEqual(website.legal_content('terms')['text'], legal.PLACEHOLDER)
