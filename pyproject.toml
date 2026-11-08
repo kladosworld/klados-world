@@ -38,11 +38,14 @@ dev = [
   "playwright==1.64.1",
 ]
 
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/klados_world", "arena", "tee_arena", "config"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "arena", "tee_arena", "config", "evals", "tests", "docs", "deployment/local", "requirements-*.lock", "requirements-build.in", "pyproject.toml", "README.md", "CHANGELOG.md", ".dockerignore"]
+include = ["src", "arena", "tee_arena", "config", "evals", "tests", "docs", "deployment/local", "requirements-*.lock", "requirements-build.in", "pyproject.toml", "README.md", "CHANGELOG.md", ".dockerignore", "hatch_build.py"]
 
 [tool.ruff]
 force-exclude = true

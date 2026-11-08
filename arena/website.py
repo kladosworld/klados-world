@@ -4,6 +4,8 @@ import re
 import os
 from pathlib import Path
 
+from arena import legal_publication
+
 ROOT = Path(__file__).resolve().parent.parent
 COPY = ROOT / 'docs/WEBSITE_COPY.md'
 RULES = ROOT / 'config/rules-v1.json'
@@ -92,21 +94,21 @@ def docs_content(path=None):
 
 
 def legal_file(page, directory=None):
-    return Path(directory or ROOT / 'docs/legal') / ('PRIVACY.md' if page == 'privacy' else 'TERMS.md')
+    root = Path(directory) if directory is not None else legal_publication.directory()
+    return root / legal_publication.FILES[page]
 
 
 def validate_legal_final(directory=None):
-    """Fail closed for an explicitly final publication containing editorial reviews."""
+    if os.getenv('KLADOS_LEGAL_FINAL') == '1':
+        legal_publication.approved_documents(directory)
+
+
+def legal_published(directory=None):
+    # File presence alone is never publication authorization.
     if os.getenv('KLADOS_LEGAL_FINAL') != '1':
-        return
-    try:
-        for path in Path(directory or ROOT / 'docs/legal').rglob('*'):
-            if path.is_file():
-                text = path.read_text(encoding='utf-8')
-                if public_legal_text(text) != text:
-                    raise ValueError('Legal publication gate failed')
-    except (OSError, UnicodeError):
-        raise ValueError('Legal publication gate failed') from None
+        return False
+    legal_publication.approved_documents(directory)
+    return True
 
 
 def _editorial_legal_block(block):
@@ -135,11 +137,9 @@ def public_legal_text(text):
 
 
 def legal_content(page, directory=None):
-    validate_legal_final(directory)
-    path = legal_file(page, directory)
-    if not path.exists():
-        return {'text': 'This page is being prepared.'}
-    return {'text': public_legal_text(path.read_text(encoding='utf-8'))}
+    if os.getenv('KLADOS_LEGAL_FINAL') != '1':
+        return {'text': legal_publication.PLACEHOLDER}
+    return {'text': legal_publication.approved_documents(directory)[page]}
 
 
 def page_metadata(path, legal_directory=None):
@@ -153,7 +153,7 @@ def page_metadata(path, legal_directory=None):
         return 'How it works', 'Meet the agents, explore their world, and discover the rules that shape life in Klados.'
     if path in ('/privacy', '/terms'):
         title = 'Privacy Policy' if path == '/privacy' else 'Terms of Use'
-        if legal_file(path[1:], legal_directory).is_file():
+        if legal_published(legal_directory):
             return title, title + ' for Klados.'
         return title, title + '. This page is being prepared.'
     if path == '/contact':

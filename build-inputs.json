@@ -13,9 +13,10 @@
     "requirements-build.lock": "075fe2632d3227ca3ed3b21e50fa4c14003ecfc060daa719e883b5055f2c1ea0",
     "requirements-dev.lock": "9f7896ffd73963c97816bcef38180020029b179feec4ffdbd5b3bd339656929c",
     "requirements-build.in": "ed0b4e11d5643fe4d17eddc2a1500686c9fb6b4b1847680ac9a03ba92567856f",
-    "pyproject.toml": "2cd520146336ee38bd4c174de01647d265924f6af9540a2df9e2d1225c55530c",
+    "pyproject.toml": "f90c3684d4b142d5d462fb692fa39c2f6c81508d75a36cb896e75d99be638921",
     "deployment/local/Dockerfile": "171fa0208d8b60dbaa539dd47f84c9e8c26b63c7d2fd21278f86e3a5ffa9a571",
-    ".dockerignore": "723bb4401bd445cbcbf0cad52147b20225836408a9fea9809b60e29f22a734c1"
+    ".dockerignore": "0149093ac92d0270afab3104bf268cafd1832712ea9924709564c7e62c3699da",
+    "hatch_build.py": "c6d055fe4ffb8c5ddfcbb79fefd050a2548db1fe301cdf37c5c3b0788488912d"
   },
   "hash_encoding": "UTF-8 text normalized to LF"
 }

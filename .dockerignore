@@ -37,3 +37,10 @@
 !deployment/
 !deployment/local/
 !deployment/local/Dockerfile
+
+!hatch_build.py
+!docs/
+!docs/legal/
+!docs/legal/TERMS.md
+!docs/legal/PRIVACY.md
+!docs/legal/APPROVED.json

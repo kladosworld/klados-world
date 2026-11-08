@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from arena import website
+from tests.test_arena_legal import approve
 try:
     from fastapi.testclient import TestClient
     from arena.app import create_app
@@ -142,10 +143,9 @@ class WebsiteHTTPTests(unittest.TestCase):
         import xml.etree.ElementTree as ET
         for live in ('0', '1'):
             for legal_exists in (False, True):
-                with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, KLADOS_SOCIETY_PUBLIC=live):
+                with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, KLADOS_SOCIETY_PUBLIC=live, KLADOS_LEGAL_FINAL="1" if legal_exists else "0"):
                     if legal_exists:
-                        for name in ('PRIVACY.md', 'TERMS.md'):
-                            (Path(directory) / name).write_text('# Final policy')
+                        approve(Path(directory), '# Synthetic test policy\n\nKlados World, EU\n')
                     with TestClient(create_app(legal_directory=directory)) as client:
                         robots = client.get('/robots.txt')
                         for prefix in ['/api/', '/auth/', '/v1/']:
@@ -174,13 +174,12 @@ class WebsiteHTTPTests(unittest.TestCase):
                     self.assertEqual(response.status_code, 200)
                     for private in ('REVIEW', 'Draft for legal review', 'PRIVATE_', 'continuation', 'First line of private'):
                         self.assertNotIn(private, response.text)
-                    self.assertIn('Ordinary public quotation', response.json()['text'])
-                    self.assertNotIn('This page is being prepared', client.get('/' + page).text)
+                    self.assertEqual(response.json()['text'], 'This page is being prepared.')
+                    self.assertIn('This page is being prepared', client.get('/' + page).text)
             with patch.dict(os.environ, KLADOS_LEGAL_FINAL='1'):
                 with self.assertRaisesRegex(ValueError, '^Legal publication gate failed$'):
                     create_app(legal_directory=directory)
-            for name in ('PRIVACY.md', 'TERMS.md'):
-                (Path(directory) / name).write_text('# Final policy')
+            approve(Path(directory), '# Synthetic test policy\n\nKlados World, EU\n')
             with patch.dict(os.environ, KLADOS_LEGAL_FINAL='1'):
                 website.validate_legal_final(directory)
 
@@ -188,8 +187,7 @@ class WebsiteHTTPTests(unittest.TestCase):
         text = ('# Final policy\n\nSome likes are held until a person reviews them.\n\n'
                 '> An ordinary review of the policy.\n> Review is a legitimate word here.\n')
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, KLADOS_LEGAL_FINAL='1'):
-            for name in ('PRIVACY.md', 'TERMS.md'):
-                (Path(directory) / name).write_text(text)
+            approve(Path(directory), text)
             website.validate_legal_final(directory)
             self.assertEqual(website.public_legal_text(text), text)
             with TestClient(create_app(legal_directory=directory)) as client:
@@ -210,7 +208,7 @@ class WebsiteHTTPTests(unittest.TestCase):
                 self.assertNotIn('continuation', filtered)
                 self.assertIn('Public text remains.', filtered)
                 with patch.dict(os.environ, KLADOS_LEGAL_FINAL='0'):
-                    self.assertEqual(website.legal_content('privacy', directory)['text'], filtered)
+                    self.assertEqual(website.legal_content('privacy', directory)['text'], 'This page is being prepared.')
                 with patch.dict(os.environ, KLADOS_LEGAL_FINAL='1'):
                     with self.assertRaisesRegex(ValueError, '^Legal publication gate failed$'):
                         website.validate_legal_final(directory)
@@ -240,7 +238,7 @@ class WebsiteHTTPTests(unittest.TestCase):
             path.write_text(json.dumps(rules))
             (folder / 'PRIVACY.md').write_text('<script>not executable</script>')
             with TestClient(create_app(rules_path=path, legal_directory=folder)) as client:
-                self.assertEqual(client.get('/site/legal/privacy.json').json()['text'], '<script>not executable</script>')
+                self.assertEqual(client.get('/site/legal/privacy.json').json()['text'], 'This page is being prepared.')
                 self.assertEqual(client.get('/site/legal/terms.json').json()['text'], 'This page is being prepared.')
                 content = client.get('/docs/content.json').json()
                 self.assertEqual(len(content['pages']), 9)

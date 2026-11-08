@@ -158,7 +158,7 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
     @app.get('/sitemap.xml', include_in_schema=False)
     def sitemap():
         paths = ['/', '/docs', *('/docs/' + slug for slug in website.SLUGS), '/contact']
-        paths.extend('/' + page for page in ('privacy', 'terms') if website.legal_file(page, legal_directory).is_file())
+        paths.extend('/' + page for page in ('privacy', 'terms') if website.legal_published(legal_directory))
         if os.getenv('KLADOS_SOCIETY_PUBLIC') == '1':
             paths.extend(('/society', '/society/square', '/society/stats'))
         entries = ''.join('<url><loc>https://kladosworld.com' + escape(path) + '</loc></url>' for path in paths)

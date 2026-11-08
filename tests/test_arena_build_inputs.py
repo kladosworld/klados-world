@@ -112,3 +112,45 @@ class BuildInputTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout[-6000:] + result.stderr[-2000:])
         with self.output_capture.disabled():
             print('LOCKED_CONTAINER_TESTS ' + result.stdout[-1800:], flush=True)
+
+        # Separate synthetic publication build: no approved owner text is invented or
+        # committed. Exercise the exact runtime target, Docker allowlist, wheel hook,
+        # installed path and public API with both documents; never push this image.
+        from tests.test_arena_legal import approve, copy_build_context
+        with tempfile.TemporaryDirectory(prefix='kw-legal-fixture-') as temporary:
+            context = Path(temporary) / 'context'
+            copy_build_context(context)
+            folder = context / 'docs/legal'
+            hashes = approve(folder)
+            # Unexpected legal-folder files must not enter Docker context or wheel.
+            (folder / 'PRIVATE_REVIEW.txt').write_text('UNPUBLISHED_REVIEW_CANARY', encoding='utf-8')
+            result = subprocess.run(['docker', 'build', '--target', 'runtime', '--quiet',
+                '--file', str(context / 'deployment/local/Dockerfile'), str(context)],
+                env=dict(os.environ, DOCKER_BUILDKIT='1'), capture_output=True, text=True, timeout=600)
+            self.assertEqual(result.returncode, 0, result.stderr[-4000:])
+            fixture_image = result.stdout.strip().splitlines()[-1]
+            code = r"""
+import hashlib,json,os
+from pathlib import Path
+from fastapi.testclient import TestClient
+from arena import website,legal_publication
+from arena.app import create_app
+root=legal_publication.directory()
+assert str(root).startswith('/usr/local/lib/python3.12/site-packages/arena/legal'),root
+assert not (root/'PRIVATE_REVIEW.txt').exists()
+assert not Path('/app/docs/legal/PRIVATE_REVIEW.txt').exists()
+with TestClient(create_app()) as client:
+    actual={}
+    for page,name in legal_publication.FILES.items():
+        raw=website.legal_file(page).read_bytes()
+        assert client.get('/site/legal/'+page+'.json').json()['text'].encode('utf-8')==raw
+        assert b'Klados World, EU' in raw
+        actual[name]=hashlib.sha256(raw).hexdigest()
+        assert '/'+page in client.get('/sitemap.xml').text
+    print(json.dumps(actual,sort_keys=True))
+"""
+            output = subprocess.check_output(['docker', 'run', '--rm', '--network', 'none',
+                '-e', 'KLADOS_LEGAL_FINAL=1', fixture_image, 'python', '-c', code], text=True)
+            self.assertEqual(json.loads(output), hashes)
+            with self.output_capture.disabled():
+                print('LEGAL_RUNTIME_FIXTURE_PASS '+json.dumps(hashes,sort_keys=True), flush=True)
