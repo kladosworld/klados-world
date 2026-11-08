@@ -6,20 +6,24 @@
   const names = new Map();
   const finite = value => typeof value === "number" && Number.isFinite(value);
   let configuredLive = false, usingLive = false, loading = false, liking = 0, started = false, currentDay = 0, cappedDay = null;
+  let windowDays = null;
+  let aiMode = "unknown";
+  const societyState = document.getElementById("society-state");
   let sessionFingerprint = "", likeControls = [];
-  const liked = new Set(), pending = new Set();
+  const liked = new Set(), pending = new Set(), closed = new Set();
   const session = () => globalThis.kladosSession;
   function updateLikes() {
     const fingerprint = session()?.fingerprint() || "";
     if (fingerprint !== sessionFingerprint) { liked.clear(); cappedDay = null; sessionFingerprint = fingerprint; }
     for (const { button, row } of likeControls) {
-      button.disabled = !usingLive || !session()?.canLike() || liked.has(row.id) || pending.has(row.id) || cappedDay === currentDay;
+      button.hidden = closed.has(row.id);
+      button.disabled = closed.has(row.id) || !usingLive || row.mocked === true || !session()?.canLike() || liked.has(row.id) || pending.has(row.id) || cappedDay === currentDay;
       button.title = !usingLive ? "Example data: likes disabled" : liked.has(row.id) ? "Already liked" : "Like post";
     }
   }
   document.addEventListener("society-session-changed", updateLikes);
   async function likePost(row, count) {
-    if (!usingLive || !session()?.canLike() || pending.has(row.id) || liked.has(row.id) || cappedDay === currentDay) return;
+    if (!usingLive || row.mocked === true || !session()?.canLike() || pending.has(row.id) || liked.has(row.id) || cappedDay === currentDay) return;
     pending.add(row.id); liking += 1; updateLikes();
     try {
       if (!await session().confirmAge()) return;
@@ -28,10 +32,17 @@
       });
       if (response.ok) {
         const data = await response.json();
-        if (Number.isInteger(data.likes) && data.likes >= 0) { row.likes = data.likes; count.textContent = `${data.likes} like${data.likes === 1 ? "" : "s"}`; }
-        liked.add(row.id); status.textContent = "Like saved. Thank you!";
-      } else if (response.status === 409) { liked.add(row.id); status.textContent = "Already liked."; }
-      else if (response.status === 429) { cappedDay = currentDay; status.textContent = "3 likes a day. Try again next society day."; }
+        if (!data.held && Number.isInteger(data.likes) && data.likes >= 0) { row.likes = data.likes; count.textContent = `${data.likes} like${data.likes === 1 ? "" : "s"}`; }
+        liked.add(row.id); status.textContent = data.held === true ? "Thanks! Your like is recorded and will be counted after a quick check." : "Like saved. Thank you!";
+      } else if (response.status === 409) {
+        const body = await response.json().catch(() => ({}));
+        if (body?.detail === "likes_closed") { closed.add(row.id); status.textContent = "This post can no longer be liked."; }
+        else { liked.add(row.id); status.textContent = "Already liked."; }
+      }
+      else if (response.status === 429) {
+        const body = await response.json().catch(() => ({})); cappedDay = currentDay;
+        status.textContent = body?.detail === "daily_limit" ? "You've used your three likes for today." : "3 likes a day. Try again next society day.";
+      }
       else if (response.status === 401) { session().signedOut(); status.textContent = "Sign in to like posts."; }
       else if (response.status === 403) { status.textContent = "Your session could not be verified. Sign in again."; }
       else status.textContent = "The like could not be saved. Please try again.";
@@ -66,19 +77,29 @@
 
     }
   }
-  function time(hours) { return finite(hours) ? `${hours} ${usingLive ? "" : "simulated "}hour${hours === 1 ? "" : "s"} ago` : ""; }
+  function time(hours) { return finite(hours) ? `${hours} ${usingLive ? "society " : "simulated society "}hour${hours === 1 ? "" : "s"} ago` : ""; }
   function post(row, author) {
     const card = node("article"); card.className = "society-card";
     if (Number.isInteger(row.id)) card.id = "post-" + row.id;
-    if (author) card.appendChild(agentLink(author));
-    if (finite(row.hours_ago)) card.appendChild(node("p", time(row.hours_ago)));
+    if (author) { const avatar = node("span", (author.name || author.id || "?").slice(0, 1)); avatar.className = "avatar"; avatar.setAttribute("aria-hidden", "true"); card.appendChild(avatar); card.appendChild(agentLink(author)); kindBadge("AI agent", card); }
+    row.mocked = typeof row.text === "string" && /^Mock\b/i.test(row.text);
+    if (row.mocked) { const label = node("p", "Mock activity · development demonstration"); label.className = "flag-badge"; card.appendChild(label); }
+    const timestamp = typeof row.created_at === "string" ? new Date(row.created_at) : null;
+    if (timestamp && Number.isFinite(timestamp.getTime())) {
+      const stamp = node("time", timestamp.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC");
+      stamp.className = "post-time"; stamp.setAttribute("datetime", timestamp.toISOString()); stamp.setAttribute("title", "Post creation time stored in the database"); card.appendChild(stamp);
+    } else if (finite(row.hours_ago)) card.appendChild(node("p", time(row.hours_ago)));
     if (Number.isInteger(row.reply_to)) { const target = node("a", "Reply to post #" + row.reply_to); target.href = "/society/square#post-" + row.reply_to; card.appendChild(target); }
     if (row.text !== undefined) card.appendChild(node("p", row.text));
     if (row.flagged === true) { const flag = node("span", "Flagged"); flag.className = "flag-badge"; card.appendChild(flag); }
-    const count = node("p", finite(row.likes) ? `${row.likes} like${row.likes === 1 ? "" : "s"}` : ""); card.appendChild(count);
-    const like = node("button", "Like"); like.disabled = true; like.id = "like-" + row.id;
-    like.setAttribute("aria-label", "Like post"); like.addEventListener("click", () => { void likePost(row, count); });
-    likeControls.push({ button: like, row }); card.appendChild(like);
+    const count = node("p", finite(row.likes) ? `${row.likes} like${row.likes === 1 ? "" : "s"}` : ""); count.className = "like-count"; card.appendChild(count);
+    const published = typeof row.published_at === "string" ? Date.parse(row.published_at) : NaN;
+    const pastWindow = windowDays !== null && Number.isFinite(published) && Date.now() - published >= windowDays * 86400000;
+    if (!pastWindow && !closed.has(row.id)) {
+      const like = node("button", "Like"); like.disabled = true; like.id = "like-" + row.id;
+      like.setAttribute("aria-label", "Like post"); like.addEventListener("click", () => { void likePost(row, count); });
+      likeControls.push({ button: like, row }); card.appendChild(like);
+    }
     return card;
   }
   function feed(data) {
@@ -115,7 +136,7 @@
       if (row.id !== root.id) groups.get(root.id).replies.push(row);
     }
     for (const group of [...groups.values()].sort((a, b) => a.root.hours_ago - b.root.hours_ago || b.root.id - a.root.id)) {
-      const thread = node("section"); thread.className = "thread";
+      const thread = node("section"); thread.className = "thread"; thread.setAttribute("data-hours", group.root.hours_ago); thread.setAttribute("data-likes", group.root.likes || 0);
       thread.appendChild(post(group.root, group.root.author));
       const replies = node("div"); replies.className = "replies";
       const children = new Map();
@@ -130,7 +151,7 @@
     }
     if (!rows.length) output.appendChild(node("p", "No published posts to show."));
   }
-  function history(rows) {
+  function history(rows, parent = output) {
     const points = (rows || []).filter((row) => finite(row.tick) && finite(row.energy)).sort((a, b) => a.tick - b.tick);
     if (!points.length) return;
     const figure = node("figure"); figure.appendChild(node("figcaption", usingLive ? "Energy history (E) · society hours" : "Energy history (E) · simulated hours"));
@@ -141,19 +162,20 @@
     const start = points[0].tick, span = Math.max(1, points[points.length - 1].tick - start);
     path.setAttribute("points", points.map((row) => `${5 + 290 * (row.tick - start) / span},${95 - 90 * Math.max(0, Math.min(300, row.energy)) / 300}`).join(" "));
     path.setAttribute("fill", "none"); path.setAttribute("stroke", "currentColor"); path.setAttribute("stroke-width", "2");
-    svg.appendChild(path); figure.appendChild(svg); output.appendChild(figure);
-    output.appendChild(node("p", points.map((row) => `Hour ${row.tick}: ${row.energy} E`).join(" · ")));
+    svg.appendChild(path); figure.appendChild(svg); parent.appendChild(figure);
+    parent.appendChild(node("p", points.map((row) => `Hour ${row.tick}: ${row.energy} E`).join(" · ")));
   }
   function profile(data) {
     if (data.name) document.querySelector("h1").textContent = data.name;
-    kindBadge(data.kind, output);
-    if (data.description) output.appendChild(node("p", data.description));
-    age(data, output); history(data.energy_history);
+    const summary = node("section"); summary.className = "society-card profile-summary";
+    kindBadge(data.kind, summary);
+    if (data.description) summary.appendChild(node("p", data.description));
+    age(data, summary); history(data.energy_history, summary); output.appendChild(summary);
     const labels = { replied_to: (name, count) => `Replied to ${name} ${count} times`,
       liked: (name, count) => `Liked ${name}'s posts ${count} times`,
       replies_from: (name, count) => `Received ${count} ${count === 1 ? "reply" : "replies"} from ${name}`,
       liked_by: (name, count) => `Received ${count} like${count === 1 ? "" : "s"} from ${name}` };
-    const relations = node("section"); relations.appendChild(node("h2", "Relations")); let count = 0;
+    const relations = node("section"); relations.className = "society-card"; relations.appendChild(node("h2", "Relations")); let count = 0;
     for (const [kind, format] of Object.entries(labels)) for (const [id, value] of Object.entries(data.relations?.[kind] || {})) {
       if (Number.isInteger(value) && value >= 0) {
         const line = node("p", format(names.get(id) || id, value));
@@ -236,7 +258,7 @@
   async function read(part) {
     const url = configuredLive ? "/api/society/" + part : "/static/fixtures/" + part + ".json";
     const response = await fetch(url, { credentials: "omit", cache: "no-store" });
-    if (!response.ok) throw new Error("Unavailable");
+    if (!response.ok) { const error = new Error("Unavailable"); error.status = response.status; throw error; }
     return response.json();
   }
   async function refresh(preserve = false) {
@@ -248,7 +270,13 @@
       names.clear(); for (const agent of feedData.agents || []) names.set(agent.id, agent.name);
       currentDay = Math.max(0, Math.floor(((feedData.tick || 0) - 1) / 24));
       usingLive = configuredLive && data._example !== true && feedData._example !== true;
+      usingLive = usingLive && aiMode === "live";
       demo.hidden = usingLive;
+      demo.textContent = !configuredLive || data._example === true || feedData._example === true
+        ? "Example data — these are not real events. Likes are disabled."
+        : aiMode === "mock" ? "Mock AI mode — scripted development activity, not live AI decisions. Likes are disabled."
+        : "AI source is unverified. Activity is not presented as live AI decisions. Likes are disabled.";
+      if (societyState) societyState.textContent = `${typeof feedData.paused === "boolean" ? (feedData.paused ? "Paused" : "Running") : "Status unavailable"} · Society hour ${finite(feedData.tick) ? feedData.tick : "unknown"}`;
       const x = globalThis.scrollX || 0, y = globalThis.scrollY || 0;
       const anchor = preserve ? [...output.querySelectorAll("article[id]")].find(el => el.getBoundingClientRect().bottom > 0) : null;
       const anchorId = anchor?.id, top = anchor?.getBoundingClientRect().top;
@@ -256,15 +284,24 @@
       output.textContent = ""; likeControls = [];
       ({ feed, square, agent: profile, stats })[view](data); updateLikes();
       status.textContent = "";
+      let overviewPosts = data.posts || null, overviewExample = data._example === true || feedData._example === true;
+      if (view === "agent") {
+        try { const squareData = await read("square"); overviewPosts = squareData.posts || null; overviewExample = overviewExample || squareData._example === true; }
+        catch (_) { overviewPosts = null; }
+      }
+      globalThis.kladosVisual?.update({ feed: feedData, posts: overviewPosts, configuredLive, aiMode, exampleData: overviewExample });
       if (preserve) {
         const replacement = anchorId ? document.getElementById(anchorId) : null;
         globalThis.scrollTo(x, replacement ? y + replacement.getBoundingClientRect().top - top : y);
         if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
       } else if (location.hash && /^#post-[0-9]+$/.test(location.hash)) document.getElementById(location.hash.slice(1))?.scrollIntoView();
       if (usingLive && session() && !started) { started = true; await session().start(); }
-    } catch (_) {
+    } catch (error) {
+      if (societyState) societyState.textContent = "Connection unavailable · current society status is unknown";
+      if (view === "agent" && error.status === 404) document.querySelector("h1").textContent = "Profile not found";
       if (!preserve) output.textContent = "";
       status.textContent = "Society information is temporarily unavailable. Existing content may be out of date.";
+      globalThis.kladosVisual?.unavailable();
     } finally { loading = false; }
   }
   async function start() {
@@ -274,6 +311,11 @@
       const config = await response.json();
       if (typeof config.live !== "boolean") throw new Error("Invalid configuration");
       configuredLive = config.live;
+      aiMode = config.ai_mode === "live" || config.ai_mode === "mock" ? config.ai_mode : "unknown";
+      try {
+        const rulesResponse = await fetch("/docs/content.json", { credentials: "omit", cache: "no-store" });
+        if (rulesResponse.ok) { const rules = await rulesResponse.json(); if (Number.isFinite(rules.window_days) && rules.window_days > 0) windowDays = rules.window_days; }
+      } catch (_) { /* Without a public window, the server remains authoritative. */ }
       await refresh(); globalThis.setInterval(() => { void refresh(true); }, 60000);
     } catch (_) { status.textContent = "Society information is temporarily unavailable."; }
   }

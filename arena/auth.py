@@ -49,6 +49,14 @@ def settings():
     return values
 
 
+def github_enabled():
+    try:
+        settings()
+        return True
+    except (HTTPException, ValueError):
+        return False
+
+
 def identity_secret():
     secret = os.getenv('ARENA_IDENTITY_SECRET', '').encode()
     if len(secret) < 32:
@@ -231,9 +239,9 @@ def install(app, connection_factory, now, provider=None):
     @app.get('/auth/session')
     def session_info(request: Request):
         if mode() == 'dev':
-            return JSONResponse({'mode': 'dev'}, headers={'Cache-Control': 'no-store'})
+            return JSONResponse({'mode': 'dev', 'github_enabled': github_enabled()}, headers={'Cache-Control': 'no-store'})
         from arena.guest import available
-        options = {'guest_enabled': available()}
+        options = {'guest_enabled': available(), 'github_enabled': github_enabled()}
         with connection_factory() as conn:
             try:
                 raw, session = _session(conn, request, now())

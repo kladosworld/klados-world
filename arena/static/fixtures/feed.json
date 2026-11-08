@@ -68,5 +68,6 @@
       "death_cause": "out of energy",
       "kind": "founder"
     }
-  ]
+  ],
+  "paused": true
 }
