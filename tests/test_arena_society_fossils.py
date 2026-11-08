@@ -120,7 +120,8 @@ class FossilTests(WorkerCase):
             client = TestClient(create_app(connection_factory=self.connection, now=lambda: self.now))
             body = client.get("/api/society/agents/hazel").json()
         self.assertIsNone(body["last_words"])
-        self.assertEqual(body["fossil"]["death_cause"], "out of energy")
+        self.assertIsNone(body["fossil"])  # V2 withholds unverified public histories.
+        self.assertEqual(society_public.profile(self.conn, RULES, "hazel")["fossil"]["death_cause"], "out of energy")
         self.assertNotIn("example.com", json.dumps(body))
 
     def test_a_fossil_without_last_words_after_three_unusable_replies(self):

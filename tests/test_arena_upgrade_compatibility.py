@@ -17,7 +17,7 @@ class PersistedUpgradeTests(LifeCase):
             for row in tables}
 
     def test_populated_society_and_public_contract_survive_migrate_and_purpose_off_on_off(self):
-        from arena import db, society, society_life, scheduler
+        from arena import db, society, society_life, scheduler, society_public
         from arena.app import create_app
         from psycopg import sql
         from tests.arena_support import DSN
@@ -67,10 +67,12 @@ class PersistedUpgradeTests(LifeCase):
                     self.assertTrue(feed.json()['paused'])
                     self.assertEqual([a['name'] for a in feed.json()['agents']],['Alder','Birch','Cedar','Hazel'])
                     square = client.get('/api/society/square').json()['posts']
-                    self.assertEqual({p['id'] for p in square},{post,reply})
-                    self.assertEqual(next(p for p in square if p['id']==post)['likes'],1)
-                    self.assertEqual(next(p for p in square if p['id']==reply)['reply_to'],post)
-                    self.assertTrue(all('created_at' in p for p in square))
+                    self.assertEqual(square, [])  # V2 withholds unverified history publicly.
+                    stored = society_public.square(self.conn)['posts']
+                    self.assertEqual({p['id'] for p in stored},{post,reply})
+                    self.assertEqual(next(p for p in stored if p['id']==post)['likes'],1)
+                    self.assertEqual(next(p for p in stored if p['id']==reply)['reply_to'],post)
+                    self.assertTrue(all('created_at' in p for p in stored))
                     public = [feed.json(),square]
                     for identifier in ('alder','birch','cedar','hazel'):
                         response=client.get('/api/society/agents/'+identifier)

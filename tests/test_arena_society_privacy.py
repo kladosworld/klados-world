@@ -9,7 +9,7 @@ if psycopg:
     from psycopg import sql
     from psycopg.types.json import Jsonb
     from fastapi.testclient import TestClient
-    from arena import db, society, society_moderation
+    from arena import db, society, society_moderation, society_public
     from arena.app import create_app
 
 CANARY = 'CONFIDENTIAL_BOUNDARY_CANARY'
@@ -56,7 +56,8 @@ class PublicSocietyPrivacyTests(LifeCase):
                     self.assertNotIn(field.strip('"'), public_keys)
                 self.assertEqual(response.headers['x-content-type-options'], 'nosniff')
             posts = client.get('/api/society/square').json()['posts']
-            self.assertEqual([post['id'] for post in posts], [visible])
+            self.assertEqual(posts, [])
+            self.assertEqual([post['id'] for post in society_public.square(self.conn)['posts']], [visible])
             for path in ['/api/society/notes', '/api/society/strategies', '/api/society/turns',
                     '/api/society/agents/alder/context', '/static/fixtures/decisions.json']:
                 self.assertNotEqual(client.get(path).status_code, 200)
