@@ -160,28 +160,28 @@ class PublicApiTests(LifeCase):
         for key in ('"strategy"', '"note"', '"notes"', '"reason"', '"private"', '"evidence"', '"codes"'):
             self.assertNotIn(key, text)
         square = bodies[1].json()["posts"]
-        self.assertEqual([p["text"] for p in square], ["A public thought."])
+        self.assertEqual(square, [])
         alder = bodies[2].json()
-        self.assertEqual(set(alder["relations"]), {"replied_to", "replies_from", "liked", "liked_by"})
+        self.assertEqual(alder["relations"], {})
         self.assertEqual(self.client.get("/api/society/agents/nobody").status_code, 404)
 
     def test_everything_is_hidden_until_enabled(self):
         with patch.dict(os.environ, {"KLADOS_SOCIETY_PUBLIC": "0"}):
             self.assertEqual(self.client.get("/api/society/feed").status_code, 404)
-            self.assertEqual(self.like(self.public_id).status_code, 404)
+            self.assertEqual(self.like(self.public_id).status_code, 403)
 
-    def test_human_likes_pay_once_and_respect_the_daily_limits(self):
+    def test_public_likes_are_disabled_without_changing_backend_accounting(self):
         before = self.agent("alder")["balance"]
-        response = self.like(self.public_id)
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.json(), {"likes": 1, "likes_left_today": 2})
+        for post_id in (self.public_id, 999):
+            self.assertEqual(self.like(post_id).status_code, 403)
+            self.assertEqual(self.client.post(f"/api/society/posts/{post_id}/like").status_code, 403)
         self.conn.rollback()
+        self.assertEqual(self.agent("alder")["balance"], before)
+        result = society_public.like(self.conn, RULES, "voter-a", self.public_id, self.now)
+        self.assertEqual(result, {"likes": 1, "likes_left_today": 2})
         self.assertEqual(self.agent("alder")["balance"], before + 100)
-        self.assertEqual(self.like(self.public_id).status_code, 409)  # once per post
-        self.assertEqual(self.client.post(f"/api/society/posts/{self.public_id}/like").status_code, 401)
-        self.assertEqual(self.like(999).status_code, 404)
-        withheld = self.conn.execute("SELECT id FROM society_posts WHERE status = 'withheld'").fetchone()["id"]
-        self.assertEqual(self.like(withheld).status_code, 404)
+        with self.assertRaisesRegex(society.SocietyError, "already_liked"):
+            society_public.like(self.conn, RULES, "voter-a", self.public_id, self.now)
 
     def test_a_visitor_has_three_likes_a_day(self):
         ids = [self.public_id]
@@ -191,8 +191,11 @@ class PublicApiTests(LifeCase):
             society_moderation.apply_verdict(self.conn, RULES, post_id, CLEAN, self.now)
             ids.append(post_id)
         self.conn.commit()
-        self.assertEqual([self.like(i).status_code for i in ids], [200, 200, 200, 429])
-        self.assertEqual(self.like(ids[3], voter="voter-b").status_code, 200)
+        for post_id in ids[:3]:
+            society_public.like(self.conn, RULES, "voter-a", post_id, self.now)
+        with self.assertRaisesRegex(society.SocietyError, "daily_limit"):
+            society_public.like(self.conn, RULES, "voter-a", ids[3], self.now)
+        self.assertEqual(society_public.like(self.conn, RULES, "voter-b", ids[3], self.now)["likes"], 1)
 
     def test_energy_from_people_stops_at_the_daily_cap(self):
         self.conn.rollback()

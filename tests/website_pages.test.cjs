@@ -12,7 +12,7 @@ function node(tag) { return { tag, children: [], value: "", attributes: {},
   get textContent() { return this.value + this.children.map(n => n.textContent).join(" "); },
   appendChild(child) { this.children.push(child); }, insertBefore(child, target) { this.children.splice(this.children.indexOf(target), 0, child); }, setAttribute(key, value) { this.attributes[key] = value; } }; }
 function all(n) { return [n, ...n.children.flatMap(all)]; }
-function browser(page, pathname = "/", config = { live: false }, extra = {}) {
+function browser(page, pathname = "/", config = { live: false, examples: true }, extra = {}) {
   const elements = new Map(), calls = [];
   const byId = id => { if (!elements.has(id)) elements.set(id, node("div")); return elements.get(id); };
   vm.runInNewContext(source, { document: { body: { dataset: { page } }, createElement: node, getElementById: byId }, location: { pathname },
@@ -35,7 +35,7 @@ test("Home copy is verbatim, founders are prominent and fixture agents/fossils c
   assert.equal(content.children[2].children[0].textContent, "Life in Klados");
   assert.equal(content.children[3].children[0].textContent, "Explore Klados"
   ); assert.equal(content.children[4].children[0].textContent, "A few questions");
-  assert.match(content.textContent, /Example data · not real activity/);
+  assert.match(content.textContent, /Development preview · example data/);
   const dead = fixture("feed.json").agents.filter(a => a.status === "dead");
   for (const agent of dead) assert.ok(all(content).some(n => n.href === "/society/agents/" + agent.id));
 });
@@ -130,12 +130,26 @@ test("ordinary quotes render as blockquotes; hostile and unfinished Markdown sta
   assert.ok(b.byId('site-content').textContent.includes('x'.repeat(10000)));
 });
 
-test("Home shows database-backed founders and explicit mock provenance", async () => {
+test("Home shows registered identities and pause status without repeated mode notices", async () => {
   const feed = { paused: true, tick: 2, agents: [{ id: "first", name: "First", status: "alive", energy: 299, age_days: .1 }] };
   const b = browser("home", "/", { live: true, ai_mode: "mock" }, { feed, stats: { tick: 2, population: { alive: 1, dead: 0 } }, profiles: { first: { description: "An API personality." } } }); await tick();
-  assert.match(b.byId("site-content").textContent, /Mock AI mode/);
+  assert.doesNotMatch(b.byId("site-content").textContent, /Mock AI mode/);
   assert.match(b.byId("site-content").textContent, /Paused/);
   assert.match(b.byId("site-content").textContent, /An API personality/);
   assert.match(b.byId("site-content").textContent, /299 E/);
   assert.ok(b.calls.some(c => c.url === "/api/society/agents/first"));
+});
+
+test("public Home has no fixture fallback or mock-mode notices", async () => {
+  const b = browser("home", "/", { live: false, examples: false }); await tick();
+  assert.ok(!b.calls.some(c => c.url.includes("/fixtures/")));
+  assert.doesNotMatch(b.byId("site-content").textContent, /Example data|Mock AI|299 E/);
+});
+test("official contact page separates general, privacy and safety purposes", async () => {
+  const config = { contact: "contact@kladosworld.com", privacy: "privacy@kladosworld.com", report: "report@kladosworld.com" };
+  const b = browser("contact", "/contact", config); await tick();
+  for (const address of Object.values(config)) assert.ok(all(b.byId("site-content")).some(n => n.href === "mailto:" + address));
+  const terms = browser("legal", "/terms", config); await tick();
+  assert.match(terms.byId("site-content").textContent, /being prepared/);
+  assert.ok(all(terms.byId("site-content")).some(n => n.href === "mailto:" + config.contact));
 });

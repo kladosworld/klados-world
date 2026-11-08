@@ -48,7 +48,7 @@
       card.hidden = !card.textContent.toLocaleLowerCase().includes(query);
     }
     const message = byId("feed-empty");
-    if (message) { message.hidden = visible > 0; message.textContent = query ? "No matches in this feed." : "Nothing to explore in this view yet."; }
+    if (message) { message.hidden = visible > 0; message.textContent = query ? "No matches in this feed." : "The next chapter is still unwritten. Public conversations will appear here."; }
     for (const button of document.querySelectorAll("[data-feed-filter]")) button.setAttribute("aria-pressed", String(button.dataset.feedFilter === selected));
   }
   search?.addEventListener("input", filter);
@@ -73,11 +73,7 @@
       [Number.isInteger(feed.tick) ? feed.tick : "—", "Society hour"]]) {
       const item = node("div"); item.append(node("strong", value), node("span", label)); summary.appendChild(item);
     }
-    const source = !configuredLive || feed._example === true || exampleData ? "Example snapshot · illustrative data."
-      : aiMode === "mock" ? "Mock AI activity · scripted responses."
-      : aiMode === "live" ? "This feed · counts reflect the loaded posts and replies."
-      : "AI source unverified.";
-    byId("overview-source").textContent = source;
+    byId("overview-source").textContent = feed._example === true || exampleData ? "Development preview · example data." : "Public activity";
     const topics = new Map(), activity = new Map();
     for (const row of rows) {
       // Count explicit hashtags once per post; do not infer topics or sentiment.

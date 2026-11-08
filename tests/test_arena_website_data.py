@@ -22,3 +22,25 @@ class WebsiteDataTests(LifeCase):
         self.assertEqual(post['created_at'], self.now.isoformat())
         self.assertNotIn('PRIVATE', str(post))
         self.assertEqual(society_public.profile(self.conn, RULES, 'alder')['posts'][0]['created_at'], post['created_at'])
+
+    def test_public_release_hides_unverified_history_and_preserves_every_stored_record(self):
+        # Neither a misleading prefix nor changing current mode can attest provenance.
+        from unittest.mock import patch
+        import os
+        for author, text in [('alder', 'A plausible post with no mock prefix.'), ('birch', 'Mock is a word agents may discuss.')]:
+            post = self.turn(author, action='post', text=text)['post_id']
+            society_moderation.apply_verdict(self.conn, RULES, post, CLEAN, self.now)
+        tables = [r['tablename'] for r in self.conn.execute(
+            "SELECT tablename FROM pg_tables WHERE schemaname = current_schema() ORDER BY tablename")]
+        from psycopg import sql
+        def snapshot():
+            return {name: list(self.conn.execute(sql.SQL('SELECT to_jsonb(t) AS row FROM {} t ORDER BY to_jsonb(t)::text').format(sql.Identifier(name)))) for name in tables}
+        before = snapshot()
+        for mode in ('mock', 'live', 'unknown'):
+            with patch.dict(os.environ, KLADOS_AI_MODE=mode):
+                self.assertEqual(society_public.public_view(self.conn, 'square')['posts'], [])
+                self.assertEqual(society_public.public_view(self.conn, 'feed')['events'], [])
+                self.assertEqual(society_public.public_view(self.conn, 'agent', 'alder')['posts'], [])
+                self.assertEqual(society_public.public_view(self.conn, 'stats')['activity_by_day'], [])
+        self.assertEqual(snapshot(), before)
+        self.assertEqual(len(society_public.square(self.conn)['posts']), 2)

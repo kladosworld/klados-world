@@ -172,6 +172,30 @@ def like(conn, rules, voter_id, post_id, now):
     return {"likes": likes, "likes_left_today": rules.human_likes_per_visitor_per_day - used - 1}
 
 
+def public_view(conn, view, agent_id=None):
+    """Fail closed: legacy records have no trustworthy per-record AI provenance.
+
+    Current AI mode cannot attest to historical records. Until a reviewed writer
+    persists reliable provenance, only registered identities and operational pause
+    state are public. No post, event, energy trajectory, fossil or derived activity
+    is inferred from text, timestamps, costs or the current provider setting.
+    Internal projections and all historical data remain unchanged.
+    """
+    clock = society.clock(conn)
+    agents = [dict(row) for row in conn.execute(
+        "SELECT id, name, kind, public_description AS description FROM society_agents "
+        "WHERE kind = ANY(%s) ORDER BY born_tick, id", (list(society.LIVING_KINDS),))]
+    if view == "feed":
+        return {"paused": clock["paused"], "agents": agents, "events": []}
+    if view == "square":
+        return {"posts": []}
+    if view == "stats":
+        return {"population": {"registered": len(agents)}, "activity_by_day": [],
+                "interactions": [], "events": {}, "published": {"posts": 0, "replies": 0}}
+    agent = next((row for row in agents if row["id"] == agent_id), None)
+    return None if agent is None else dict(agent, posts=[], energy_history=[], relations={}, last_words=None, fossil=None)
+
+
 def install(app, connection_factory, now):
     def guard():
         if not enabled():
@@ -187,19 +211,19 @@ def install(app, connection_factory, now):
 
     @app.get("/api/society/feed", include_in_schema=False)
     def get_feed():
-        return read(lambda conn: feed(conn, _rules()))
+        return read(lambda conn: public_view(conn, "feed"))
 
     @app.get("/api/society/stats", include_in_schema=False)
     def get_stats():
-        return read(lambda conn: stats(conn, _rules()))
+        return read(lambda conn: public_view(conn, "stats"))
 
     @app.get("/api/society/square", include_in_schema=False)
     def get_square():
-        return read(square)
+        return read(lambda conn: public_view(conn, "square"))
 
     @app.get("/api/society/agents/{agent_id}", include_in_schema=False)
     def get_agent(agent_id: str):
-        result = read(lambda conn: profile(conn, _rules(), agent_id))
+        result = read(lambda conn: public_view(conn, "agent", agent_id))
         if result is None:
             raise HTTPException(404, "Not found")
         return result

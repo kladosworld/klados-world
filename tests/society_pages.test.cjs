@@ -18,7 +18,7 @@ function element(tag) {
     querySelectorAll() { return all(this).filter(n => n.tag === "article" && n.id); } };
 }
 function all(root) { return [root, ...root.children.flatMap(all)]; }
-function browser(view, data, { live = false, replies = [], id = "sample-agent", session = null, configFailure = false, realSession = false, windowDays = null, aiMode = live ? "live" : "unknown" } = {}) {
+function browser(view, data, { live = false, replies = [], id = "sample-agent", session = null, configFailure = false, realSession = false, windowDays = null, examples = true, likesEnabled = true, aiMode = live ? "live" : "unknown" } = {}) {
   const elements = new Map(), calls = [], timers = [], listeners = new Map(), scrolls = [];
   const byId = id => {
     const dynamic = [...elements.values()].flatMap(all).find(n => n.id === id);
@@ -37,7 +37,7 @@ function browser(view, data, { live = false, replies = [], id = "sample-agent", 
     fetch: async (url, options) => {
       calls.push({ url, options });
       if (url === "/docs/content.json") return { ok: true, json: async () => ({ window_days: windowDays }) };
-      if (url === "/society/config.json") return { ok: !configFailure, json: async () => ({ live, ai_mode: aiMode }) };
+      if (url === "/society/config.json") return { ok: !configFailure, json: async () => ({ live, ai_mode: aiMode, examples, likes_enabled: likesEnabled }) };
       if (options.method === "POST" || url.startsWith("/auth/")) {
         const reply = replies.shift(); assert.ok(reply, "Unexpected auth/like request: " + url);
         if (reply instanceof Error) throw reply;
@@ -205,11 +205,11 @@ test("guest Turnstile reuses opaque sessions with one-use CSRF and a mocked prov
   assert.equal(controls(b)[0].disabled, false);
 });
 
-test("all text uses safe DOM operations and example labels remain in HTML", () => {
+test("all text uses safe DOM operations and source notices start hidden", () => {
   for (const forbidden of ["innerHTML", "outerHTML", "insertAdjacentHTML"]) assert.ok(!source.includes(forbidden));
   for (const page of ["society.html", "society-square.html", "society-agent.html", "society-stats.html"]) {
     const html = fs.readFileSync(path.join(__dirname, "../arena/static", page), "utf8");
-    assert.match(html, /Example data · not real activity\./); assert.ok(!html.includes("onclick="));
+    assert.match(html, /id="demo-notice"[^>]*hidden/); assert.ok(!html.includes("onclick="));
   }
 });
 
@@ -258,18 +258,30 @@ for (const [reply, expected] of [
 test("mock and unknown sources are visible and cannot enable likes", async () => {
   for (const aiMode of ["mock", "unknown"]) {
     const b = browser("square", liveData("square.json"), { live: true, aiMode, session: signedIn() }); await tick();
-    assert.equal(b.byId("demo-notice").hidden, false);
-    assert.match(b.byId("demo-notice").textContent, aiMode === "mock" ? /Mock AI mode/ : /unverified/);
+    assert.equal(b.byId("demo-notice").hidden, true);
     assert.ok(controls(b).every(button => button.disabled));
   }
 });
 
-test("stored timestamps render as UTC times and old mock posts remain labelled in live mode", async () => {
+test("stored timestamps render as UTC times without text-based provenance guesses", async () => {
   const data = liveData("square.json"); data.posts[0].text = "Mock activity from a development run.";
   const b = browser("square", data, { live: true, session: signedIn() }); await tick();
   const times = all(b.byId("society-results")).filter(n => n.tag === "time");
   assert.ok(times.length > 0); assert.match(times[0].textContent, /UTC/);
   assert.match(times[0].attributes.datetime, /^2026-11-03T/);
-  assert.match(b.byId("society-results").textContent, /Mock activity · scripted post/);
-  assert.equal(controls(b)[0].disabled, true);
+  assert.doesNotMatch(b.byId("society-results").textContent, /scripted post/);
+});
+
+
+test("public release disables participation even for an authenticated live session", async () => {
+  const b = browser("square", liveData("square.json"), { live: true, likesEnabled: false, session: signedIn() }); await tick();
+  assert.equal(controls(b).length, 0);
+  assert.ok(!b.calls.some(c => c.url.startsWith("/auth/") || c.options?.method === "POST"));
+  assert.equal(b.byId("demo-notice").hidden, true);
+});
+test("public offline mode never requests fixtures or invents activity", async () => {
+  const b = browser("square", fixture("square.json"), { examples: false, likesEnabled: false }); await tick();
+  assert.ok(!b.calls.some(c => c.url.includes("/fixtures/")));
+  assert.equal(b.byId("society-results").textContent, "");
+  assert.equal(b.byId("demo-notice").hidden, true);
 });

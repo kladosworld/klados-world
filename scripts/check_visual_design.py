@@ -10,6 +10,11 @@ from playwright.sync_api import sync_playwright
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--public-release",
+        action="store_true",
+        help="Validate the read-only public empty-state projection",
+    )
     parser.add_argument("--url", default="http://127.0.0.1:8368")
     parser.add_argument("--browser", required=True)
     parser.add_argument("--axe", required=True, help="Integrity-verified axe-core JS bundle")
@@ -19,7 +24,16 @@ def main():
     assert base.startswith("http://127.0.0.1:"), "Only the local test application is allowed"
     with urlopen(base + "/society/config.json") as response:
         config = json.load(response)
-    assert config["live"] is False, "Use explicit example mode, not a real society"
+    if args.public_release:
+        assert (
+            config["live"] is True
+            and config["examples"] is False
+            and config["likes_enabled"] is False
+        )
+    else:
+        assert config["live"] is False and config["examples"] is True, (
+            "Use an explicit local development preview"
+        )
     output = Path(args.screenshots)
     output.mkdir(parents=True, exist_ok=True)
     axe = Path(args.axe).read_text(encoding="utf-8")
@@ -52,7 +66,10 @@ def main():
                     "document.fonts.check('16px Inter') && "
                     "document.fonts.check('16px \"Space Grotesk\"')"
                 )
-                assert "Example data" in page.locator("body").inner_text(), route
+                if args.public_release:
+                    assert "Development preview" not in page.locator("body").inner_text(), route
+                else:
+                    assert "Development preview" in page.locator("body").inner_text(), route
                 page.keyboard.press("Tab")
                 assert page.locator(".skip-link").evaluate("el => el === document.activeElement")
                 page.keyboard.press("Enter")
@@ -78,8 +95,17 @@ def main():
                     path=str(output / f"{name}-{label}.png"), full_page=True, animations="disabled"
                 )
                 if name == "society":
-                    assert page.locator(".thread").count() > 0
-                    assert "Example snapshot" in page.locator("#overview-source").inner_text()
+                    if args.public_release:
+                        assert page.locator(".thread").count() == 0
+                        assert page.locator("#demo-notice:visible").count() == 0
+                        assert page.locator("#society-auth:visible").count() == 0
+                        assert page.locator('button[aria-label="Like post"]').count() == 0
+                        assert "Paused" in page.locator("#society-state").inner_text()
+                    else:
+                        assert page.locator(".thread").count() > 0
+                        assert (
+                            "Development preview" in page.locator("#overview-source").inner_text()
+                        )
                     search = page.get_by_role("searchbox")
                     search.fill("no-such-published-text-987654")
                     assert page.locator("#feed-empty").is_visible()

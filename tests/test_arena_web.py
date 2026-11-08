@@ -103,8 +103,7 @@ class WebsiteHTTPTests(unittest.TestCase):
                                 '/contact', '/privacy', '/terms', '/site/copy.json',
                                 '/site/legal/privacy.json', '/site/legal/terms.json', '/docs/content.json',
                                 '/society', '/society/square', '/society/stats', '/society/agents/custom',
-                                '/society/config.json', '/static/home-copy.json', '/static/website.js',
-                                '/static/fixtures/feed.json', '/static/fixtures/agents/alder.json']:
+                                '/society/config.json', '/static/home-copy.json', '/static/website.js']:
                             self.assertEqual(client.get(path).status_code, 200, path)
                         with patch.object(app_module, 'PUBLIC_GET_PATHS', app_module.PUBLIC_GET_PATHS | {'/__gate_probe'}), \
                                 patch.object(app_module, 'PUBLIC_POST_PATHS', app_module.PUBLIC_POST_PATHS | {'/__gate_probe'}):
@@ -229,7 +228,7 @@ class WebsiteHTTPTests(unittest.TestCase):
                 response = client.get('/society/config.json')
                 self.assertEqual(response.headers['cache-control'], 'no-store')
                 for field, variable in zip(['contact', 'report', 'privacy'], variables):
-                    self.assertEqual(response.json()[field], 'operator@example.com' if variable == selected else None)
+                    self.assertEqual(response.json()[field], website.CONTACTS[field])
         self.assertIsNone(website.contact('not an email'))
 
     def test_legal_files_are_plain_text_and_docs_use_injected_rules(self):

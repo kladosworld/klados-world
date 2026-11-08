@@ -93,12 +93,14 @@ class PersistedBrowserTests(WorkerCase):
                         audits.append({'page':name,'width':width,'violations':0})
                         if name == 'society':
                             summary=page.locator('#world-summary strong').all_text_contents()
-                            self.assertEqual(summary[:2], ['4',str(count)])
-                            self.assertEqual(page.locator('.thread').count(),count)
-                            self.assertIn('Mock AI activity',page.locator('#overview-source').inner_text())
+                            self.assertEqual(summary[:2], ['4','0'])
+                            self.assertEqual(page.locator('.thread').count(),0)
+                            self.assertNotIn('Mock AI', page.locator('body').inner_text())
+                            self.assertEqual(page.locator('#demo-notice:visible').count(), 0)
                             self.assertIn('No hashtags',page.locator('#world-topics').inner_text())
                             square=page.request.get(base+'/api/society/square').json()
-                            self.assertEqual(len(square['posts']),count)
+                            self.assertEqual(square['posts'], [])
+                            self.assertEqual(page.locator('button[aria-label="Like post"]').count(), 0)
                             for post in square['posts']:
                                 self.assertIn(post['text'],page.locator('body').inner_text())
                             page.get_by_role('searchbox').fill('no-such-content-7392')
@@ -110,5 +112,6 @@ class PersistedBrowserTests(WorkerCase):
                 self.assertEqual(society.audit(self.conn),[])
                 self.assertTrue(society.clock(self.conn)['paused'])
                 browser.close()
-        # Screenshot files are temporary runner artifacts; public checked-in screenshots use example mode.
+        # Mock records remain in the disposable database; none reach public pages.
+        self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM society_posts WHERE status='published'").fetchone()['n'], count)
         self.assertEqual(len(audits),9)

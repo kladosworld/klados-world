@@ -60,7 +60,7 @@ class ArenaApp(FastAPI):
 
 
 def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnstile_verifier=None,
-               rules_path=None, legal_directory=None):
+               rules_path=None, legal_directory=None, examples=False):
     connection_factory = connection_factory or (lambda: db.connect(os.environ['ARENA_DATABASE_URL']))
     now = now or (lambda: datetime.now(timezone.utc))
     website.validate_legal_final(legal_directory)
@@ -112,7 +112,8 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
     @app.get('/society/config.json', include_in_schema=False)
     def society_config():
         return JSONResponse({'live': os.getenv('KLADOS_SOCIETY_PUBLIC') == '1', 'ai_mode': os.getenv('KLADOS_AI_MODE', 'unknown'),
-            **{key: website.contact(os.getenv(variable)) for key, variable in [('contact', 'KLADOS_CONTACT_EMAIL'), ('report', 'KLADOS_REPORT_EMAIL'), ('privacy', 'KLADOS_PRIVACY_EMAIL')]}}, headers={'Cache-Control': 'no-store'})
+            'examples': examples, 'likes_enabled': False, 'activity_visibility': 'verified-only',
+            **website.CONTACTS}, headers={'Cache-Control': 'no-store'})
 
     @app.get('/society/stats', include_in_schema=False)
     def society_stats_page():
@@ -128,6 +129,8 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
 
     @app.get('/static/fixtures/{resource:path}', include_in_schema=False)
     def public_fixture(resource: str):
+        if not examples:
+            raise HTTPException(404, 'Not found')
         return JSONResponse(fixture(static / 'fixtures', resource), headers={'Cache-Control': 'no-store'})
 
     @app.get('/static/home-copy.json', include_in_schema=False)
@@ -198,6 +201,10 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
 
     @app.middleware('http')
     async def site_gate(request, call_next):
+        if request.method == 'POST' and re.fullmatch(r'/api/society/posts/[1-9][0-9]*/like', request.url.path):
+            return JSONResponse(status_code=403, content={'detail': 'Visitor likes are disabled'})
+        if request.url.path.startswith('/static/fixtures/') and not examples:
+            return JSONResponse(status_code=404, content={'detail': 'Not found'})
         if not public_route(request.method, request.url.path):
             return JSONResponse(status_code=404, content={'detail': 'Not found'})
         if request.url.path.startswith('/auth/') and auth.mode() is None:

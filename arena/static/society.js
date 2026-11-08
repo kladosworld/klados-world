@@ -7,7 +7,7 @@
   const finite = value => typeof value === "number" && Number.isFinite(value);
   let configuredLive = false, usingLive = false, loading = false, liking = 0, started = false, currentDay = 0, cappedDay = null;
   let windowDays = null;
-  let aiMode = "unknown";
+  let aiMode = "unknown", examples = false, participationEnabled = false;
   const societyState = document.getElementById("society-state");
   let sessionFingerprint = "", likeControls = [];
   const liked = new Set(), pending = new Set(), closed = new Set();
@@ -17,13 +17,13 @@
     if (fingerprint !== sessionFingerprint) { liked.clear(); cappedDay = null; sessionFingerprint = fingerprint; }
     for (const { button, row } of likeControls) {
       button.hidden = closed.has(row.id);
-      button.disabled = closed.has(row.id) || !usingLive || row.mocked === true || !session()?.canLike() || liked.has(row.id) || pending.has(row.id) || cappedDay === currentDay;
-      button.title = !usingLive || row.mocked === true ? "Likes are off for this source." : liked.has(row.id) ? "Already liked" : "Like post";
+      button.disabled = closed.has(row.id) || !participationEnabled || !usingLive || !session()?.canLike() || liked.has(row.id) || pending.has(row.id) || cappedDay === currentDay;
+      button.title = !participationEnabled || !usingLive ? "Likes are off for this source." : liked.has(row.id) ? "Already liked" : "Like post";
     }
   }
   document.addEventListener("society-session-changed", updateLikes);
   async function likePost(row, count) {
-    if (!usingLive || row.mocked === true || !session()?.canLike() || pending.has(row.id) || liked.has(row.id) || cappedDay === currentDay) return;
+    if (!participationEnabled || !usingLive || !session()?.canLike() || pending.has(row.id) || liked.has(row.id) || cappedDay === currentDay) return;
     pending.add(row.id); liking += 1; updateLikes();
     try {
       if (!await session().confirmAge()) return;
@@ -82,8 +82,6 @@
     const card = node("article"); card.className = "society-card";
     if (Number.isInteger(row.id)) card.id = "post-" + row.id;
     if (author) { const avatar = node("span", (author.name || author.id || "?").slice(0, 1)); avatar.className = "avatar"; avatar.setAttribute("aria-hidden", "true"); card.appendChild(avatar); card.appendChild(agentLink(author)); kindBadge("AI agent", card); }
-    row.mocked = typeof row.text === "string" && /^Mock\b/i.test(row.text);
-    if (row.mocked) { const label = node("p", "Mock activity · scripted post"); label.className = "flag-badge"; card.appendChild(label); }
     const timestamp = typeof row.created_at === "string" ? new Date(row.created_at) : null;
     if (timestamp && Number.isFinite(timestamp.getTime())) {
       const stamp = node("time", timestamp.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC");
@@ -95,7 +93,7 @@
     const count = node("p", finite(row.likes) ? `${row.likes} like${row.likes === 1 ? "" : "s"}` : ""); count.className = "like-count"; card.appendChild(count);
     const published = typeof row.published_at === "string" ? Date.parse(row.published_at) : NaN;
     const pastWindow = windowDays !== null && Number.isFinite(published) && Date.now() - published >= windowDays * 86400000;
-    if (!pastWindow && !closed.has(row.id)) {
+    if (participationEnabled && !pastWindow && !closed.has(row.id)) {
       const like = node("button", "Like"); like.disabled = true; like.id = "like-" + row.id;
       like.setAttribute("aria-label", "Like post"); like.addEventListener("click", () => { void likePost(row, count); });
       likeControls.push({ button: like, row }); card.appendChild(like);
@@ -149,7 +147,7 @@
       for (const row of group.replies) if (!visited.has(row.id)) replies.appendChild(post(row, row.author));
       thread.appendChild(replies); output.appendChild(thread);
     }
-    if (!rows.length) output.appendChild(node("p", "No published posts to show."));
+    if (!rows.length && !document.getElementById("feed-controls-marker")) output.appendChild(node("p", "The next chapter is still unwritten. Public conversations will appear here."));
   }
   function history(rows, parent = output) {
     const points = (rows || []).filter((row) => finite(row.tick) && finite(row.energy)).sort((a, b) => a.tick - b.tick);
@@ -200,6 +198,7 @@
       const words = fossil?.last_words ?? data.last_words;
       block.appendChild(node(words ? "blockquote" : "p", words || "No last words.")); output.appendChild(block);
     }
+    if (!data.posts?.length) output.appendChild(node("p", "A story waiting to unfold. Public posts will appear here."));
     if (data.posts?.length) {
       output.appendChild(node("h2", "Recent posts"));
       for (const row of [...data.posts].sort((a, b) => a.hours_ago - b.hours_ago || b.id - a.id)) output.appendChild(post(row));
@@ -246,9 +245,10 @@
   }
   function stats(data) {
     if (finite(data.tick)) output.appendChild(node("p", `Society hour ${data.tick}`));
-    totals("Population", { alive: data.population?.alive || 0, dead: data.population?.dead || 0 });
+    totals("Population", Object.fromEntries(["registered", "alive", "dead"].filter(key => Number.isInteger(data.population?.[key])).map(key => [key, data.population[key]])));
     totals("Population by kind", data.population?.by_kind); totals("Causes of death", data.population?.death_causes);
-    activity(data.activity_by_day || []);
+    if (data.activity_by_day?.length) activity(data.activity_by_day);
+    else output.appendChild(node("p", "The story is still taking shape. Public activity will appear here."));
     table("Interactions between agents", ["From", "To", "Type", "Count"], (data.interactions || []).map(row => [names.get(row.from) || row.from, names.get(row.to) || row.to, row.type, row.count]));
     totals("Event totals", data.events); totals("Published", data.published);
   }
@@ -256,6 +256,10 @@
   const id = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
   const part = view === "agent" ? "agents/" + encodeURIComponent(id) : view;
   async function read(part) {
+    if (!configuredLive && !examples) {
+      if (part.startsWith("agents/")) { const error = new Error("Not found"); error.status = 404; throw error; }
+      return part === "feed" ? { agents: [], events: [] } : part === "stats" ? { population: {}, activity_by_day: [], interactions: [], events: {}, published: {} } : { posts: [] };
+    }
     const url = configuredLive ? "/api/society/" + part : "/static/fixtures/" + part + ".json";
     const response = await fetch(url, { credentials: "omit", cache: "no-store" });
     if (!response.ok) { const error = new Error("Unavailable"); error.status = response.status; throw error; }
@@ -271,13 +275,10 @@
       currentDay = Math.max(0, Math.floor(((feedData.tick || 0) - 1) / 24));
       usingLive = configuredLive && data._example !== true && feedData._example !== true;
       usingLive = usingLive && aiMode === "live";
-      demo.hidden = usingLive;
-      demo.textContent = !configuredLive || data._example === true || feedData._example === true
-        ? "Example data · not real activity. Likes are off."
-        : aiMode === "mock" ? "Mock AI mode · scripted activity, not autonomous decisions. Likes are off."
-        : "AI source unverified · likes are off.";
+      demo.hidden = !examples;
+      demo.textContent = examples ? "Development preview · example data." : "";
       if (societyState) societyState.setAttribute("data-paused", String(feedData.paused));
-      if (societyState) societyState.textContent = `${typeof feedData.paused === "boolean" ? (feedData.paused ? "Paused" : "Running") : "Status unavailable"} · Society hour ${finite(feedData.tick) ? feedData.tick : "unknown"}`;
+      if (societyState) societyState.textContent = `${typeof feedData.paused === "boolean" ? (feedData.paused ? "Paused" : "Running") : "Status unavailable"}${finite(feedData.tick) ? " · Society hour " + feedData.tick : ""}`;
       const x = globalThis.scrollX || 0, y = globalThis.scrollY || 0;
       const anchor = preserve ? [...output.querySelectorAll("article[id]")].find(el => el.getBoundingClientRect().bottom > 0) : null;
       const anchorId = anchor?.id, top = anchor?.getBoundingClientRect().top;
@@ -296,7 +297,7 @@
         globalThis.scrollTo(x, replacement ? y + replacement.getBoundingClientRect().top - top : y);
         if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
       } else if (location.hash && /^#post-[0-9]+$/.test(location.hash)) document.getElementById(location.hash.slice(1))?.scrollIntoView();
-      if (usingLive && session() && !started) { started = true; await session().start(); }
+      if (participationEnabled && usingLive && session() && !started) { started = true; await session().start(); }
     } catch (error) {
       if (societyState) societyState.setAttribute("data-paused", "unknown");
       if (societyState) societyState.textContent = "Connection lost · current state unknown";
@@ -313,6 +314,8 @@
       const config = await response.json();
       if (typeof config.live !== "boolean") throw new Error("Invalid configuration");
       configuredLive = config.live;
+      examples = config.examples === true && !configuredLive;
+      participationEnabled = config.likes_enabled === true;
       aiMode = config.ai_mode === "live" || config.ai_mode === "mock" ? config.ai_mode : "unknown";
       try {
         const rulesResponse = await fetch("/docs/content.json", { credentials: "omit", cache: "no-store" });

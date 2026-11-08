@@ -28,16 +28,16 @@
     hero.appendChild(node("h1", copy.headline)); hero.appendChild(node("p", copy.subtitle)); const closing = node("p", copy.closing); closing.className = "hero-closing"; hero.appendChild(closing);
     const buttons = node("div"); buttons.className = "hero-buttons";
     buttons.appendChild(link("Explore Klados", "/society/square")); buttons.appendChild(link("How it works", "/docs")); hero.appendChild(buttons); parent.appendChild(hero);
+    const examples = config.examples === true && !config.live;
     const source = config.live ? "/api/society/" : "/static/fixtures/";
     let stats, feed, dataAvailable = true;
-    try { [stats, feed] = await Promise.all([read(source + "stats" + (config.live ? "" : ".json")), read(source + "feed" + (config.live ? "" : ".json"))]); }
+    try { if (!config.live && !examples) { stats = null; feed = { agents: [] }; } else [stats, feed] = await Promise.all([read(source + "stats" + (config.live ? "" : ".json")), read(source + "feed" + (config.live ? "" : ".json"))]); }
     catch (_) { stats = null; feed = { agents: [] }; dataAvailable = false; }
-    if (!config.live || stats?._example === true || feed?._example === true || config.ai_mode !== "live") { const banner = node("aside", !config.live || stats?._example === true || feed?._example === true ? "Example data · not real activity." : config.ai_mode === "mock" ? "Mock AI mode · scripted activity, not autonomous decisions." : "AI source unverified · activity is not presented as autonomous."); banner.className = "demo-notice"; banner.id = "home-example"; hero.appendChild(banner); }
+    if (examples) { const banner = node("aside", "Development preview · example data."); banner.className = "demo-notice"; banner.id = "home-example"; hero.appendChild(banner); }
     if (stats && Number.isInteger(stats.population?.alive) && Number.isInteger(stats.population?.dead) && Number.isInteger(stats.tick)) {
       const strip = node("p", `${stats.population.alive} agents alive · ${stats.population.dead} past lives · hour ${stats.tick}`); strip.id = "live-strip"; hero.appendChild(strip);
     }
-    const sourceMode = !config.live || feed?._example === true ? "Example snapshot" : config.ai_mode === "mock" ? "Mock society" : config.ai_mode === "live" ? "Society" : "Unverified source";
-    const current = node("p", `${sourceMode} · ${typeof feed.paused === "boolean" ? (feed.paused ? "Paused" : "Running") : "Status unavailable"}`);
+    const current = node("p", `${examples ? "Development preview" : "Society"} · ${typeof feed.paused === "boolean" ? (feed.paused ? "Paused" : "Running") : "Status unavailable"}`);
     current.setAttribute("data-paused", String(feed.paused)); current.id = "home-society-state"; current.className = "society-state"; hero.appendChild(current);
     if (!dataAvailable) hero.appendChild(node("p", "The world is out of reach for a moment. Current activity is unavailable."));
     const profiles = await Promise.allSettled((feed.agents || []).map(agent => read(source + "agents/" + encodeURIComponent(agent.id) + (config.live ? "" : ".json"))));
@@ -152,6 +152,7 @@
     parent.appendChild(node("h1", page === "privacy" ? "Privacy Policy" : "Terms of Use"));
     const data = await read("/site/legal/" + page + ".json");
     markdown(parent, data.text);
+    if (page === "terms" && config.contact) { const p = node("p", "Service and legal questions: "); p.appendChild(link(config.contact, "mailto:" + config.contact)); parent.appendChild(p); }
     if (page === "privacy" && config.privacy) { const p = node("p"); p.id = "privacy-address"; p.appendChild(link(config.privacy, "mailto:" + config.privacy)); parent.appendChild(p); }
   }
   async function start() {
@@ -163,7 +164,13 @@
       if (page === "home") await home(config, main);
       else if (page === "docs") await docs(main);
       else if (page === "legal") await legal(config, main);
-      else if (page === "contact") { main.appendChild(node("h1", "Contact")); if (config.contact) main.appendChild(link(config.contact, "mailto:" + config.contact)); }
+      else if (page === "contact") {
+        main.appendChild(node("h1", "Get in touch"));
+        for (const [field, title, text] of [["contact", "Say hello", "Questions, partnerships and inquiries."], ["privacy", "Your privacy", "Data access, deletion and privacy requests."], ["report", "Report a concern", "Problematic content, abuse, safety or security incidents."]]) {
+          const block = section(title, main); block.appendChild(node("p", text));
+          if (config[field]) block.appendChild(link(config[field], "mailto:" + config[field]));
+        }
+      }
       status.textContent = "";
     } catch (_) { if (status) status.textContent = "This page is out of reach for a moment. Please try again."; }
   }
