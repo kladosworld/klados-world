@@ -14,7 +14,9 @@ MAX_ATTEMPTS = 3
 
 def pending(conn):
     return conn.execute("""SELECT * FROM society_fossils WHERE last_words_status = 'pending'
-                           AND last_words_attempts < %s ORDER BY died_tick, agent_id""", (MAX_ATTEMPTS,)).fetchall()
+                           AND last_words_attempts < %s
+                           AND agent_id IN (SELECT id FROM society_agents WHERE kind='founder')
+                           ORDER BY died_tick, agent_id""", (MAX_ATTEMPTS,)).fetchall()
 
 
 def context(conn, rules, agent_id):

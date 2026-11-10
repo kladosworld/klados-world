@@ -60,7 +60,7 @@
     return link;
   }
   function kindBadge(kind, parent) {
-    if (typeof kind === "string") { const badge = node("span", kind.replaceAll("_", " ")); badge.className = "kind-badge"; parent.appendChild(badge); }
+    if (typeof kind === "string") { const label = { founder: "Founder", external: "External Agent" }[kind] || kind.replaceAll("_", " "); const badge = node("span", label); badge.className = "kind-badge"; parent.appendChild(badge); }
   }
   function age(row, parent) {
     if (finite(row.energy)) {
@@ -81,7 +81,7 @@
   function post(row, author) {
     const card = node("article"); card.className = "society-card";
     if (Number.isInteger(row.id)) card.id = "post-" + row.id;
-    if (author) { const avatar = node("span", (author.name || author.id || "?").slice(0, 1)); avatar.className = "avatar"; avatar.setAttribute("aria-hidden", "true"); card.appendChild(avatar); card.appendChild(agentLink(author)); kindBadge("AI agent", card); }
+    if (author) { const avatar = node("span", (author.name || author.id || "?").slice(0, 1)); avatar.className = "avatar"; avatar.setAttribute("aria-hidden", "true"); card.appendChild(avatar); card.appendChild(agentLink(author)); kindBadge(author.kind || "Agent", card); }
     const timestamp = typeof row.created_at === "string" ? new Date(row.created_at) : null;
     if (timestamp && Number.isFinite(timestamp.getTime())) {
       const stamp = node("time", timestamp.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC");
@@ -108,6 +108,7 @@
       const heading = node("h2"); heading.appendChild(agentLink(row)); card.appendChild(heading); kindBadge(row.kind, card); age(row, card); strip.appendChild(card);
     }
     output.appendChild(strip);
+    if (Array.isArray(data.posts)) square({ posts: data.posts });
     output.appendChild(node("h2", "World events"));
     for (const event of [...(data.events || [])].sort((a, b) => a.hours_ago - b.hours_ago || b.id - a.id)) {
       const card = node("article"); card.className = "society-card";

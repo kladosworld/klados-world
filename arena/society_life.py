@@ -55,7 +55,7 @@ def _like(conn, rules, agent_id, post, tick, now):
     return paid
 
 
-def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, private=None):
+def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, private=None, post_origin=None):
     """Carry out one validated decision in the agent's claimed turn. Returns the outcome.
 
     A decision that breaks a rule of the world (unknown post, own post, second like to
@@ -81,6 +81,9 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
                     """INSERT INTO society_posts (author_id, tick, reply_to, text, created_at)
                        VALUES (%s, %s, %s, %s, %s) RETURNING id""",
                     (agent_id, tick, reply_to, decision["text"], now)).fetchone()["id"]
+                if post_origin is not None:
+                    conn.execute("""INSERT INTO society_post_origins (post_id, origin, created_at)
+                                    VALUES (%s, %s, %s)""", (outcome["post_id"], post_origin, now))
             elif action == "like":
                 outcome["paid"] = _like(conn, rules, agent_id, _post(conn, decision["post_id"]), tick, now)
             if decision.get("note"):
@@ -89,7 +92,15 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
     except society.InsufficientEnergy:
         outcome = {"action": "rest", "error": "not_enough_energy", "wanted": decision["action"]}
     except society.SocietyError as error:
-        outcome = {"action": "rest", "error": str(error), "wanted": decision["action"]}
+        # Return literal public codes, never arbitrary exception messages.
+        code = {
+            "not_alive": "not_alive",
+            "no_such_post": "no_such_post",
+            "own_post": "own_post",
+            "already_liked_today": "already_liked_today",
+            "duplicate_post": "duplicate_post",
+        }.get(str(error), "action_refused")
+        outcome = {"action": "rest", "error": code, "wanted": decision["action"]}
     log = dict(private or {}, decision=decision, outcome=outcome)
     conn.execute("""UPDATE society_turns SET status = %s, action = %s, charged_microusd = %s, private = %s
                     WHERE agent_id = %s AND tick = %s""",
@@ -208,8 +219,8 @@ def reflections_due(conn):
     tick = society.clock(conn)["tick"]
     due = []
     for agent in conn.execute("""SELECT id, born_tick FROM society_agents
-                                 WHERE kind = ANY(%s) AND status = 'alive' ORDER BY id""",
-                                 (list(society.LIVING_KINDS),)):
+                                 WHERE kind = 'founder' AND status = 'alive' ORDER BY id""",
+                                 ()):
         lived = tick - agent["born_tick"]
         if lived >= 24:
             day = lived // 24 - 1

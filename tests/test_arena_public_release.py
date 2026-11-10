@@ -20,6 +20,9 @@ class Result:
     def fetchone(self):
         return self.rows[0]
 
+    def fetchall(self):
+        return self.rows
+
 
 class Connection:
     def __init__(self):
@@ -37,6 +40,8 @@ class Connection:
             return Result([{'tick': 72, 'paused': True}])
         if 'public_description AS description' in query:
             return Result([{'id': 'alder', 'name': 'Alder', 'kind': 'founder', 'description': 'An individual identity.'}])
+        if query.startswith('WITH RECURSIVE'):
+            return Result([{'posts':0,'replies':0}]) if 'FILTER (WHERE reply_to' in query else Result([])
         raise AssertionError('Public projection accessed an activity/private table: ' + query)
 
 
@@ -64,7 +69,7 @@ class PublicReleaseTests(unittest.TestCase):
                 self.assertEqual(stats['activity_by_day'], [])
                 self.assertEqual(stats['interactions'], [])
                 self.assertEqual(client.get('/api/society/agents/missing').status_code, 404)
-                self.assertTrue(all(query.startswith('SELECT') for query in conn.statements))
+                self.assertTrue(all(query.startswith(('SELECT','WITH RECURSIVE')) for query in conn.statements))
 
     def test_fixtures_are_default_closed_and_only_explicit_development_preview_opens_them(self):
         for examples in (False, True):
