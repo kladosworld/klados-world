@@ -106,21 +106,32 @@ def control_agent(conn, identifier, action, now):
     return conn.execute(query, params).fetchone() is not None
 
 
-def register(conn, rules, body, now):
-    description = identity(body)
-    # Serialize registrations to enforce the global bound across independent web workers.
-    conn.execute("SELECT pg_advisory_xact_lock(%s)", (REGISTRATION_LOCK,))
-    state = society.clock(conn, lock=True)
-    invitation = conn.execute(
-        "SELECT * FROM agent_invitations WHERE token_digest=%s FOR UPDATE",
-        (auth.digest(body["invite"]),),
-    ).fetchone()
-    if (
+def _usable(invitation, now):
+    return not (
         invitation is None
         or invitation["used_at"]
         or invitation["revoked_at"]
         or invitation["expires_at"] <= now
+    )
+
+
+def register(conn, rules, body, now):
+    description = identity(body)
+    digest = auth.digest(body["invite"])
+    # Refuse unknown or spent invitations before any shared lock, so unauthenticated
+    # requests can never queue on the registration lock or the society clock.
+    if not _usable(
+        conn.execute("SELECT * FROM agent_invitations WHERE token_digest=%s", (digest,)).fetchone(),
+        now,
     ):
+        raise HTTPException(403, "Invalid invitation")
+    # Serialize registrations to enforce the global bound across independent web workers.
+    conn.execute("SELECT pg_advisory_xact_lock(%s)", (REGISTRATION_LOCK,))
+    state = society.clock(conn, lock=True)
+    invitation = conn.execute(
+        "SELECT * FROM agent_invitations WHERE token_digest=%s FOR UPDATE", (digest,)
+    ).fetchone()
+    if not _usable(invitation, now):  # re-checked under the locks
         raise HTTPException(403, "Invalid invitation")
     count = conn.execute(
         "SELECT count(*) AS n FROM society_agents WHERE kind='external' AND status='alive'"

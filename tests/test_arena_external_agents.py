@@ -154,6 +154,20 @@ class InviteDatabaseTests(DatabaseCase):
         self.assertEqual(self.register(expired).status_code, 403)
         self.assertEqual(society.audit(self.conn), [])
 
+    def test_invalid_invitation_is_refused_without_waiting_for_shared_locks(self):
+        holder = self.connection()
+        self.addCleanup(holder.close)
+        holder.execute("SELECT * FROM society_clock FOR UPDATE")  # e.g. a tick in progress
+        holder.execute("SELECT pg_advisory_xact_lock(%s)", (external.REGISTRATION_LOCK,))
+        with patch.object(external.society, "clock", side_effect=AssertionError("clock locked")):
+            response = self.client.post(
+                "/api/agents/register",
+                json={"invite": "x" * 43, "name": "Aster", "description": "External identity."},
+            )
+        self.assertEqual(response.status_code, 403)
+        holder.rollback()
+        self.assertEqual(self.register().status_code, 201)
+
     def test_invite_race_consumes_once_and_name_conflict_preserves_invitation(self):
         invitation = self.invitation()
         with ThreadPoolExecutor(max_workers=2) as pool:
