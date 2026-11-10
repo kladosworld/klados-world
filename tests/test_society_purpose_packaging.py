@@ -1,4 +1,5 @@
 """Public builds and invalid private inputs use synthetic data only."""
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,8 @@ import zipfile
 from tests.test_arena_legal import copy_build_context
 
 
+@unittest.skipUnless(importlib.util.find_spec('hatchling'),
+                     'requires hash-locked build tools; exercised in locked CI environments')
 class PurposePackagingTests(unittest.TestCase):
     def build(self, context, private_input=None):
         environ = dict(os.environ)
@@ -43,4 +46,7 @@ class PurposePackagingTests(unittest.TestCase):
                     result = self.build(context, candidate)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertNotIn('SYNTHETIC UNAPPROVED CANARY', result.stderr)
+                    expected = ('unapproved_purpose_registry' if candidate == source
+                                else 'Invalid shared purpose build input')
+                    self.assertIn(expected, result.stderr)
                     self.assertFalse(list((context / 'dist').glob('*.whl')))
