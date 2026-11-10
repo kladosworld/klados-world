@@ -208,8 +208,8 @@ def reflections_due(conn):
     tick = society.clock(conn)["tick"]
     due = []
     for agent in conn.execute("""SELECT id, born_tick FROM society_agents
-                                 WHERE kind = ANY(%s) AND status = 'alive' ORDER BY id""",
-                                 (list(society.LIVING_KINDS),)):
+                                 WHERE kind = 'founder' AND status = 'alive' ORDER BY id""",
+                                 ()):
         lived = tick - agent["born_tick"]
         if lived >= 24:
             day = lived // 24 - 1

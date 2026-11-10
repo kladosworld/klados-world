@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse, Res
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
 
-from arena import db, auth, guest, society_public, website
+from arena import db, auth, guest, society_public, website, external_agents
 from arena.community_pages import fixture
 from arena.visual_assets import RESOURCES as VISUAL_RESOURCES
 from arena.brand_assets import RESOURCES as BRAND_RESOURCES
@@ -35,6 +35,8 @@ PUBLIC_POST_PATHS = frozenset()
 
 
 def public_route(method, path):
+    if (method, path) in external_agents.ROUTES:
+        return external_agents.enabled()
     if method in ('GET', 'HEAD'):
         return (path in PUBLIC_GET_PATHS or path.startswith(('/auth/', '/api/society/'))
             or re.fullmatch(r'/society/agents/[^/]+', path) is not None
@@ -94,6 +96,7 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
     auth.install(app, connection_factory, now, oauth_provider)
     guest.install(app, connection_factory, now, turnstile_verifier)
     society_public.install(app, connection_factory, now)
+    external_agents.install(app, connection_factory, now)
 
     @app.get('/healthz', include_in_schema=False)
     def health():
@@ -201,6 +204,16 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
 
     @app.middleware('http')
     async def site_gate(request, call_next):
+        if request.url.path.startswith('/api/agents/'):
+            if not external_agents.enabled() or (request.method, request.url.path) not in external_agents.ROUTES:
+                return JSONResponse({'detail': 'Not found'}, status_code=404)
+            chunks, size = [], 0
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > external_agents.MAX_BODY:
+                    return JSONResponse({'detail': 'Request too large'}, status_code=413)
+                chunks.append(chunk)
+            request._body = b''.join(chunks)
         if request.method == 'POST' and re.fullmatch(r'/api/society/posts/[1-9][0-9]*/like', request.url.path):
             return JSONResponse(status_code=403, content={'detail': 'Visitor likes are disabled'})
         if request.url.path.startswith('/static/fixtures/') and not examples:

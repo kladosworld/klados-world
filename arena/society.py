@@ -19,9 +19,8 @@ from psycopg.types.json import Jsonb
 from tee_arena.society import economy
 
 FOUNDERS = (("alder", "Alder"), ("birch", "Birch"), ("cedar", "Cedar"), ("hazel", "Hazel"))
-# Kinds of agents that live in the society (energy, age, turns). MVP v1 has founders
-# only; every query uses this tuple, so another kind is added in one place.
-LIVING_KINDS = ("founder",)
+# Kinds that share energy and ageing. Model-driven scheduling remains founder-only.
+LIVING_KINDS = ("founder", "external")
 STONE = ("stone", "Stone")
 KINDS = ("birth", "living", "action", "like", "penalty", "refund")
 
@@ -185,6 +184,9 @@ def fossilize(conn, rules, agent_id, now):
                  (agent_id, agent["name"], agent["kind"], agent["public_description"], agent["born_tick"],
                   agent["died_tick"], agent["death_cause"], Jsonb(energy_history(conn, rules, agent_id)),
                   Jsonb(dict(counts)), Jsonb(relations(conn, agent_id)), rules.version, now))
+    if agent['kind'] == 'external':
+        conn.execute("UPDATE society_fossils SET last_words_status='missing' WHERE agent_id=%s",
+                     (agent_id,))
 
 
 def sync_descriptions(conn, now, descriptions=None):
@@ -270,9 +272,9 @@ def due_turns(conn, now):
         return []
     return [row["id"] for row in conn.execute("""
         SELECT a.id FROM society_agents a
-        WHERE a.kind = ANY(%s) AND a.status = 'alive' AND a.turn_minute <= %s
+        WHERE a.kind = 'founder' AND a.status = 'alive' AND a.turn_minute <= %s
           AND NOT EXISTS (SELECT 1 FROM society_turns t WHERE t.agent_id = a.id AND t.tick = %s)
-        ORDER BY a.turn_minute, a.id""", (list(LIVING_KINDS), _utc(now).minute, state["tick"]))]
+        ORDER BY a.turn_minute, a.id""", (_utc(now).minute, state["tick"]))]
 
 
 def audit(conn):

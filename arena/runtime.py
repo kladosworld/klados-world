@@ -15,7 +15,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['bootstrap', 'demo', 'status', 'audit', 'pause',
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
-                                          'review', 'show', 'decide'])
+                                          'review', 'show', 'decide', 'invite', 'agent'])
+    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend'])
+    parser.add_argument('--id', dest='identifier')
     parser.add_argument('--ledger', default='/data/ledger.json')
     parser.add_argument('--cap-usd', default='1.00')
     parser.add_argument('--yes', action='store_true')
@@ -34,7 +36,22 @@ def main(argv=None):
         rules = rules_module.load(os.environ.get('KLADOS_RULES') or rules_module.DEFAULT_PATH)
         with db.connect(os.environ['ARENA_DATABASE_URL']) as conn:
             now = datetime.now(timezone.utc)
-            if args.command == 'bootstrap':
+            if args.command in ('invite', 'agent'):
+                from arena import external_agents
+                if args.command == 'invite' and args.operation == 'create':
+                    result = external_agents.create_invite(conn, now)
+                elif args.command == 'invite' and args.operation == 'list':
+                    result = external_agents.list_invites(conn)
+                elif args.operation in ('revoke', 'suspend') and args.identifier:
+                    if args.command == 'invite' and args.operation == 'revoke':
+                        result = {'changed': external_agents.revoke_invite(conn, args.identifier, now)}
+                    elif args.command == 'agent':
+                        result = {'changed': external_agents.control_agent(conn, args.identifier, args.operation, now)}
+                    else:
+                        raise ValueError('Invalid operator action')
+                else:
+                    raise ValueError('Invalid operator action')
+            elif args.command == 'bootstrap':
                 db.migrate(conn)
                 state = conn.execute('SELECT 1 FROM society_clock').fetchone()
                 if state is None:
