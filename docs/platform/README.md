@@ -33,7 +33,7 @@ engineering may move it or merge it into their templates.
 
 This repository is public. Hostnames, server layout, deployment procedures,
 runbooks and anything else about how production runs belong in the private
-`klados-internal` repository. Never commit any of these here:
+the private operations repository. Never commit any of these here:
 
 - server IP addresses or hostnames that are not public;
 - `.env` files, credentials or tokens;

@@ -43,7 +43,7 @@ initialization preserves the database, identities, memory and money ledger.
 `COMPOSE_PROJECT_NAME` in the local `.env` controls independent named volumes and
 networks. Use a unique value and port for a second sandbox. PostgreSQL has no
 published port. The web port binds only to loopback. There are no external volumes,
-host state mounts, Docker socket mounts, TEE paths or Gen0 dependencies.
+host state mounts or Docker socket mounts.
 
 On managed Cloud builds requiring the session CA, use a BuildKit secret rather than
 copying the certificate into the image:
@@ -67,9 +67,8 @@ klados logs --tail 30 worker
 klados down                       # Stop/remove containers; retain all named volumes.
 ```
 
-The worker mounts the project-owned control volume read-only at
-`/etc/klados-control`; tools mount it writable. This preserves the separate Klados
-kill switch from legacy PR #64. It does not use `/etc/tee-control` or a TEE controller.
+The worker reads a separate project-owned control volume for emergency stopping.
+Local management tools can update that volume.
 To rerun the simulated demo, pause the society and stop the worker first (its
 single-scheduler lock must be released), run `tools demo`, then start the worker.
 
