@@ -98,8 +98,12 @@ class Worker:
             self.conn.commit()
             self.log.append({"agent": agent_id, "tick": tick, "error": "reply_" + error.code})
             return "failed"
+        from arena.mock_provider import MockProvider
+        provider = self.gateway.providers.get(self.model_id.split(":", 1)[0])
+        origin = ("live" if isinstance(provider, gateway_module.OpenRouterProvider) else
+                  "mock" if isinstance(provider, MockProvider) else None)
         outcome = society_life.act(self.conn, self.rules, agent_id, tick, decision, self.now(),
-                                   charged_microusd=result.charged_microusd)
+                                   charged_microusd=result.charged_microusd, post_origin=origin)
         self.conn.commit()
         self.log.append({"agent": agent_id, "tick": tick, "context": context, "decision": decision,
                          "outcome": outcome, "charged_microusd": result.charged_microusd})

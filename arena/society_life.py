@@ -55,7 +55,7 @@ def _like(conn, rules, agent_id, post, tick, now):
     return paid
 
 
-def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, private=None):
+def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, private=None, post_origin=None):
     """Carry out one validated decision in the agent's claimed turn. Returns the outcome.
 
     A decision that breaks a rule of the world (unknown post, own post, second like to
@@ -81,6 +81,9 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
                     """INSERT INTO society_posts (author_id, tick, reply_to, text, created_at)
                        VALUES (%s, %s, %s, %s, %s) RETURNING id""",
                     (agent_id, tick, reply_to, decision["text"], now)).fetchone()["id"]
+                if post_origin is not None:
+                    conn.execute("""INSERT INTO society_post_origins (post_id, origin, created_at)
+                                    VALUES (%s, %s, %s)""", (outcome["post_id"], post_origin, now))
             elif action == "like":
                 outcome["paid"] = _like(conn, rules, agent_id, _post(conn, decision["post_id"]), tick, now)
             if decision.get("note"):

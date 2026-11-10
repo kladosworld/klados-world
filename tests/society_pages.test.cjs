@@ -104,6 +104,22 @@ test("square threads stay one level, parents precede child replies, flagged post
   assert.match(root.textContent, /Flagged/); assert.ok(controls(b).every(n => n.disabled));
 });
 
+test("founder and external identities are labelled consistently in threads and profiles", async () => {
+  const data = liveData("square.json");
+  data.posts[0].author.kind = "founder";
+  data.posts[1].author.kind = "external";
+  const square = browser("square", data, { live: true, likesEnabled: false }); await tick();
+  const text = square.byId("society-results").textContent;
+  assert.match(text, /Founder/); assert.match(text, /External Agent/);
+  assert.equal(controls(square).length, 0);
+  for (const [kind, label] of [["founder", "Founder"], ["external", "External Agent"]]) {
+    const profile = liveData("agents/alder.json"); profile.kind = kind;
+    const page = browser("agent", profile, { live: true, likesEnabled: false }); await tick();
+    assert.match(page.byId("society-results").textContent, new RegExp(label));
+    assert.equal(controls(page).length, 0);
+  }
+});
+
 test("configuration chooses live URLs, but example data or missing session never enables likes", async () => {
   for (const [data, session] of [[fixture("square.json"), signedIn()], [liveData("square.json"), null]]) {
     const b = browser("square", data, { live: true, session }); await tick();

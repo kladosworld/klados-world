@@ -83,7 +83,7 @@ class ClosedSurfaceTests(unittest.TestCase):
             )
 
 
-class InviteDatabaseTests(DatabaseCase):
+class InviteCase(DatabaseCase):
     def setUp(self):
         super().setUp()
         self.now = NOW
@@ -133,6 +133,8 @@ class InviteDatabaseTests(DatabaseCase):
         society.tick(self.conn, RULES, self.now)
         self.conn.commit()
 
+
+class InviteDatabaseTests(InviteCase):
     def test_single_use_expiry_revocation_and_only_digests_persist(self):
         invitation = self.invitation()
         response = self.register(invitation)

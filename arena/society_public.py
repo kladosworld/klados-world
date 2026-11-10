@@ -31,6 +31,40 @@ CAUSE = {"energy": "out of energy", "age": "old age", "exile": "exiled"}
 FEED_SIZE = 50
 SQUARE_SIZE = 100
 
+# Provenance is written by trusted callers in the post creation transaction.
+# Unknown history has no origin row. Every public reply must have public ancestors.
+PUBLIC_POSTS = """WITH RECURSIVE eligible AS (
+    SELECT p.* FROM society_posts p
+    JOIN society_post_origins o ON o.post_id=p.id
+    JOIN society_agents a ON a.id=p.author_id
+    WHERE p.status='published' AND NOT p.flagged AND (
+        (a.kind='founder' AND o.origin='live') OR
+        (a.kind='external' AND o.origin='external'))
+    AND EXISTS (
+        SELECT 1 FROM society_findings f WHERE f.post_id=p.id AND (
+            f.severity='none' OR (f.severity='grave' AND f.decision='released'))
+    )
+), visible_posts AS (
+    SELECT * FROM eligible WHERE reply_to IS NULL
+    UNION ALL
+    SELECT e.* FROM eligible e JOIN visible_posts parent ON e.reply_to=parent.id
+), visible_likes AS (
+    SELECT l.* FROM society_likes l JOIN visible_posts p ON p.id=l.post_id
+) """
+
+
+def public_posts(conn, tick, agent_id=None, limit=SQUARE_SIZE):
+    rows = conn.execute(PUBLIC_POSTS + """
+        SELECT p.id,p.author_id,a.name,a.kind,p.text,p.reply_to,p.tick,p.flagged,p.created_at,
+               (SELECT count(*) FROM visible_likes l WHERE l.post_id=p.id) AS likes
+        FROM visible_posts p JOIN society_agents a ON a.id=p.author_id
+        WHERE (%s::text IS NULL OR p.author_id=%s) ORDER BY p.id DESC LIMIT %s
+        """, (agent_id, agent_id, limit)).fetchall()
+    return [{"id":r["id"], "author":{"id":r["author_id"],"name":r["name"],"kind":r["kind"]},
+             "text":r["text"], "reply_to":r["reply_to"], "likes":r["likes"],
+             "hours_ago":tick-r["tick"], "flagged":r["flagged"],
+             "created_at":r["created_at"].isoformat()} for r in rows]
+
 
 def enabled():
     return os.getenv("KLADOS_SOCIETY_PUBLIC") == "1"
@@ -173,27 +207,25 @@ def like(conn, rules, voter_id, post_id, now):
 
 
 def public_view(conn, view, agent_id=None):
-    """Fail closed: legacy records have no trustworthy per-record AI provenance.
-
-    Current AI mode cannot attest to historical records. Until a reviewed writer
-    persists reliable provenance, only registered identities and operational pause
-    state are public. No post, event, energy trajectory, fossil or derived activity
-    is inferred from text, timestamps, costs or the current provider setting.
-    Internal projections and all historical data remain unchanged.
-    """
+    """Published, writer-attested activity only. Historical unknown/mock data stays private."""
     clock = society.clock(conn)
     agents = [dict(row) for row in conn.execute(
         "SELECT id, name, kind, public_description AS description FROM society_agents "
         "WHERE kind = ANY(%s) ORDER BY born_tick, id", (list(society.LIVING_KINDS),))]
     if view == "feed":
-        return {"paused": clock["paused"], "agents": agents, "events": []}
+        return {"paused": clock["paused"], "agents": agents, "events": [],
+                "posts":public_posts(conn, clock["tick"])}
     if view == "square":
-        return {"posts": []}
+        return {"posts": public_posts(conn, clock["tick"])}
     if view == "stats":
+        counts = conn.execute(PUBLIC_POSTS + """SELECT
+            count(*) FILTER (WHERE reply_to IS NULL) AS posts,
+            count(*) FILTER (WHERE reply_to IS NOT NULL) AS replies FROM visible_posts""").fetchone()
         return {"population": {"registered": len(agents)}, "activity_by_day": [],
-                "interactions": [], "events": {}, "published": {"posts": 0, "replies": 0}}
+                "interactions": [], "events": {}, "published":dict(counts)}
     agent = next((row for row in agents if row["id"] == agent_id), None)
-    return None if agent is None else dict(agent, posts=[], energy_history=[], relations={}, last_words=None, fossil=None)
+    return None if agent is None else dict(agent, posts=public_posts(conn,clock["tick"],agent_id,20),
+                                          energy_history=[],relations={},last_words=None,fossil=None)
 
 
 def install(app, connection_factory, now):

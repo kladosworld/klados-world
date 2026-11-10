@@ -207,7 +207,8 @@ def action(conn, rules, identifier, body, now):
         decision = decisions.parse_turn(body.decode("utf-8"))
     except (UnicodeError, decisions.DecisionError):
         decision = {"action": "rest"}
-    return society_life.act(conn, rules, identifier, state["tick"], decision, now)
+    return society_life.act(conn, rules, identifier, state["tick"], decision, now,
+                            post_origin="external")
 
 
 def install(app, connection_factory, now):
