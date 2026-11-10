@@ -50,7 +50,7 @@ and when in the pull request that follows.
 No deployment environments exist in this repository, and none are needed yet. If
 any workflow is ever given deployment rights, it must use a GitHub Environment
 with required reviewers. It must use OIDC rather than long-lived secrets, and its
-design must be reviewed in `klados-internal` first.
+design must be reviewed in the private operations repository first.
 
 ## Repository: *Settings → Secrets and variables*
 
