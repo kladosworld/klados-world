@@ -1,8 +1,8 @@
 """Include only the reviewed legal publication resources in the installed wheel."""
 
-from pathlib import Path
 import os
 import runpy
+from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
@@ -16,11 +16,15 @@ class CustomBuildHook(BuildHookInterface):
             resource = Path(private_input)
             if not resource.is_absolute() or resource.is_symlink() or not resource.is_file():
                 raise ValueError("Invalid shared purpose build input")
-            implementation = runpy.run_path(str(Path(self.root) / "tee_arena/society/shared_purpose.py"))
-            # Explicit paths are parsed for tests too; release inputs must additionally match the pins.
+            implementation = runpy.run_path(
+                str(Path(self.root) / "tee_arena/society/shared_purpose.py")
+            )
+            # Build inputs must match the reviewed pins after parsing.
             registry = implementation["load_registry"](resource)
             implementation["validate_reviewed_registry"](registry)
-            build_data.setdefault("force_include", {})[str(resource)] = "config/shared-purposes-v1.json"
+            build_data.setdefault("force_include", {})[str(resource)] = (
+                "config/shared-purposes-v1.json"
+            )
         source = Path(self.root) / "docs" / "legal"
         if source.is_symlink():
             raise ValueError("Legal resource directory must not be a symlink")
