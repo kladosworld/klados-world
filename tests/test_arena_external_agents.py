@@ -408,8 +408,15 @@ class InviteDatabaseTests(DatabaseCase):
         from arena import runtime
 
         output = io.StringIO()
+        real_connect = db.connect
+
+        def cli_connection(_):
+            conn = real_connect(DSN)
+            conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(self.schema)))
+            return conn
+
         with (
-            patch.object(runtime.db, "connect", side_effect=lambda _: self.connection()),
+            patch.object(runtime.db, "connect", side_effect=cli_connection),
             patch.dict(os.environ, ARENA_DATABASE_URL="synthetic-only"),
             patch.object(
                 runtime.worker, "build_gateway", side_effect=AssertionError("No inference")

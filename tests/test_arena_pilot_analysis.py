@@ -34,6 +34,12 @@ def evidence():
 
 
 class PilotAnalysisTests(unittest.TestCase):
+    def test_missing_cost_is_refused_instead_of_assumed_zero(self):
+        source = evidence()
+        del source["turns"][0]["charged_microusd"]
+        with self.assertRaises(KeyError):
+            analysis.analyze(source)
+
     def test_missing_turns_and_provider_evidence_are_explicit_and_text_is_excluded(self):
         source = evidence()
         source["turns"].pop()

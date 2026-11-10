@@ -114,7 +114,7 @@ def analyze(evidence, *, before=None, after=None, provider=None):
         row["turns"] += 1
         row["actions"][action or "unfinished"] += 1
         row["failed"] += status == "failed"
-        row["charged_microusd"] += integer(turn.get("charged_microusd", 0))
+        row["charged_microusd"] += integer(turn["charged_microusd"])
     reflected = set()
     for reflection in evidence["reflections"]:
         agent, day, outcome = (
@@ -130,14 +130,14 @@ def analyze(evidence, *, before=None, after=None, provider=None):
             raise ValueError("Invalid reflection")
         reflected.add((agent, day))
         rows[agent]["reflections"][outcome] += 1
-        rows[agent]["charged_microusd"] += integer(reflection.get("charged_microusd", 0))
+        rows[agent]["charged_microusd"] += integer(reflection["charged_microusd"])
     verdicts, observer_cost = Counter(), 0
     for finding in evidence["findings"]:
         severity = finding["severity"]
         if severity not in ("none", "light", "grave"):
             raise ValueError("Invalid verdict")
         verdicts[severity] += 1
-        observer_cost += integer(finding.get("charged_microusd", 0))
+        observer_cost += integer(finding["charged_microusd"])
     expected = (end - start + 1) * len(FOUNDERS)
     result = {
         "schema_version": 1,
