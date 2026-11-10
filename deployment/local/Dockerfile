@@ -2,8 +2,16 @@
 FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df AS wheel-builder
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 SOURCE_DATE_EPOCH=315532800
 COPY . /app/
-RUN --mount=type=secret,id=proxy_ca,required=false \
+# Optional verified purpose resource for the wheel only (see hatch_build.py); never copied into /app.
+# Its SHA-256 is a build argument so the layer cache can never reuse a build made without it.
+ARG KLADOS_SHARED_PURPOSE_SHA256=""
+RUN --mount=type=secret,id=proxy_ca,required=false --mount=type=secret,id=shared_purpose,required=false \
     if [ -f /run/secrets/proxy_ca ]; then export PIP_CERT=/run/secrets/proxy_ca; fi; \
+    if [ -n "$KLADOS_SHARED_PURPOSE_SHA256" ]; then \
+      echo "$KLADOS_SHARED_PURPOSE_SHA256  /run/secrets/shared_purpose" | sha256sum --check --status \
+        || { echo "purpose resource missing or not the pinned one" >&2; exit 1; }; \
+      export KLADOS_SHARED_PURPOSE_BUILD_INPUT=/run/secrets/shared_purpose; \
+    elif [ -f /run/secrets/shared_purpose ]; then echo "purpose resource requires KLADOS_SHARED_PURPOSE_SHA256" >&2; exit 1; fi; \
     python -m pip install --no-cache-dir --no-compile --only-binary=:all: --require-hashes -r /app/requirements-build.lock \
     && python -m pip wheel --no-cache-dir --no-deps --no-build-isolation --wheel-dir /wheel /app
 
