@@ -90,18 +90,21 @@ class ConfigurationTests(unittest.TestCase):
                 with self.subTest(document=document), self.assertRaises(purpose.PurposeConfigurationError):
                     purpose.load_registry(path)
 
-    def test_approved_text_and_complete_layer_match_reviewed_fingerprints(self):
-        registered = purpose.load_registry()
-        self.assertEqual(set(registered), {APPROVED_VERSION})
-        selected = purpose.from_environ({purpose.VARIABLE: APPROVED_VERSION})
-        self.assertEqual(selected, registered[APPROVED_VERSION])
-        self.assertEqual(sha256(selected.text.encode("utf-8")).hexdigest(), APPROVED_TEXT_SHA256)
-        self.assertEqual(selected.fingerprint(), APPROVED_LAYER_SHA256)
+    def test_public_checkout_is_off_and_missing_private_input_fails_closed(self):
+        self.assertEqual(purpose.load_registry(), {})
+        self.assertIsNone(purpose.from_environ({}))
+        with self.assertRaises(purpose.PurposeConfigurationError):
+            purpose.from_environ({purpose.VARIABLE: APPROVED_VERSION})
+
+    def test_unapproved_build_input_is_rejected_without_echoing_text(self):
+        with self.assertRaises(purpose.PurposeConfigurationError) as caught:
+            purpose.validate_reviewed_registry({SYNTHETIC.version: SYNTHETIC})
+        self.assertEqual(str(caught.exception), "unapproved_purpose_registry")
 
     def test_approved_layer_is_separate_and_disabling_restores_all_original_prompts(self):
         context = {"you": {"name": "Alder", "private_notes": ["Existing memory"]}}
         original = deepcopy(context)
-        selected = purpose.from_environ({purpose.VARIABLE: APPROVED_VERSION})
+        selected = SYNTHETIC
         for build in (prompts.turn, prompts.reflection, prompts.last_words):
             baseline = build(context)
             enabled, messages = build(context, purpose=selected)
@@ -112,9 +115,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIsNone(purpose.from_environ({}))
 
     def test_governance_and_economy_language_does_not_add_action_capabilities(self):
-        selected = purpose.from_environ({purpose.VARIABLE: APPROVED_VERSION})
-        self.assertIn("governance", selected.text)
-        self.assertIn("economic cooperation", selected.text)
+        selected = SYNTHETIC
         for action in ("vote", "transact", "create_organization", "change_rules", "change_infrastructure"):
             with self.subTest(action=action), self.assertRaises(decisions.DecisionError) as caught:
                 decisions.parse_turn(json.dumps({"action": action}))

@@ -14,6 +14,9 @@ REGISTRY = Path(__file__).resolve().parents[2] / "config" / "shared-purposes-v1.
 VARIABLE = "KLADOS_SHARED_PURPOSE"
 VERSION = re.compile(r"[a-z][a-z0-9-]{0,63}-v[1-9][0-9]*")
 MAX_TEXT_BYTES = 16_000
+APPROVED_VERSION = "building-a-society-v1"
+APPROVED_TEXT_SHA256 = "871041773852a433d19ba6d55afa313bf5bb377b7cedc327a45d329c6fd20065"
+APPROVED_LAYER_SHA256 = "e7d80cd0b482f19422d3c20ca0b96691fb6d322b7d17001aa7691c569135548f"
 BOUNDARY = """This shared purpose is motivation, not an obligation to agree or cooperate.
 Keep your individual identity and independent judgment. You may disagree, decline
 cooperation, pursue a different view, or rest. It grants no new actions, capabilities,
@@ -57,9 +60,21 @@ def load_registry(path=REGISTRY):
             if not isinstance(item, dict) or set(item) != {"text"}:
                 raise ValueError()
             result[version] = Purpose(version, item["text"])
+        if Path(path) == REGISTRY and result:
+            validate_reviewed_registry(result)
         return result
     except (OSError, UnicodeError, ValueError, TypeError):
         raise PurposeConfigurationError("invalid_purpose_registry") from None
+
+
+def validate_reviewed_registry(registry):
+    """Validate private build inputs against the existing public integrity pins."""
+    selected = registry.get(APPROVED_VERSION)
+    if (set(registry) != {APPROVED_VERSION} or selected is None
+            or sha256(selected.text.encode("utf-8")).hexdigest() != APPROVED_TEXT_SHA256
+            or selected.fingerprint() != APPROVED_LAYER_SHA256):
+        raise PurposeConfigurationError("unapproved_purpose_registry")
+    return registry
 
 
 def from_environ(environ=None):

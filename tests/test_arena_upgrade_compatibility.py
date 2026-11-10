@@ -52,7 +52,9 @@ class PersistedUpgradeTests(LifeCase):
         original = prompts.turn(society_life.turn_context(self.conn,RULES,'alder'))
         for selection in ('off','building-a-society-v1','off'):
             with self.subTest(purpose=selection), patch.dict(os.environ,
-                    {'KLADOS_SHARED_PURPOSE':selection,'KLADOS_SOCIETY_PUBLIC':'1','KLADOS_AI_MODE':'mock'}):
+                    {'KLADOS_SHARED_PURPOSE':selection,'KLADOS_SOCIETY_PUBLIC':'1','KLADOS_AI_MODE':'mock'}), patch.object(
+                    shared_purpose, 'load_registry', return_value={'building-a-society-v1':
+                        shared_purpose.Purpose('building-a-society-v1','Synthetic upgrade motivation.')}):
                 db.migrate(self.conn)
                 self.conn.commit()
                 purpose = shared_purpose.from_environ()
