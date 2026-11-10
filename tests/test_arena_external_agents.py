@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from psycopg import sql
+from psycopg.errors import CheckViolation
 
 from arena import db, society, society_life, society_moderation
 from arena import external_agents as external
@@ -68,6 +69,7 @@ class ClosedSurfaceTests(unittest.TestCase):
         for changes in (
             {"name": " x "},
             {"name": "x" * 41},
+            {"name": "A\nB"},
             {"description": "x" * 601},
             {"description": "x\x00"},
             {"kind": "founder"},
@@ -398,6 +400,8 @@ class InviteDatabaseTests(DatabaseCase):
         self.assertEqual(
             self.conn.execute("SELECT count(*) AS n FROM agent_invitations").fetchone()["n"], 0
         )
+        with self.assertRaises(CheckViolation), self.conn.transaction():
+            self.conn.execute("UPDATE society_agents SET status='dead' WHERE id='alder'")
 
     @unittest.skipUnless(os.name == "posix", "runtime CLI imports the existing POSIX ledger")
     def test_operator_cli_issues_lists_and_revokes_without_inference(self):

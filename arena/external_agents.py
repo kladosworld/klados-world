@@ -51,7 +51,7 @@ def identity(body, *, description_only=False):
             not isinstance(name, str)
             or not 1 <= len(name) <= 40
             or name != name.strip()
-            or decisions.CONTROL.search(name)
+            or re.search(r"[\x00-\x1f\x7f]", name)
         ):
             raise HTTPException(400, "Invalid name")
         if not isinstance(body.get("invite"), str) or not 1 <= len(body["invite"]) <= 128:
