@@ -214,7 +214,7 @@ class WorkerCase(LifeCase):
 
 class WorkerTests(WorkerCase):
     def test_shared_layer_is_common_to_founders_and_absent_from_observer(self):
-        purpose = shared_purpose.load_registry()["building-a-society-v1"]
+        purpose = shared_purpose.Purpose("synthetic-test-v1", "Synthetic test-only motivation.")
         run = self.make({"Alder": '{"action":"post","text":"A synthetic idea."}',
                          "Birch": '{"action":"rest"}', "Cedar": '{"action":"rest"}',
                          "Hazel": '{"action":"rest"}'}, purpose=purpose)

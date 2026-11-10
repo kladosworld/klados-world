@@ -34,7 +34,7 @@ class PilotCompatibilityTests(unittest.TestCase):
             case.doCleanups()
 
     def test_purpose_has_no_extra_calls_and_preserves_all_four_actions_and_output_caps(self):
-        selected = shared_purpose.load_registry()["building-a-society-v1"]
+        selected = shared_purpose.Purpose("synthetic-test-v1", "Synthetic test-only motivation")
         control, control_calls, control_actions = self.world(None)
         treatment, treatment_calls, treatment_actions = self.world(selected)
         self.assertEqual(control, treatment)
@@ -49,7 +49,7 @@ class PilotCompatibilityTests(unittest.TestCase):
             if "<klados_state>" in before.messages[0]["content"]:
                 self.assertEqual(after.system, selected.prefix() + before.system)
                 delta = input_token_allowance(after.system, after.messages) - input_token_allowance(before.system, before.messages)
-                self.assertEqual(delta, 987)
-                self.assertEqual(cost_microusd(ModelPrice("0.10", "0.50"), delta, 0), 99)
+                self.assertEqual(delta, 233)  # 466 UTF-8 prefix bytes / 2.
+                self.assertEqual(cost_microusd(ModelPrice("0.10", "0.50"), delta, 0), 24)
             else:
                 self.assertEqual(before, after)  # Observer is not given the purpose.
