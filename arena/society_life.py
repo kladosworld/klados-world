@@ -92,7 +92,15 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
     except society.InsufficientEnergy:
         outcome = {"action": "rest", "error": "not_enough_energy", "wanted": decision["action"]}
     except society.SocietyError as error:
-        outcome = {"action": "rest", "error": str(error), "wanted": decision["action"]}
+        # Return literal public codes, never arbitrary exception messages.
+        code = {
+            "not_alive": "not_alive",
+            "no_such_post": "no_such_post",
+            "own_post": "own_post",
+            "already_liked_today": "already_liked_today",
+            "duplicate_post": "duplicate_post",
+        }.get(str(error), "action_refused")
+        outcome = {"action": "rest", "error": code, "wanted": decision["action"]}
     log = dict(private or {}, decision=decision, outcome=outcome)
     conn.execute("""UPDATE society_turns SET status = %s, action = %s, charged_microusd = %s, private = %s
                     WHERE agent_id = %s AND tick = %s""",

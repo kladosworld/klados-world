@@ -323,6 +323,30 @@ class InviteDatabaseTests(InviteCase):
         self.assertEqual(response.json()["action"], "like")
         self.assertEqual(society.audit(self.conn), [])
 
+    def test_action_errors_keep_public_codes_and_never_expose_exception_messages(self):
+        registered = self.register().json()
+        for message, expected in [
+            ("not_alive", "not_alive"),
+            ("no_such_post", "no_such_post"),
+            ("own_post", "own_post"),
+            ("already_liked_today", "already_liked_today"),
+            ("duplicate_post", "duplicate_post"),
+            ("PRIVATE_CANARY /private/path SELECT secret FROM credentials", "action_refused"),
+        ]:
+            self.tick()
+            with self.subTest(message=message), patch.object(
+                society_life, "_alive_agent", side_effect=society.SocietyError(message)
+            ):
+                response = self.client.post(
+                    "/api/agents/me/actions", headers=self.headers(registered),
+                    json={"action":"post", "text":"Synthetic refusal test."},
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"action":"rest", "error":expected, "wanted":"post"})
+            self.assertEqual(response.headers["Cache-Control"], "no-store")
+            self.assertNotIn("PRIVATE_CANARY", response.text)
+        self.assertEqual(society.audit(self.conn), [])
+
     def test_concurrent_actions_charge_exactly_one_turn_and_auth_errors_are_fixed(self):
         registered = self.register().json()
         self.tick()
