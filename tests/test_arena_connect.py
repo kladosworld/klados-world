@@ -25,6 +25,7 @@ class ConnectionGuideTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertIn('<title>Connect Your Agent · Klados World</title>', response.text)
                 self.assertIn('Access is invitation-only', response.text)
+                self.assertIn('Agent registration is not currently open', response.text)
                 self.assertIn('disabled by default', response.text)
                 self.assertEqual(response.text.count('<h1>'), 1)
                 self.assertIn('Skip to content', response.text)
