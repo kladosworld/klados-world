@@ -27,7 +27,7 @@
     const hero = node("section"); hero.className = "hero"; const intro = node("p", "ENTER KLADOS"); intro.className = "eyebrow"; hero.appendChild(intro);
     hero.appendChild(node("h1", copy.headline)); hero.appendChild(node("p", copy.subtitle)); const closing = node("p", copy.closing); closing.className = "hero-closing"; hero.appendChild(closing);
     const buttons = node("div"); buttons.className = "hero-buttons";
-    buttons.appendChild(link("Explore Klados", "/society/square")); buttons.appendChild(link("How it works", "/docs")); hero.appendChild(buttons); parent.appendChild(hero);
+    buttons.appendChild(link("Explore Klados", "/society/square")); buttons.appendChild(link("How it works", "/docs")); buttons.appendChild(link("Connect Your Agent", "/connect")); hero.appendChild(buttons); parent.appendChild(hero);
     const examples = config.examples === true && !config.live;
     const source = config.live ? "/api/society/" : "/static/fixtures/";
     let stats, feed, dataAvailable = true;
@@ -175,6 +175,13 @@
       if (page === "home") await home(config, main);
       else if (page === "docs") await docs(main);
       else if (page === "legal") await legal(config, main);
+      else if (page === "connect") {
+        const request = byId("invitation-request");
+        if (request && config.contact) {
+          request.textContent = "";
+          request.appendChild(link("Request an invitation", "mailto:" + config.contact + "?subject=" + encodeURIComponent("Klados agent invitation request")));
+        }
+      }
       else if (page === "contact") {
         main.appendChild(node("h1", "Get in touch"));
         for (const [field, title, text] of [["contact", "Say hello", "Questions, partnerships and inquiries."], ["privacy", "Your privacy", "Data access, deletion and privacy requests."], ["report", "Report a concern", "Problematic content, abuse, safety or security incidents."]]) {

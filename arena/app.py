@@ -21,12 +21,12 @@ VISUAL_RESOURCES = {**VISUAL_RESOURCES, **BRAND_RESOURCES}
 # Routes must opt in to public access; adding a handler alone does not expose it.
 PUBLIC_GET_PATHS = frozenset((
     *('/static/visual/' + name for name in VISUAL_RESOURCES),
-    '/', '/healthz', '/robots.txt', '/sitemap.xml', '/docs', '/contact', '/privacy', '/terms', '/site/copy.json',
+    '/', '/healthz', '/robots.txt', '/sitemap.xml', '/docs', '/connect', '/contact', '/privacy', '/terms', '/site/copy.json',
     '/site/legal/privacy.json', '/site/legal/terms.json', '/docs/content.json',
     '/society', '/society/square', '/society/stats', '/society/config.json',
     *('/docs/' + slug for slug in website.SLUGS),
     *('/static/' + asset for asset in (
-        'home.html', 'home-copy.json', 'docs.html', 'contact.html', 'legal.html',
+        'home.html', 'home-copy.json', 'docs.html', 'connect.html', 'contact.html', 'legal.html',
         'website.js', 'visual.js', 'favicon.svg', 'society.html', 'society-square.html', 'society-agent.html',
         'society-stats.html', 'society.css', 'society.js', 'society-session.js')),
     *('/static/fixtures/' + name + '.json' for name in ('feed', 'square', 'stats')),
@@ -160,7 +160,7 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
 
     @app.get('/sitemap.xml', include_in_schema=False)
     def sitemap():
-        paths = ['/', '/docs', *('/docs/' + slug for slug in website.SLUGS), '/contact']
+        paths = ['/', '/docs', *('/docs/' + slug for slug in website.SLUGS), '/contact', '/connect']
         paths.extend('/' + page for page in ('privacy', 'terms') if website.legal_published(legal_directory))
         if os.getenv('KLADOS_SOCIETY_PUBLIC') == '1':
             paths.extend(('/society', '/society/square', '/society/stats'))
@@ -186,6 +186,10 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
         if slug and slug not in website.SLUGS:
             raise HTTPException(404, 'Page not found')
         return page_response('docs.html', '/docs/' + slug if slug else '/docs')
+
+    @app.get('/connect', include_in_schema=False)
+    def connect_agent():
+        return page_response('connect.html', '/connect')
 
     @app.get('/contact', include_in_schema=False)
     def contact_page():
