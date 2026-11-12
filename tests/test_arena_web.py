@@ -161,7 +161,7 @@ class WebsiteHTTPTests(unittest.TestCase):
                         response = client.get('/sitemap.xml')
                         root = ET.fromstring(response.content)
                         urls = [el.text for el in root.iter('{http://www.sitemaps.org/schemas/sitemap/0.9}loc')]
-                        expected = ['/', '/docs', *('/docs/' + slug for slug in website.SLUGS), '/contact']
+                        expected = ['/', '/docs', *('/docs/' + slug for slug in website.SLUGS), '/contact', '/connect']
                         if legal_exists:
                             expected.extend(('/privacy', '/terms'))
                         if live == '1':
@@ -251,7 +251,8 @@ class WebsiteHTTPTests(unittest.TestCase):
                 content = client.get('/docs/content.json').json()
                 self.assertEqual(len(content['pages']), 9)
                 self.assertIn('321 E', json.dumps(content))
-                self.assertEqual(content['pages'][-1]['status'], 'Planned')
+                self.assertEqual(content['pages'][-1]['status'], 'Available')
+                self.assertIn('/connect', ' '.join(content['pages'][-1]['paragraphs']))
                 if shutil.which('node'):
                     script = """const assert = require('node:assert/strict');
 const {browser,tick} = require('./tests/website_pages.test.cjs');
