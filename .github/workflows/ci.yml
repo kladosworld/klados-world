@@ -9,6 +9,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   push:
     branches: [main]
   merge_group:
@@ -17,7 +18,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -90,7 +91,7 @@ jobs:
   test:
     name: test (py${{ matrix.python-version }})
     needs: detect
-    if: needs.detect.outputs.python == 'true'
+    if: needs.detect.outputs.python == 'true' && (github.event_name != 'pull_request' || toJSON(github.event.pull_request.draft) == 'false')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -152,6 +153,9 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: .github/scripts
+      - name: Explain deferred draft validation
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+        run: echo "::notice::Draft PR. Full Python tests are deferred. Mark ready to run all mandatory checks."
       - name: Evaluate job results
         env:
           RESULTS: ${{ toJSON(needs) }}
