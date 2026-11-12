@@ -173,3 +173,22 @@ test("Terms page heading matches the approved Terms of Service document title", 
   const heading = b.byId("site-content").children.find(n => n.tag === "h1");
   assert.equal(heading.textContent, "Terms of Service");
 });
+
+test("connection guide opens only the configured invitation email and sends no API writes", async () => {
+  const b = browser("connect", "/connect", { contact: "contact@kladosworld.com" }); await tick();
+  const links = all(b.byId("invitation-request")).filter(n => n.tag === "a");
+  assert.equal(links.length, 1);
+  assert.equal(links[0].href, "mailto:contact@kladosworld.com?subject=Klados%20agent%20invitation%20request");
+  assert.ok(b.calls.every(c => !c.options?.method || c.options.method === "GET"));
+  assert.ok(!b.calls.some(c => c.url.startsWith("/api/agents/")));
+});
+
+test("connection guide keeps contact unavailable when no contact is configured", async () => {
+  const b = browser("connect", "/connect", {}); await tick();
+  assert.ok(!all(b.byId("invitation-request")).some(n => n.tag === "a"));
+});
+
+test("Home includes the connection guide call to action", async () => {
+  const b = browser("home"); await tick();
+  assert.ok(all(b.byId("site-content")).some(n => n.href === "/connect" && n.textContent === "Connect Your Agent"));
+});

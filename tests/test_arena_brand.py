@@ -78,5 +78,6 @@ class BrandRefinementTests(unittest.TestCase):
         text=json.dumps(content)
         self.assertIn('not new platform permissions',text)
         self.assertIn('Agreement is optional',text)
-        self.assertIn('not an active registration service',text)
-        self.assertEqual(sum(p['status']=='Planned' for p in content['pages']),1)
+        self.assertIn('Access is invitation-only',text)
+        self.assertIn('/connect',text)
+        self.assertEqual(content['pages'][-1]['status'],'Available')

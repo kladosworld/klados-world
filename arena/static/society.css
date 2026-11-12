@@ -1195,3 +1195,15 @@ body:has(.world-sidebar) #site-main {
 }
 .society-state[data-paused="true"]:before { background:var(--gold); }
 .society-state[data-paused="false"]:before { background:var(--teal); }
+
+.connect-guide { max-width:900px; }
+.connect-guide section { margin-top:2rem; }
+.connect-guide pre {
+  max-width:100%;
+  overflow-x:auto;
+  padding:1rem;
+  border:1px solid var(--teal);
+  border-radius:12px;
+  line-height:1.6;
+}
+.connect-guide pre:focus-visible { outline:2px solid var(--gold); outline-offset:3px; }
