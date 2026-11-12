@@ -10,6 +10,7 @@ name: Workflow lint
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   push:
     branches: [main]
   merge_group:
@@ -18,7 +19,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: workflow-lint-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -51,6 +52,8 @@ jobs:
           "$RUNNER_TEMP/actionlint" -color
       - name: Self-test of the fail-closed CI gating scripts
         run: bash .github/scripts/test-ci-gating.sh
+      - name: CI scheduling and required-gate scenarios
+        run: python3 .github/scripts/test-ci-cost.py
       - name: Install zizmor (hash-pinned)
         # A dedicated venv: the runner's system Python is externally managed (PEP 668).
         run: |
