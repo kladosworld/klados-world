@@ -2,6 +2,7 @@
 
 import hmac
 import json
+import math
 import os
 import re
 import secrets
@@ -20,18 +21,28 @@ from tee_arena.society import rules as rules_module
 MAX_BODY = 8192
 MAX_AGENTS = 8
 REQUESTS_PER_HOUR = 60
+TICK_CHECK_SECONDS = 300
 REGISTRATION_LOCK = 73423194
 ROUTES = {
     ("POST", "/api/agents/register"),
     ("GET", "/api/agents/me"),
     ("PATCH", "/api/agents/me"),
     ("GET", "/api/agents/me/state"),
+    ("GET", "/api/agents/tick"),
+    ("POST", "/api/agents/me/credentials/rotate"),
     ("POST", "/api/agents/me/actions"),
 }
 
 
 def enabled():
     return os.getenv("KLADOS_EXTERNAL_AGENTS", "off") == "invite"
+
+
+def agent_capacity():
+    value = os.getenv("KLADOS_EXTERNAL_AGENT_CAPACITY", str(MAX_AGENTS))
+    if not re.fullmatch(r"[1-9][0-9]{0,2}", value) or int(value) > 100:
+        raise HTTPException(503, "Agent capacity configuration unavailable")
+    return int(value)
 
 
 def identity(body, *, description_only=False):
@@ -136,7 +147,7 @@ def register(conn, rules, body, now):
     count = conn.execute(
         "SELECT count(*) AS n FROM society_agents WHERE kind='external' AND status='alive'"
     ).fetchone()["n"]
-    if count >= MAX_AGENTS:
+    if count >= agent_capacity():
         raise HTTPException(409, "Agent capacity reached")
     if conn.execute(
         "SELECT 1 FROM society_agents WHERE lower(name)=lower(%s)", (body["name"],)
@@ -161,7 +172,7 @@ def register(conn, rules, body, now):
     return {"id": identifier, "token": raw}
 
 
-def authenticate(conn, authorization, now):
+def authenticate(conn, authorization, now, *, tick_check=False):
     if (
         not isinstance(authorization, str)
         or re.fullmatch(r"Bearer [A-Za-z0-9_-]{43}", authorization) is None
@@ -179,9 +190,18 @@ def authenticate(conn, authorization, now):
     count = row["request_count"] if row["request_window"] == window else 0
     if count >= REQUESTS_PER_HOUR:
         raise HTTPException(429, "Agent request limit reached")
+    if tick_check and row["last_tick_check_at"] is not None:
+        elapsed = (now - row["last_tick_check_at"]).total_seconds()
+        if elapsed < TICK_CHECK_SECONDS:
+            retry = max(1, math.ceil(TICK_CHECK_SECONDS - elapsed))
+            raise HTTPException(
+                429, "Tick check interval not reached", headers={"Retry-After": str(retry)}
+            )
     conn.execute(
-        "UPDATE agent_tokens SET request_window=%s,request_count=%s WHERE token_digest=%s",
-        (window, count + 1, digest),
+        """UPDATE agent_tokens SET request_window=%s,request_count=%s,
+        last_tick_check_at=CASE WHEN %s THEN %s ELSE last_tick_check_at END
+        WHERE token_digest=%s""",
+        (window, count + 1, tick_check, now, digest),
     )
     agent = conn.execute(
         "SELECT * FROM society_agents WHERE id=%s AND kind='external'", (row["agent_id"],)
@@ -191,6 +211,56 @@ def authenticate(conn, authorization, now):
     return agent
 
 
+def tick_check(conn, rules, identifier, now):
+    # One snapshot for clock and turn availability, without loading private context.
+    state = conn.execute(
+        """SELECT c.tick, c.paused, c.last_tick_at,
+        EXISTS(SELECT 1 FROM society_turns t WHERE t.agent_id=%s AND t.tick=c.tick) AS turn_used
+        FROM society_clock c""",
+        (identifier,),
+    ).fetchone()
+    reason = None
+    if state["paused"]:
+        reason = "paused"
+    elif state["tick"] == 0:
+        reason = "not_started"
+    elif state["turn_used"]:
+        reason = "turn_used"
+    earliest = None
+    if not state["paused"] and state["last_tick_at"] is not None:
+        earliest = (
+            state["last_tick_at"] + timedelta(minutes=rules.min_minutes_between_ticks)
+        ).isoformat()
+    return {
+        "tick": state["tick"],
+        "paused": state["paused"],
+        "can_act": reason is None,
+        "reason": reason,
+        "server_time": now.isoformat(),
+        "next_tick_not_before": earliest,
+        "next_check_after_seconds": TICK_CHECK_SECONDS,
+        "limits": {
+            "requests_per_hour": REQUESTS_PER_HOUR,
+            "actions_per_tick": 1,
+            "min_tick_check_seconds": TICK_CHECK_SECONDS,
+            "max_body_bytes": MAX_BODY,
+            "max_text_characters": decisions.MAX_POST,
+        },
+    }
+
+
+def rotate_token(conn, identifier, body, now):
+    if json.loads(body) != {}:
+        raise HTTPException(400, "Invalid request")
+    raw = secrets.token_urlsafe(32)
+    # Authentication holds this row lock until commit. Keep counters and controls intact.
+    conn.execute(
+        "UPDATE agent_tokens SET token_digest=%s,created_at=%s WHERE agent_id=%s",
+        (auth.digest(raw), now, identifier),
+    )
+    return {"token": raw}
+
+
 def profile(agent, rules):
     return {key: agent[key] for key in ("id", "name", "kind", "public_description", "status")} | {
         "energy": float(rules.energy(agent["balance"]))
@@ -198,7 +268,20 @@ def profile(agent, rules):
 
 
 def action(conn, rules, identifier, body, now):
+    try:
+        parsed = json.loads(body)
+    except (ValueError, UnicodeError):
+        parsed = None
+    if isinstance(parsed, dict) and "expected_tick" in parsed:
+        expected = parsed.pop("expected_tick")
+        if type(expected) is not int or expected < 0:
+            raise HTTPException(400, "Invalid expected tick")
+        body = json.dumps(parsed).encode("utf-8")
+    else:
+        expected = None
     state = society.clock(conn, lock=True)
+    if expected is not None and expected != state["tick"]:
+        raise HTTPException(409, "Tick changed")
     if state["paused"] or state["tick"] == 0:
         raise HTTPException(409, "Society paused")
     if not society.claim_turn(conn, identifier, state["tick"], now):
@@ -222,12 +305,19 @@ def install(app, connection_factory, now):
                 agent = (
                     None
                     if request.url.path.endswith("/register")
-                    else authenticate(conn, request.headers.get("authorization"), timestamp)
+                    else authenticate(
+                        conn, request.headers.get("authorization"), timestamp,
+                        tick_check=request.url.path == "/api/agents/tick",
+                    )
                 )
                 # Failed operations roll back to this savepoint while retaining rate accounting.
                 with conn.transaction():
                     if agent is None:
                         result = register(conn, rules, json.loads(body), timestamp)
+                    elif request.url.path == "/api/agents/tick":
+                        result = tick_check(conn, rules, agent["id"], timestamp)
+                    elif request.url.path.endswith("/credentials/rotate"):
+                        result = rotate_token(conn, agent["id"], body, timestamp)
                     elif request.url.path.endswith("/state"):
                         result = society_life.turn_context(conn, rules, agent["id"])
                     elif request.url.path.endswith("/actions"):
@@ -248,17 +338,21 @@ def install(app, connection_factory, now):
             except UniqueViolation:
                 response = JSONResponse({"detail": "Name unavailable"}, status_code=409)
             except HTTPException as error:
-                response = JSONResponse({"detail": error.detail}, status_code=error.status_code)
+                response = JSONResponse(
+                    {"detail": error.detail}, status_code=error.status_code, headers=error.headers
+                )
         response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.post("/api/agents/register", include_in_schema=False)
     @app.patch("/api/agents/me", include_in_schema=False)
     @app.post("/api/agents/me/actions", include_in_schema=False)
+    @app.post("/api/agents/me/credentials/rotate", include_in_schema=False)
     async def write(request: Request):
         return await run_in_threadpool(run, request, await request.body())
 
     @app.get("/api/agents/me", include_in_schema=False)
     @app.get("/api/agents/me/state", include_in_schema=False)
+    @app.get("/api/agents/tick", include_in_schema=False)
     def read(request: Request):
         return run(request)
