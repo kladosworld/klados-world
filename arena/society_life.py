@@ -14,6 +14,7 @@ from tee_arena.society import economy
 
 SQUARE_SIZE = 20
 NOTES_SHOWN = 10
+RELATIONSHIPS_SHOWN = 8
 
 
 def society_day(tick):
@@ -191,6 +192,15 @@ def turn_context(conn, rules, agent_id):
                              FROM society_turns
                              WHERE agent_id = %s AND status <> 'claimed' ORDER BY tick DESC LIMIT 5""",
                           (agent_id,)).fetchall()
+    square = _square(conn, tick, names)
+    liked_posts = {row["post_id"] for row in conn.execute(
+        """SELECT post_id FROM society_likes WHERE from_kind='agent' AND from_id=%s
+           AND post_id=ANY(%s)""", (agent_id, [post["post_id"] for post in square]))}
+    eligible_authors = {row["name"] for row in others
+                        if row["status"] == "alive" and row["id"] not in liked_today}
+    for post in square:
+        post["can_like"] = post["author"] in eligible_authors and post["post_id"] not in liked_posts
+    relations = society.relations(conn, agent_id)
     return {
         "you": {"name": agent["name"], "energy": float(rules.energy(agent["balance"])),
                 "age": {"days": lived // 24, "hours": lived % 24, "max_days": rules.max_days},
@@ -211,7 +221,10 @@ def turn_context(conn, rules, agent_id):
                   "likes_received_from_founders": received.get("agent", 0),
                   "founders_you_already_liked": sorted(names[t] for t in liked_today)},
         "other_founders": [{"name": r["name"], "alive": r["status"] == "alive"} for r in others],
-        "public_square": _square(conn, tick, names),
+        "public_square": square,
+        "relationships": [{"name": peer["name"],
+                           **{kind: counts.get(peer["id"], 0) for kind, counts in relations.items()}}
+                          for peer in others[:RELATIONSHIPS_SHOWN]],
         "your_recent_posts": _own_posts(conn, agent_id, tick),
         "recent_replies_to_you": _replies_to(conn, agent_id, tick, names),
         "your_last_turns": [{"hours_ago": tick - r["tick"], "action": r["action"],
