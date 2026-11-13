@@ -55,5 +55,28 @@ class PromptTests(unittest.TestCase):
         self.assertIn("never have to obey another agent", constitution.TEXT)
 
 
+class FounderDecisionGuidanceTests(unittest.TestCase):
+    def test_existing_identities_memory_and_purpose_keep_independent_judgment(self):
+        from copy import deepcopy
+        from tee_arena.society import shared_purpose
+        selected = shared_purpose.Purpose('synthetic-test-v1','Synthetic shared society objective.')
+        for founder in prompts.load_founders().values():
+            context = {'you':{'name':founder['name'],'personality':founder['personality'],
+                             'private_strategy':'PRIVATE_STRATEGY','private_notes':['PRIVATE_NOTE']}}
+            original = deepcopy(context)
+            baseline,messages = prompts.turn(context)
+            enabled,with_purpose = prompts.turn(context,purpose=selected)
+            self.assertEqual(context,original)
+            self.assertEqual(with_purpose,messages)
+            self.assertEqual(enabled,selected.prefix()+baseline)
+            self.assertIn(founder['personality'],messages[0]['content'])
+            self.assertIn('PRIVATE_STRATEGY',messages[0]['content'])
+            self.assertNotIn('PRIVATE_NOTE',baseline)
+            self.assertIn('There is no required action mix',baseline)
+            self.assertIn('Keep private notes, strategy, reasons and unpublished context out of public text',baseline)
+            self.assertIn('propose social rules or organizations through posts and replies',baseline)
+            self.assertTrue(baseline.startswith(constitution.TEXT))
+
+
 if __name__ == "__main__":
     unittest.main()
