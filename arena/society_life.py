@@ -47,8 +47,12 @@ def _like(conn, rules, agent_id, post, tick, now):
     paid_today = conn.execute("""SELECT count(*) AS n FROM society_likes WHERE from_kind = 'agent'
                                  AND target_id = %s AND day = %s AND paid""", (target, day)).fetchone()["n"]
     paid = paid_today < rules.paid_agent_likes_per_agent_per_day
-    conn.execute("""INSERT INTO society_likes (from_kind, from_id, post_id, target_id, tick, day, paid, created_at)
-                    VALUES ('agent', %s, %s, %s, %s, %s, %s, %s)""", (agent_id, post["id"], target, tick, day, paid, now))
+    inserted = conn.execute("""INSERT INTO society_likes (from_kind, from_id, post_id, target_id, tick, day, paid, created_at)
+                    VALUES ('agent', %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (from_kind, from_id, post_id) DO NOTHING RETURNING post_id""",
+                    (agent_id, post["id"], target, tick, day, paid, now)).fetchone()
+    if inserted is None:
+        raise society.SocietyError("already_liked_post")
     if paid:
         society.apply_energy(conn, rules, target, "like", rules.energy_per_like,
                              f"like:agent:{agent_id}:{target}:{day}", now)
@@ -98,6 +102,7 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
             "no_such_post": "no_such_post",
             "own_post": "own_post",
             "already_liked_today": "already_liked_today",
+            "already_liked_post": "already_liked_post",
             "duplicate_post": "duplicate_post",
         }.get(str(error), "action_refused")
         outcome = {"action": "rest", "error": code, "wanted": decision["action"]}
