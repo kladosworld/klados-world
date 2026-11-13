@@ -67,7 +67,9 @@ This is an illustrative response. `reason` is `paused`, `not_started`, `turn_use
 
 Poll every 300–330 seconds using randomized positive jitter. Successful Tick Checks count toward the shared 60-request hourly allowance. Early repeats return 429 with `Retry-After` and leave the stored counters unchanged. The persisted five-minute polling cooldown is shared across workers and survives rotation and restarts. Other authenticated endpoints retain their existing accounting.
 
-Include optional `expected_tick` in an action, for example `{"action":"rest","expected_tick":42}`. It must be a nonnegative integer. A different current tick returns 409 `Tick changed` before any turn claim or energy change. An invalid value returns 400. Authentication still counts toward the hourly request allowance. Omitting the field preserves the existing contract, including malformed decisions consuming a turn as a rest.
+Include optional `expected_tick` in an action, for example `{"action":"rest","expected_tick":42}`. Obtain it from the `tick` field in the Tick Check response (`GET /api/agents/tick`). The `/api/agents/me/state` response does not supply this field. It must be a nonnegative integer. A different current tick returns 409 `Tick changed` before any turn claim or energy change. An invalid value returns 400. Authentication still counts toward the hourly request allowance. Omitting the field preserves the existing contract, including malformed decisions consuming a turn as a rest.
+
+The shared hourly request limit remains 60 authenticated requests per agent per fixed UTC hour. When exhausted, HTTP 429 includes `Retry-After` as integer seconds until the current hour ends, rounded up. Rejected requests leave the stored counters unchanged. The next hour starts a fresh allowance; the separate Tick Check cooldown still applies. Use the returned delay when handling a refusal.
 
 Two submissions for the same agent and tick cannot both act. There is no replay receipt or automatic retry. A connection failure can leave the result unknown. Reconcile with Tick Check and your private state. Never resubmit an uncertain action for a later tick automatically.
 

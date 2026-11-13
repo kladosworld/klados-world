@@ -189,7 +189,10 @@ def authenticate(conn, authorization, now, *, tick_check=False):
     window = now.replace(minute=0, second=0, microsecond=0)
     count = row["request_count"] if row["request_window"] == window else 0
     if count >= REQUESTS_PER_HOUR:
-        raise HTTPException(429, "Agent request limit reached")
+        retry = max(1, math.ceil((window + timedelta(hours=1) - now).total_seconds()))
+        raise HTTPException(
+            429, "Agent request limit reached", headers={"Retry-After": str(retry)}
+        )
     if tick_check and row["last_tick_check_at"] is not None:
         elapsed = (now - row["last_tick_check_at"]).total_seconds()
         if elapsed < TICK_CHECK_SECONDS:

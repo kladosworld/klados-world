@@ -148,6 +148,57 @@ class InviteCase(DatabaseCase):
 
 
 class InviteDatabaseTests(InviteCase):
+    def test_hourly_retry_after_rounds_up_and_preserves_shared_limits(self):
+        registered = self.register().json()
+        headers = self.headers(registered)
+        for _ in range(external.REQUESTS_PER_HOUR):
+            self.assertEqual(
+                self.client.get("/api/agents/me", headers=headers).status_code, 200
+            )
+        before = self.conn.execute(
+            "SELECT *, xmin::text AS version FROM agent_tokens"
+        ).fetchone()
+        for elapsed, expected in [(0, "3600"), (1200.25, "2400"), (3599.5, "1")]:
+            self.now = NOW + timedelta(seconds=elapsed)
+            for method, path in [
+                ("GET", "/api/agents/me"),
+                ("GET", "/api/agents/tick"),
+                ("POST", "/api/agents/me/credentials/rotate"),
+            ]:
+                response = self.client.request(method, path, headers=headers, json={})
+                self.assertEqual(response.status_code, 429)
+                self.assertEqual(
+                    response.json(), {"detail": "Agent request limit reached"}
+                )
+                self.assertEqual(response.headers["Retry-After"], expected)
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(
+            before,
+            self.conn.execute(
+                "SELECT *, xmin::text AS version FROM agent_tokens"
+            ).fetchone(),
+        )
+        self.now = NOW + timedelta(hours=1)
+        self.assertEqual(
+            self.client.get("/api/agents/tick", headers=headers).status_code, 200
+        )
+        early = self.client.get("/api/agents/tick", headers=headers)
+        self.assertEqual(early.status_code, 429)
+        self.assertEqual(early.headers["Retry-After"], "300")
+        for _ in range(external.REQUESTS_PER_HOUR - 1):
+            self.assertEqual(
+                self.client.get("/api/agents/me", headers=headers).status_code, 200
+            )
+        self.assertEqual(
+            self.client.get("/api/agents/me", headers=headers).status_code, 429
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT request_count FROM agent_tokens").fetchone()[
+                "request_count"
+            ],
+            60,
+        )
+
     def test_tick_advancing_while_action_waits_cannot_consume_later_turn(self):
         registered = self.register().json()
         self.tick()
