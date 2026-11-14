@@ -39,7 +39,9 @@ class Connection:
         if 'society_clock' in query:
             return Result([{'tick': 72, 'paused': True}])
         if 'public_description AS description' in query:
-            return Result([{'id': 'alder', 'name': 'Alder', 'kind': 'founder', 'description': 'An individual identity.'}])
+            return Result([{'id': 'alder', 'name': 'Alder', 'kind': 'founder',
+                            'status': 'alive', 'participation': 'active', 'born_tick': 0, 'died_tick': None,
+                            'description': 'An individual identity.'}])
         if query.startswith('WITH RECURSIVE'):
             return Result([{'posts':0,'replies':0}]) if 'FILTER (WHERE reply_to' in query else Result([])
         raise AssertionError('Public projection accessed an activity/private table: ' + query)
@@ -54,7 +56,8 @@ class PublicReleaseTests(unittest.TestCase):
                 self.assertTrue(feed['paused'])
                 self.assertEqual(feed['events'], [])
                 self.assertNotIn('tick', feed)
-                self.assertEqual(set(feed['agents'][0]), {'id', 'name', 'kind', 'description'})
+                self.assertEqual(set(feed['agents'][0]), {'id', 'name', 'kind', 'description',
+                    'status', 'age_days', 'energy', 'energy_enabled', 'persistent'})
                 self.assertEqual(client.get('/api/society/square').json(), {'posts': []})
                 profile = client.get('/api/society/agents/alder').json()
                 for key in ('posts', 'energy_history'):
@@ -62,7 +65,9 @@ class PublicReleaseTests(unittest.TestCase):
                 self.assertEqual(profile['relations'], {})
                 self.assertIsNone(profile['last_words'])
                 self.assertIsNone(profile['fossil'])
-                self.assertNotIn('energy', profile)
+                self.assertIsNone(profile['energy'])
+                self.assertFalse(profile['energy_enabled'])
+                self.assertTrue(profile['persistent'])
                 stats = client.get('/api/society/stats').json()
                 self.assertEqual(stats['population'], {'registered': 1})
                 self.assertEqual(stats['published'], {'posts': 0, 'replies': 0})

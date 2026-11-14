@@ -25,7 +25,7 @@ class WebsiteCopyTests(unittest.TestCase):
         self.assertEqual(website.home_copy(), website.extract_home_copy())
 
     def test_rules_are_selected_and_optional_window_is_not_invented(self):
-        rules = json.loads(website.RULES.read_text())
+        rules = json.loads((ROOT / 'config/rules-v1.json').read_text())
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'rules.json'
             rules['energy']['cap'] = 321
@@ -240,7 +240,7 @@ class WebsiteHTTPTests(unittest.TestCase):
     def test_legal_files_are_plain_text_and_docs_use_injected_rules(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
-            rules = json.loads(website.RULES.read_text())
+            rules = json.loads((ROOT / 'config/rules-v1.json').read_text())
             rules['energy']['cap'] = 321
             path = folder / 'rules.json'
             path.write_text(json.dumps(rules))
