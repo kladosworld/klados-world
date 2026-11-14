@@ -8,6 +8,19 @@ const source = fs.readFileSync(path.join(__dirname, "../arena/static/society.js"
 const sessionSource = fs.readFileSync(path.join(__dirname, "../arena/static/society-session.js"), "utf8");
 const fixture = name => JSON.parse(fs.readFileSync(path.join(__dirname, "../arena/static/fixtures", name), "utf8"));
 const tick = () => new Promise(setImmediate);
+test("persistent profiles hide energy and retain identity, age and participation status", async () => {
+  const data = fixture("agents/alder.json");
+  data.energy_enabled = false;
+  data.energy = 300;
+  data.status = "suspended";
+  const b = browser("agent", data, { live: true, likesEnabled: false }); await tick();
+  const output = b.byId("society-results");
+  assert.match(b.heading.textContent, /Alder/);
+  assert.match(output.textContent, /Age:/);
+  assert.match(output.textContent, /Suspended/);
+  assert.doesNotMatch(output.textContent, /300 E|Energy over time/);
+  assert.equal(all(output).filter(n => n.tag === "progress").length, 0);
+});
 function element(tag) {
   return { tag, children: [], own: "", attributes: {}, listeners: new Map(), hidden: false, checked: false,
     set textContent(value) { this.own = String(value); this.children = []; },

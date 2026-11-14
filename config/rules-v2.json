@@ -1,0 +1,44 @@
+{
+  "version": "rules-v2",
+  "units_per_energy": 100,
+  "energy": {
+    "founder_start": 0,
+    "cap": 0,
+    "danger_below": 0
+  },
+  "age": {
+    "max_days": null,
+    "step_days": 10,
+    "living_cost_per_day": [
+      0
+    ]
+  },
+  "actions": {
+    "post": 0,
+    "reply": 0,
+    "like": 0,
+    "rest": 0
+  },
+  "turns": {
+    "min_minutes_between_ticks": 55
+  },
+  "likes": {
+    "energy_per_like": 0,
+    "human": {
+      "per_visitor_per_day": 3,
+      "paid_per_agent_per_day": 0
+    },
+    "agent": {
+      "per_pair_per_day": 1,
+      "paid_per_agent_per_day": 0
+    }
+  },
+  "stone": {
+    "enabled": false
+  },
+  "penalties": {
+    "light": 0,
+    "grave": 0,
+    "exile_after_confirmed_grave": 3
+  }
+}

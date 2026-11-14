@@ -4,8 +4,8 @@ import unittest
 
 from tee_arena.society import economy, rules as rules_module, simulate
 
-RULES = rules_module.load()
-DOCUMENT = json.loads(rules_module.DEFAULT_PATH.read_text(encoding="utf-8"))
+RULES = rules_module.load(rules_module.LEGACY_PATH)
+DOCUMENT = json.loads(rules_module.LEGACY_PATH.read_text(encoding="utf-8"))
 
 
 def variant(change):

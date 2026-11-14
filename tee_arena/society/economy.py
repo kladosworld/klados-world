@@ -27,6 +27,8 @@ def living_cost(rules, hour):
 
 
 def lifetime_cost(rules):
+    if rules.persistent:
+        return 0
     return sum(living_cost(rules, hour) for hour in range(rules.max_hours))
 
 

@@ -114,7 +114,21 @@ def control_agent(conn, identifier, action, now):
         params = (identifier,)
     else:
         raise ValueError("Invalid operator action")
-    return conn.execute(query, params).fetchone() is not None
+    # Lock token before identity, matching authenticated action lock order.
+    conn.execute(query, params)
+    participation = "revoked" if action == "revoke" else "suspended"
+    changed = conn.execute(
+        """UPDATE society_agents SET participation=%s WHERE id=%s AND kind=ANY(%s)
+        AND participation <> 'revoked' AND participation <> %s RETURNING id""",
+        (participation, identifier, list(society.LIVING_KINDS), participation),
+    ).fetchone()
+    if changed is not None:
+        conn.execute(
+            """INSERT INTO society_events (tick,kind,agent_id,rules_version,created_at)
+            SELECT tick,%s,%s,rules_version,%s FROM society_clock""",
+            ("agent_" + participation, identifier, now),
+        )
+    return changed is not None
 
 
 def _usable(invitation, now):
@@ -160,9 +174,10 @@ def register(conn, rules, body, now):
         VALUES (%s,%s,'external',%s,%s,%s,%s)""",
         (identifier, body["name"], state["tick"], description, now, now),
     )
-    society.apply_energy(
-        conn, rules, identifier, "birth", rules.founder_start, "birth:" + identifier, now
-    )
+    if rules.energy_enabled:
+        society.apply_energy(
+            conn, rules, identifier, "birth", rules.founder_start, "birth:" + identifier, now
+        )
     conn.execute(
         """INSERT INTO agent_tokens
         (token_digest,agent_id,created_at,request_window) VALUES (%s,%s,%s,%s)""",
@@ -209,7 +224,7 @@ def authenticate(conn, authorization, now, *, tick_check=False):
     agent = conn.execute(
         "SELECT * FROM society_agents WHERE id=%s AND kind='external'", (row["agent_id"],)
     ).fetchone()
-    if agent is None or agent["status"] != "alive":
+    if agent is None or agent["status"] != "alive" or agent["participation"] != "active":
         raise HTTPException(403, "Agent unavailable")
     return agent
 
@@ -266,7 +281,9 @@ def rotate_token(conn, identifier, body, now):
 
 def profile(agent, rules):
     return {key: agent[key] for key in ("id", "name", "kind", "public_description", "status")} | {
-        "energy": float(rules.energy(agent["balance"]))
+        "energy": float(rules.energy(agent["balance"])) if rules.energy_enabled else None,
+        "energy_enabled": rules.energy_enabled,
+        "persistent": rules.persistent,
     }
 
 

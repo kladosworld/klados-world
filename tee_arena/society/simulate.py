@@ -125,10 +125,13 @@ def render(rules, scenarios):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Simulate the founders' energy for 30 days (free, offline).")
     parser.add_argument("--scenario", choices=[s.key for s in SCENARIOS], nargs="*")
-    parser.add_argument("--rules", default=str(rules_module.DEFAULT_PATH))
+    parser.add_argument("--rules", default=str(rules_module.LEGACY_PATH))
     args = parser.parse_args(argv)
     chosen = [s for s in SCENARIOS if not args.scenario or s.key in args.scenario]
-    print(render(rules_module.load(args.rules), chosen))
+    rules = rules_module.load(args.rules)
+    if rules.persistent:
+        parser.error("this historical energy simulation requires rules-v1")
+    print(render(rules, chosen))
     return 0
 
 

@@ -79,7 +79,12 @@ class Worker:
         if not society.claim_turn(self.conn, agent_id, tick, self.now()):
             return None
         self.conn.commit()  # the turn is spent even if everything below fails
-        context = society_life.turn_context(self.conn, self.rules, agent_id)
+        try:
+            context = society_life.turn_context(self.conn, self.rules, agent_id)
+        except society.SocietyError:
+            society_life.fail_turn(self.conn, agent_id, tick, "participation_unavailable")
+            self.conn.commit()
+            return "failed"
         system, messages = prompts.turn(context, purpose=self.purpose)
         try:
             result = self.call(system, messages, f"klados.turn.{agent_id}.{tick}")
@@ -140,7 +145,10 @@ class Worker:
         return None
 
     def reflect(self, agent_id, day, tick):
-        context = society_life.reflection_context(self.conn, self.rules, agent_id, day)
+        try:
+            context = society_life.reflection_context(self.conn, self.rules, agent_id, day)
+        except society.SocietyError:
+            return None
         system, messages = prompts.reflection(context, purpose=self.purpose)
         try:
             result = self.call(system, messages, f"klados.reflect.{agent_id}.{day}")
@@ -182,6 +190,8 @@ class Worker:
 
     def last_words(self):
         """One free last message for each agent that has died. Returns "stop" if the society was paused."""
+        if self.rules.persistent:
+            return None
         if self.observer_gateway is None:  # nothing may be published unscreened
             return None
         for fossil in society_death.pending(self.conn):
