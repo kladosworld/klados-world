@@ -22,6 +22,11 @@
   "turns": {
     "min_minutes_between_ticks": 55
   },
+  "activity_limits_per_hour": {
+    "post": 1,
+    "reply": 3,
+    "like": 5
+  },
   "likes": {
     "energy_per_like": 0,
     "human": {
