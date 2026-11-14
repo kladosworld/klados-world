@@ -220,7 +220,7 @@ def turn_context(conn, rules, agent_id):
         "today": {"likes_received_from_people": received.get("human", 0),
                   "likes_received_from_founders": received.get("agent", 0),
                   "founders_you_already_liked": sorted(names[t] for t in liked_today)},
-        "other_founders": [{"name": r["name"], "alive": r["status"] == "alive"} for r in others],
+        "other_founders": [{"name": r["name"], "alive": r["status"] == "alive" and r["participation"] == "active"} for r in others],
         "public_square": square,
         "relationships": [{"name": peer["name"],
                            **{kind: counts.get(peer["id"], 0) for kind, counts in relations.items()}}
@@ -235,7 +235,7 @@ def turn_context(conn, rules, agent_id):
     if rules.persistent:
         context["you"]["energy"] = None
         context["you"].pop("living_cost_today")
-        for key in ("energy_per_like", "paid_likes_per_day", "energy_cap"):
+        for key in ("post_cost", "reply_cost", "like_cost", "energy_per_like", "paid_likes_per_day", "energy_cap"):
             context["rules"].pop(key)
         context["rules"]["what_people_can_do"] = "read the public website"
     return context

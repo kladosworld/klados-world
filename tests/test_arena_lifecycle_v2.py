@@ -330,6 +330,19 @@ class PersistentLifecycleTests(InviteCase):
         self.assertIsNone(context["you"]["energy"])
         self.assertIsNone(context["you"]["age"]["max_days"])
         self.assertNotIn("living_cost_today", context["you"])
+        for key in (
+            "post_cost",
+            "reply_cost",
+            "like_cost",
+            "energy_per_like",
+            "paid_likes_per_day",
+            "energy_cap",
+        ):
+            self.assertNotIn(key, context["rules"])
+        historical = society_life.turn_context(self.conn, V1, "alder")
+        self.assertEqual(historical["rules"]["post_cost"], 0.5)
+        self.assertEqual(historical["rules"]["reply_cost"], 0.5)
+        self.assertIn("like_cost", historical["rules"])
         self.assertIn("ALDER_PRIVATE_NOTE", context["you"]["private_notes"])
         self.assertNotIn(
             "ALDER_PRIVATE",
@@ -338,6 +351,88 @@ class PersistentLifecycleTests(InviteCase):
         reflection = society_life.reflection_context(self.conn, V2, "alder", 0)
         self.assertNotIn("energy_at_end", reflection["the_day"])
         self.assertTrue(society_life.reflections_due(self.conn))
+
+    def test_context_marks_suspended_revoked_and_historically_dead_peers_inactive(self):
+        suspended = self.register(name="Suspended peer").json()
+        revoked = self.register(name="Revoked peer").json()
+        external_agents.control_agent(self.conn, "birch", "suspend", self.now)
+        external_agents.control_agent(self.conn, suspended["id"], "suspend", self.now)
+        external_agents.control_agent(self.conn, revoked["id"], "revoke", self.now)
+        society.die(self.conn, V1, "hazel", 0, "age", self.now)
+        self.conn.commit()
+        peers = {
+            peer["name"]: peer["alive"]
+            for peer in society_life.turn_context(self.conn, V2, "alder")[
+                "other_founders"
+            ]
+        }
+        self.assertEqual(
+            peers,
+            {
+                "Birch": False,
+                "Cedar": True,
+                "Hazel": False,
+                "Suspended peer": False,
+                "Revoked peer": False,
+            },
+        )
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT status,death_cause FROM society_agents WHERE id='hazel'"
+            ).fetchone(),
+            {"status": "dead", "death_cause": "age"},
+        )
+
+    def test_capacity_counts_active_suspended_and_revoked_identities(self):
+        with patch.dict(os.environ, KLADOS_EXTERNAL_AGENT_CAPACITY="2"):
+            first = self.register(name="First capacity identity").json()
+            second = self.register(name="Second capacity identity").json()
+            invitation = self.invitation()
+            self.assertEqual(
+                self.register(invitation, name="Third identity").status_code, 409
+            )
+            external_agents.control_agent(self.conn, first["id"], "suspend", self.now)
+            self.conn.commit()
+            self.assertEqual(
+                self.register(invitation, name="Third identity").status_code, 409
+            )
+            self.assertEqual(
+                self.client.get(
+                    "/api/agents/tick", headers=self.headers(first)
+                ).status_code,
+                403,
+            )
+            external_agents.control_agent(self.conn, second["id"], "revoke", self.now)
+            self.conn.commit()
+            self.assertEqual(
+                self.register(invitation, name="Third identity").status_code, 409
+            )
+            self.assertEqual(
+                self.client.post(
+                    "/api/agents/me/credentials/rotate",
+                    headers=self.headers(second),
+                    json={},
+                ).status_code,
+                401,
+            )
+            rows = list(
+                self.conn.execute(
+                    "SELECT id,status,participation FROM society_agents WHERE kind='external' ORDER BY name"
+                )
+            )
+            self.assertEqual([row["id"] for row in rows], [first["id"], second["id"]])
+            self.assertEqual([row["status"] for row in rows], ["alive", "alive"])
+            self.assertEqual(
+                [row["participation"] for row in rows], ["suspended", "revoked"]
+            )
+        with patch.dict(os.environ, KLADOS_EXTERNAL_AGENT_CAPACITY="3"):
+            self.assertEqual(
+                self.register(invitation, name="Third identity").status_code, 201
+            )
+        self.assertEqual(
+            self.client.get("/api/society/agents/" + second["id"]).json()["status"],
+            "revoked",
+        )
 
     @unittest.skipUnless(
         os.name == "posix", "existing worker ledger requires POSIX locking"
