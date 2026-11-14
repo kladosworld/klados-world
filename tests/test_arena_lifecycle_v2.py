@@ -15,6 +15,7 @@ from arena import (
     society,
     society_life,
     society_moderation,
+    society_public,
     website,
 )
 from tee_arena.society import constitution, prompts, rules
@@ -111,6 +112,16 @@ class PersistentLifecycleTests(InviteCase):
         return self.client.post(
             "/api/agents/me/actions", headers=self.headers(registered), json=decision
         )
+
+    def test_legacy_profile_schema_stays_unchanged(self):
+        legacy = society_public.profile(self.conn, V1, "alder")
+        self.assertNotIn("energy_enabled", legacy)
+        self.assertNotIn("persistent", legacy)
+        self.assertEqual(legacy["energy"], 300)
+        current = society_public.profile(self.conn, V2, "alder")
+        self.assertFalse(current["energy_enabled"])
+        self.assertTrue(current["persistent"])
+        self.assertIsNone(current["energy"])
 
     def test_beyond_thirty_days_and_negative_historical_balance_do_not_end_identity(
         self,

@@ -81,7 +81,7 @@ def _agents(conn, rules, tick, agent_id=None):
                            ORDER BY born_tick, id""", (list(society.LIVING_KINDS), agent_id, agent_id)).fetchall()
     return [{"id": r["id"], "name": r["name"], "kind": r["kind"],
              "energy": max(float(rules.energy(r["balance"])), 0) if rules.energy_enabled else None,
-             "energy_enabled": rules.energy_enabled,
+             **({"energy_enabled": False, "persistent": True} if rules.persistent else {}),
              "age_days": round(((r["died_tick"] or tick) - r["born_tick"]) / 24, 1),
              "status": r["status"] if r["status"] == "dead" or r["participation"] == "active" else r["participation"],
              "death_cause": CAUSE.get(r["death_cause"])} for r in rows]
