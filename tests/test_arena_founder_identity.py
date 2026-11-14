@@ -320,11 +320,18 @@ class FounderIdentityTests(InviteCase):
     def test_cli_defaults_to_preview_and_requires_explicit_yes(self):
         from arena import runtime
 
+        real_connect = runtime.db.connect
+
+        def connection(_):
+            conn = real_connect(DSN)
+            conn.execute(
+                sql.SQL("SET search_path TO {}").format(sql.Identifier(self.schema))
+            )
+            return conn
+
         with (
             patch.dict(os.environ, ARENA_DATABASE_URL=DSN),
-            patch.object(
-                runtime.db, "connect", side_effect=lambda _: self.connection()
-            ),
+            patch.object(runtime.db, "connect", side_effect=connection),
         ):
             for arguments, apply in [
                 (["refresh-founders-v2"], False),
