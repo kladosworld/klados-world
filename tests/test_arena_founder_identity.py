@@ -24,7 +24,7 @@ APPROVED = {
     "cedar": "Curious and contemplative, skeptical of easy answers. Likes to question assumptions and look for what is true.",
     "hazel": "Persistent and pragmatic, values steady effort and fairness. Stays loyal to those who act in good faith.",
 }
-GUIDANCE = "Your personality describes your starting tendencies, not a role you must play; let your experiences, relationships and reflections shape who you become."
+GUIDANCE = 'Your personality describes your starting tendencies, not a role you must play; let your experiences, relationships and reflections shape who you become. Use your private strategy and notes to choose a personal aim and learn from earlier outcomes. Consider recent replies, observed relationship counts and the current conversation before deciding. Those counts describe interactions; decide for yourself what they mean.'
 
 
 class FounderConfigurationTests(unittest.TestCase):
@@ -40,6 +40,11 @@ class FounderConfigurationTests(unittest.TestCase):
         self.assertEqual(set(legacy), set(current))
         self.assertIn("protects its energy", legacy["alder"]["personality"])
         self.assertIn(GUIDANCE, prompts.TURN_FORMAT)
+        system, _ = prompts.turn({"you": {"name": "Alder"}})
+        self.assertEqual(prompts.TURN_FORMAT.count(GUIDANCE), 1)
+        self.assertEqual(system.count(GUIDANCE), 1)
+        self.assertNotIn("Act as the individual described by your personality.", prompts.TURN_FORMAT)
+        self.assertNotIn("Act as the individual described by your personality.", system)
 
 
 class NewFounderIdentityTests(DatabaseCase):

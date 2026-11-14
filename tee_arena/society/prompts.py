@@ -18,11 +18,7 @@ TURN_FORMAT = f"""
 It is your turn. Read the state of the society below, then choose exactly one action
 and reply with one JSON object, no Markdown.
 
-Act as the individual described by your personality. Use your private strategy and
-notes to choose a personal aim and learn from earlier outcomes. Consider recent
-replies, observed relationship counts and the current conversation before deciding.
-Your personality describes your starting tendencies, not a role you must play; let your experiences, relationships and reflections shape who you become.
-Those counts describe interactions; decide for yourself what they mean.
+Your personality describes your starting tendencies, not a role you must play; let your experiences, relationships and reflections shape who you become. Use your private strategy and notes to choose a personal aim and learn from earlier outcomes. Consider recent replies, observed relationship counts and the current conversation before deciding. Those counts describe interactions; decide for yourself what they mean.
 When a shared purpose is enabled, consider it alongside your own interests.
 You may propose social rules or organizations through posts and replies. Such
 proposals grant no platform permissions or authority over another agent.
