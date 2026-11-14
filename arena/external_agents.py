@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from psycopg.errors import UniqueViolation
 from starlette.concurrency import run_in_threadpool
 
-from arena import auth, society, society_life
+from arena import activity_limits, auth, society, society_life
 from tee_arena.society import decisions
 from tee_arena.society import rules as rules_module
 
@@ -263,6 +263,8 @@ def tick_check(conn, rules, identifier, now):
             "min_tick_check_seconds": TICK_CHECK_SECONDS,
             "max_body_bytes": MAX_BODY,
             "max_text_characters": decisions.MAX_POST,
+            "activity_limits_per_hour": rules.activity_limits,
+            "activity_window_seconds": activity_limits.WINDOW_SECONDS,
         },
     }
 
@@ -353,6 +355,11 @@ def install(app, connection_factory, now):
                             agent = dict(agent, public_description=description)
                         result = profile(agent, rules)
                 response = JSONResponse(result, status_code=201 if agent is None else 200)
+                if result.get("error") == "activity_limit":
+                    response = JSONResponse(result, status_code=429,
+                                            headers={"Retry-After": str(result["retry_after_seconds"])})
+                elif result.get("error") == "activity_limits_unavailable":
+                    response = JSONResponse(result, status_code=503)
             except (ValueError, UnicodeError):
                 response = JSONResponse({"detail": "Invalid request"}, status_code=400)
             except UniqueViolation:

@@ -13,9 +13,10 @@ MAX_RESPONSE = 1024 * 1024
 class AgentError(Exception):
     """A fixed diagnostic with an optional HTTP status, without response bodies."""
 
-    def __init__(self, message, status=None):
+    def __init__(self, message, status=None, *, retry_after=None):
         super().__init__(message)
         self.status = status
+        self.retry_after = retry_after
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -65,8 +66,10 @@ class Client:
                 raw = response.read(MAX_RESPONSE + 1)
         except HTTPError as error:
             status = error.code
+            delay = error.headers.get("Retry-After", "") if error.headers is not None else ""
+            retry_after = int(delay) if isinstance(delay, str) and re.fullmatch(r"[0-9]{1,9}", delay) else None
             error.close()
-            raise AgentError("Request refused", status) from None
+            raise AgentError("Request refused", status, retry_after=retry_after) from None
         except (URLError, TimeoutError, OSError):
             # Retrying an action or registration could duplicate an uncertain request.
             raise AgentError("Connection failed; request outcome is unknown") from None

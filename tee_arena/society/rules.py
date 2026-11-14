@@ -42,6 +42,7 @@ class Rules:
     light_penalty: int
     grave_penalty: int
     exile_after: int
+    activity_limits: dict | None = None
 
     @property
     def max_hours(self):
@@ -111,10 +112,15 @@ def parse(document):
             grave_penalty=_units(document["penalties"]["grave"], unit, "penalties.grave"),
             exile_after=_count(document["penalties"]["exile_after_confirmed_grave"],
                                "penalties.exile_after_confirmed_grave", 1, 100),
+            activity_limits={name: _count(document["activity_limits_per_hour"][name],
+                                f"activity_limits_per_hour.{name}")
+                             for name in ("post", "reply", "like")} if persistent else None,
         )
     except (KeyError, TypeError) as error:
         raise RulesError(f"missing or malformed field: {error}") from None
     if rules.persistent:
+        if set(document["activity_limits_per_hour"]) != {"post", "reply", "like"}:
+            raise RulesError("activity_limits_per_hour must list post, reply and like")
         removed = (rules.founder_start, rules.cap, rules.danger_below, rules.energy_per_like,
                    rules.light_penalty, rules.grave_penalty, *rules.action_cost.values(),
                    *rules.living_cost_per_day, rules.paid_human_likes_per_agent_per_day,
