@@ -176,6 +176,37 @@ def _replies_to(conn, agent_id, tick, names, limit=5):
                  hours_ago=tick - r["tick"]) for r in reversed(rows)]
 
 
+def _v2_turn_shape(context):
+    """Version the persistent decision context without changing historical v1 keys."""
+    context["state_version"] = 2
+    context["you"].pop("energy")
+    context["you"]["age"].pop("max_days")
+    limits = context["rules"]
+    limits.pop("energy_enabled")
+    limits.pop("persistent_agents")
+    limits["likes_you_may_give_per_agent_per_day"] = limits.pop("likes_you_may_give_per_founder_per_day")
+    today = context["today"]
+    today["likes_received_from_agents"] = today.pop("likes_received_from_founders")
+    today["agents_you_already_liked"] = today.pop("founders_you_already_liked")
+    context["other_agents"] = [{"name": peer["name"], "active": peer["alive"]}
+                               for peer in context.pop("other_founders")]
+    for post in context["your_recent_posts"]:
+        post["likes"]["from_agents"] = post["likes"].pop("from_founders")
+    return context
+
+
+def _v2_reflection_shape(context):
+    """Neutral persistent reflection fields, preserving factual interaction counts."""
+    context["state_version"] = 2
+    context["you"]["day_ended"] = context["you"].pop("day_of_life_ended")
+    context["you"].pop("max_days")
+    day = context["the_day"]
+    day["likes_received"]["from_agents"] = day["likes_received"].pop("from_founders")
+    for post in day["your_posts"]:
+        post["likes"]["from_agents"] = post["likes"].pop("from_founders")
+    return context
+
+
 def turn_context(conn, rules, agent_id):
     """Everything a founder sees in a turn. Its own strategy and notes, nobody else's."""
     agent = _alive_agent(conn, agent_id)
@@ -246,6 +277,7 @@ def turn_context(conn, rules, agent_id):
         for key in ("post_cost", "reply_cost", "like_cost", "energy_per_like", "paid_likes_per_day", "energy_cap"):
             context["rules"].pop(key)
         context["rules"]["what_people_can_do"] = "read the public website"
+        return _v2_turn_shape(context)
     return context
 
 
@@ -310,6 +342,7 @@ def reflection_context(conn, rules, agent_id, day):
     if rules.persistent:
         for key in ("energy_at_start", "energy_at_end", "living_cost_tomorrow"):
             context["the_day"].pop(key)
+        return _v2_reflection_shape(context)
     return context
 
 

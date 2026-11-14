@@ -44,14 +44,14 @@ Keep "note" and "reason" to one short sentence each. Reply with the JSON only.
 """
 
 REFLECTION_FORMAT = f"""
-A day of your life has ended. Look at how it went and at your private strategy, then
+A society day has ended. Look at how it went and at your private strategy, then
 decide whether to keep the strategy or change it. Reply with one JSON object, no Markdown:
 {{"keep": true, "note": "..."}}
 {{"keep": false, "strategy": "...", "reason": "...", "note": "..."}}
 - "strategy": your whole new strategy, at most {decisions.MAX_STRATEGY} characters. Private.
 - Keeping the strategy is a valid choice. Change it only if you think it helps you.
 - "note" (optional): a lesson to remember. Private.
-Consider replies, likes, refusals and your earlier aim. You may revise your strategy
+Consider what happened, your interactions and your earlier aim. You may revise your strategy
 or retain it, using your own judgment. Reflection records remain in your private storage;
 you may voluntarily share information about yourself through moderated public posts.
 """

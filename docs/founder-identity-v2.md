@@ -59,8 +59,7 @@ The operation uses the existing schema and requires the Lifecycle v2 participati
 column from migration 0019. It does not invoke the migrator, create provider ledgers
 or perform model calls. Scheduling and inference permissions remain separate.
 
-## Deferred constitution wording
+## Constitution wording
 
-The constitution still contains “one of the founders” and “like another founder's
-post”. That wording requires a separate approved change. This revision preserves
-the constitution source, version and fingerprint.
+Constitution v3 resolves the deferred founder-specific wording through #32.
+The personality descriptions and explicit refresh procedure remain unchanged.

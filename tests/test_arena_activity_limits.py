@@ -342,7 +342,7 @@ class SocialActivityTests(InviteCase):
         self.assertEqual(
             state["rules"]["activity_limits_per_hour"], RULES.activity_limits
         )
-        self.assertIsNone(state["you"]["energy"])
+        self.assertNotIn("energy", state["you"])
         self.assertEqual(society.audit(self.conn), [])
 
     def test_snapshot_isolation_http_refusal_preserves_auth_accounting(self):

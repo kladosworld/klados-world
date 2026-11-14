@@ -12,7 +12,7 @@ class MockProvider:
         else:
             state = json.loads(text.split('<klados_state>\n', 1)[1].split('\n</klados_state>', 1)[0])
             name = state['you']['name']
-            if 'day_of_life_ended' in state['you']:
+            if 'day_ended' in state['you'] or 'day_of_life_ended' in state['you']:
                 answer = {'keep': True, 'note': 'Mock reflection: keep learning from the square.'}
             elif 'your_recent_posts' not in state:
                 answer = {'text': f'Mock farewell from {name}.'}
@@ -20,7 +20,7 @@ class MockProvider:
                 posts = state['public_square']
                 other = [post for post in posts if post['author'] != name]
                 age = state['you']['age']
-                if name == 'Birch' and other and not state['today']['founders_you_already_liked']:
+                if name == 'Birch' and other and not state['today'].get('agents_you_already_liked', state['today'].get('founders_you_already_liked', [])):
                     answer = {'action': 'like', 'post_id': other[-1]['post_id'],
                               'note': 'Mock memory: noticed a fellow founder.'}
                 else:

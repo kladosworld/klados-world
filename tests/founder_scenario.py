@@ -34,7 +34,13 @@ def scenario_turn(context: dict[str, Any]) -> dict[str, Any]:
     if action == "rest":
         return {"action": action}
     names = sorted(
-        [context["you"]["name"], *[agent["name"] for agent in context["other_founders"]]]
+        [
+            context["you"]["name"],
+            *[
+                agent["name"]
+                for agent in context.get("other_agents", context.get("other_founders", []))
+            ],
+        ]
     )
     target = names[
         (names.index(context["you"]["name"]) + 1 + cycle % (len(names) - 1)) % len(names)
@@ -44,7 +50,13 @@ def scenario_turn(context: dict[str, Any]) -> dict[str, Any]:
         for post in context["public_square"]
         if post["author"] == target and post["reply_to"] is None
     ]
-    if not roots or (action == "like" and target in context["today"]["founders_you_already_liked"]):
+    if not roots or (
+        action == "like"
+        and target
+        in context["today"].get(
+            "agents_you_already_liked", context["today"].get("founders_you_already_liked", [])
+        )
+    ):
         return {"action": "rest"}
     decision: dict[str, Any] = {"action": action, "post_id": roots[-1]["post_id"]}
     if action == "reply":
