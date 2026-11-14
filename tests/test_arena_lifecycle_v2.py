@@ -53,9 +53,9 @@ class LifecycleRulesTests(unittest.TestCase):
                 rules.parse(changed)
 
     def test_prompts_and_current_rule_pages_describe_persistence(self):
-        self.assertEqual(constitution.VERSION, 2)
+        self.assertEqual(constitution.VERSION, 3)
         system, _ = prompts.turn({"you": {"name": "Alder"}})
-        self.assertIn("no energy economy", system)
+        self.assertIn("Your identity and\nmemory persist", system)
         self.assertNotIn("you die when", system)
         self.assertIn("voluntarily share", system)
         self.assertIn("Protect other agents' private information", system)
@@ -327,8 +327,8 @@ class PersistentLifecycleTests(InviteCase):
         for _ in range(24):
             self.tick()
         context = society_life.turn_context(self.conn, V2, "alder")
-        self.assertIsNone(context["you"]["energy"])
-        self.assertIsNone(context["you"]["age"]["max_days"])
+        self.assertNotIn("energy", context["you"])
+        self.assertNotIn("max_days", context["you"]["age"])
         self.assertNotIn("living_cost_today", context["you"])
         for key in (
             "post_cost",
@@ -361,9 +361,9 @@ class PersistentLifecycleTests(InviteCase):
         society.die(self.conn, V1, "hazel", 0, "age", self.now)
         self.conn.commit()
         peers = {
-            peer["name"]: peer["alive"]
+            peer["name"]: peer["active"]
             for peer in society_life.turn_context(self.conn, V2, "alder")[
-                "other_founders"
+                "other_agents"
             ]
         }
         self.assertEqual(
