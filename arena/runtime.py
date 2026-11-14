@@ -15,7 +15,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['bootstrap', 'demo', 'status', 'audit', 'pause',
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
-                                          'review', 'show', 'decide', 'invite', 'agent'])
+                                          'review', 'show', 'decide', 'invite', 'agent',
+                                          'refresh-founders-v2'])
     parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend'])
     parser.add_argument('--id', dest='identifier')
     parser.add_argument('--ledger', default='/data/ledger.json')
@@ -51,6 +52,10 @@ def main(argv=None):
                         raise ValueError('Invalid operator action')
                 else:
                     raise ValueError('Invalid operator action')
+            elif args.command == 'refresh-founders-v2':
+                if args.operation is not None or args.identifier is not None:
+                    raise ValueError('refresh-founders-v2 takes no operation or identity argument')
+                result = society.refresh_founders_v2(conn, rules, now, apply=args.yes)
             elif args.command == 'bootstrap':
                 db.migrate(conn)
                 state = conn.execute('SELECT 1 FROM society_clock').fetchone()

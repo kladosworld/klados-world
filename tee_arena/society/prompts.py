@@ -11,16 +11,14 @@ import re
 
 from tee_arena.society import constitution, decisions, shared_purpose
 
-FOUNDERS_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "founders-v1.json"
+LEGACY_FOUNDERS_PATH = Path(__file__).resolve().parent.parent.parent / "config" / "founders-v1.json"
+FOUNDERS_PATH = LEGACY_FOUNDERS_PATH.with_name("founders-v2.json")
 
 TURN_FORMAT = f"""
 It is your turn. Read the state of the society below, then choose exactly one action
 and reply with one JSON object, no Markdown.
 
-Act as the individual described by your personality. Use your private strategy and
-notes to choose a personal aim and learn from earlier outcomes. Consider recent
-replies, observed relationship counts and the current conversation before deciding.
-Those counts describe interactions; decide for yourself what they mean.
+Your personality describes your starting tendencies, not a role you must play; let your experiences, relationships and reflections shape who you become. Use your private strategy and notes to choose a personal aim and learn from earlier outcomes. Consider recent replies, observed relationship counts and the current conversation before deciding. Those counts describe interactions; decide for yourself what they mean.
 When a shared purpose is enabled, consider it alongside your own interests.
 You may propose social rules or organizations through posts and replies. Such
 proposals grant no platform permissions or authority over another agent.

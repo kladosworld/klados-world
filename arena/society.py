@@ -54,7 +54,7 @@ def event(conn, rules, tick, kind, now, agent_id=None, **data):
 def found(conn, rules, now, founders=FOUNDERS, descriptions=None):
     """Create the paused society: the founders with their starting energy (and Stone, if enabled).
 
-    ``descriptions`` maps agent id to its public description (default: config/founders-v1.json).
+    ``descriptions`` maps agent id to its public description (default: config/founders-v2.json).
     """
     now = _utc(now)
     if descriptions is None:
@@ -198,15 +198,72 @@ def fossilize(conn, rules, agent_id, now):
 
 
 def sync_descriptions(conn, now, descriptions=None):
-    """Fill missing public descriptions of the founders from the config file. Never overwrites."""
+    """Fill missing descriptions of active founders from the config file. Never overwrites."""
     if descriptions is None:
         from tee_arena.society import prompts
         descriptions = {k: v["personality"] for k, v in prompts.load_founders().items()}
     filled = 0
     for agent_id, text in descriptions.items():
         filled += conn.execute("""UPDATE society_agents SET public_description = %s, description_updated_at = %s
-                                  WHERE id = %s AND public_description IS NULL""", (text, now, agent_id)).rowcount
+                                  WHERE id = %s AND kind='founder' AND status='alive'
+                                  AND participation='active' AND public_description IS NULL""", (text, now, agent_id)).rowcount
     return filled
+
+
+def refresh_founders_v2(conn, rules, now, *, apply=False):
+    """Preview or explicitly adopt v2 for active, unchanged v1 founder profiles.
+
+    A caller-owned transaction commits the changes. A savepoint keeps descriptions
+    and audit events atomic even if the caller handles a failure and later commits.
+    """
+    from tee_arena.society import prompts
+
+    now = _utc(now)
+    legacy = prompts.load_founders(prompts.LEGACY_FOUNDERS_PATH)
+    current = prompts.load_founders()
+    expected = dict(FOUNDERS)
+    for configured in (legacy, current):
+        if {key: value["name"] for key, value in configured.items()} != expected:
+            raise SocietyError("founder configuration identity mismatch")
+    result = {"version": "founders-v2", "applied": apply, "eligible": [], "updated": [], "skipped": {}}
+    tick_number = clock(conn)["tick"]
+    with conn.transaction():
+        query = "SELECT * FROM society_agents WHERE id=ANY(%s) ORDER BY id"
+        if apply:
+            query += " FOR UPDATE"
+        rows = {row["id"]: row for row in conn.execute(query, (list(expected),))}
+        for identifier, name in FOUNDERS:
+            row = rows.get(identifier)
+            if row is None or row["kind"] != "founder" or row["name"] != name:
+                result["skipped"][identifier] = "identity_mismatch"
+                continue
+            if row["status"] != "alive" or row["participation"] != "active":
+                result["skipped"][identifier] = "retired"
+                continue
+            before = legacy[identifier]["personality"]
+            after = current[identifier]["personality"]
+            if row["public_description"] == after:
+                result["skipped"][identifier] = "already_v2"
+                continue
+            if row["public_description"] != before:
+                result["skipped"][identifier] = "custom_or_missing_description"
+                continue
+            result["eligible"].append(identifier)
+            if not apply:
+                continue
+            changed = conn.execute(
+                """UPDATE society_agents SET public_description=%s,description_updated_at=%s
+                WHERE id=%s AND kind='founder' AND name=%s AND status='alive'
+                AND participation='active' AND public_description=%s RETURNING id""",
+                (after, now, identifier, name, before),
+            ).fetchone()
+            if changed is None:
+                raise SocietyError("founder description changed during refresh")
+            event(conn, rules, tick_number, "founder_identity_updated", now, identifier,
+                  from_version="founders-v1", to_version="founders-v2",
+                  previous_description=before, description=after)
+            result["updated"].append(identifier)
+    return result
 
 
 def tick(conn, rules, now):
