@@ -41,7 +41,7 @@ V2 findings do not transfer energy or automatically terminate an identity.
 An authorized operator must explicitly suspend or revoke participation when needed.
 
 V2 model turn context omits the legacy `post_cost`, `reply_cost` and `like_cost`
-fields along with energy rewards and caps. `other_agents[].alive` is true only
+fields along with energy rewards and caps. `other_agents[].active` is true only
 for an identity with historical status alive and current participation active.
 Suspended/revoked identities remain present, with false eligibility. Historical
 deaths and the legacy rules-v1 context remain available without record rewrites.
