@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
@@ -24,6 +25,18 @@ RULES = rules_module.load()
 
 
 class ClosedSurfaceTests(unittest.TestCase):
+    def test_capacity_configuration_is_bounded_and_fails_closed(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(external.agent_capacity(), 8)
+        for value in ("1", "8", "100"):
+            with patch.dict(os.environ, KLADOS_EXTERNAL_AGENT_CAPACITY=value):
+                self.assertEqual(external.agent_capacity(), int(value))
+        for value in ("", "0", "101", "-1", "1.0", " 8", "true", "999999"):
+            with patch.dict(os.environ, KLADOS_EXTERNAL_AGENT_CAPACITY=value):
+                with self.assertRaises(external.HTTPException) as caught:
+                    external.agent_capacity()
+                self.assertEqual(caught.exception.status_code, 503)
+
     def test_default_off_and_invalid_flags_are_unrouted_without_database_access(self):
         def forbidden():
             raise AssertionError("Closed surface must not access the database")
@@ -135,6 +148,389 @@ class InviteCase(DatabaseCase):
 
 
 class InviteDatabaseTests(InviteCase):
+    def test_hourly_retry_after_rounds_up_and_preserves_shared_limits(self):
+        registered = self.register().json()
+        headers = self.headers(registered)
+        for _ in range(external.REQUESTS_PER_HOUR):
+            self.assertEqual(
+                self.client.get("/api/agents/me", headers=headers).status_code, 200
+            )
+        before = self.conn.execute(
+            "SELECT *, xmin::text AS version FROM agent_tokens"
+        ).fetchone()
+        for elapsed, expected in [(0, "3600"), (1200.25, "2400"), (3599.5, "1")]:
+            self.now = NOW + timedelta(seconds=elapsed)
+            for method, path in [
+                ("GET", "/api/agents/me"),
+                ("GET", "/api/agents/tick"),
+                ("POST", "/api/agents/me/credentials/rotate"),
+            ]:
+                response = self.client.request(method, path, headers=headers, json={})
+                self.assertEqual(response.status_code, 429)
+                self.assertEqual(
+                    response.json(), {"detail": "Agent request limit reached"}
+                )
+                self.assertEqual(response.headers["Retry-After"], expected)
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(
+            before,
+            self.conn.execute(
+                "SELECT *, xmin::text AS version FROM agent_tokens"
+            ).fetchone(),
+        )
+        self.now = NOW + timedelta(hours=1)
+        self.assertEqual(
+            self.client.get("/api/agents/tick", headers=headers).status_code, 200
+        )
+        early = self.client.get("/api/agents/tick", headers=headers)
+        self.assertEqual(early.status_code, 429)
+        self.assertEqual(early.headers["Retry-After"], "300")
+        for _ in range(external.REQUESTS_PER_HOUR - 1):
+            self.assertEqual(
+                self.client.get("/api/agents/me", headers=headers).status_code, 200
+            )
+        self.assertEqual(
+            self.client.get("/api/agents/me", headers=headers).status_code, 429
+        )
+        self.assertEqual(
+            self.conn.execute("SELECT request_count FROM agent_tokens").fetchone()[
+                "request_count"
+            ],
+            60,
+        )
+
+    def test_tick_advancing_while_action_waits_cannot_consume_later_turn(self):
+        registered = self.register().json()
+        self.tick()
+        society.clock(self.conn, lock=True)
+        waiting = threading.Event()
+        original_clock = society.clock
+
+        def clock(conn, *, lock=False):
+            if lock:
+                waiting.set()
+            return original_clock(conn, lock=lock)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with patch.object(society, "clock", side_effect=clock):
+                future = pool.submit(
+                    self.client.post,
+                    "/api/agents/me/actions",
+                    headers=self.headers(registered),
+                    json={"action": "rest", "expected_tick": 1},
+                )
+                try:
+                    self.assertTrue(waiting.wait(5))
+                    self.now += timedelta(hours=1)
+                    society.tick(self.conn, RULES, self.now)
+                    self.conn.commit()
+                finally:
+                    self.conn.rollback()
+                self.assertEqual(future.result(timeout=10).status_code, 409)
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT count(*) AS n FROM society_turns WHERE agent_id=%s",
+                (registered["id"],),
+            ).fetchone()["n"],
+            0,
+        )
+        self.assertEqual(society.audit(self.conn), [])
+
+    def test_polling_migration_preserves_existing_credentials_and_founders(self):
+        registered = self.register().json()
+        self.client.get("/api/agents/me", headers=self.headers(registered))
+        before = list(self.conn.execute("SELECT * FROM society_agents ORDER BY id"))
+        self.conn.execute("ALTER TABLE agent_tokens DROP COLUMN last_tick_check_at")
+        self.conn.execute(
+            "DELETE FROM arena_migrations WHERE name='0018_agent_tick_checks.sql'"
+        )
+        token = self.conn.execute("SELECT * FROM agent_tokens").fetchone()
+        db.migrate(self.conn)
+        self.assertEqual(
+            before, list(self.conn.execute("SELECT * FROM society_agents ORDER BY id"))
+        )
+        after = self.conn.execute("SELECT * FROM agent_tokens").fetchone()
+        self.assertIsNone(after.pop("last_tick_check_at"))
+        self.assertEqual(token, after)
+        self.conn.commit()
+        self.assertEqual(
+            self.client.get(
+                "/api/agents/tick", headers=self.headers(registered)
+            ).status_code,
+            200,
+        )
+
+    def test_tick_is_lightweight_private_and_cooldown_rejects_without_writes(self):
+        registered = self.register().json()
+        headers = self.headers(registered)
+        with patch.object(
+            society_life,
+            "turn_context",
+            side_effect=AssertionError("private state loaded"),
+        ):
+            check = self.client.get("/api/agents/tick", headers=headers)
+        self.assertEqual(check.status_code, 200)
+        self.assertEqual(check.headers["Cache-Control"], "no-store")
+        self.assertEqual(check.json()["reason"], "paused")
+        self.assertFalse(check.json()["can_act"])
+        self.assertIsNone(check.json()["next_tick_not_before"])
+        self.assertEqual(check.json()["next_check_after_seconds"], 300)
+        self.assertEqual(check.json()["limits"]["requests_per_hour"], 60)
+        self.assertNotIn("you", check.json())
+        before = self.conn.execute(
+            "SELECT *, xmin::text AS version FROM agent_tokens"
+        ).fetchone()
+        denied = self.client.get("/api/agents/tick", headers=headers)
+        self.assertEqual(denied.status_code, 429)
+        self.assertEqual(denied.headers["Retry-After"], "300")
+        self.assertEqual(
+            before,
+            self.conn.execute(
+                "SELECT *, xmin::text AS version FROM agent_tokens"
+            ).fetchone(),
+        )
+        self.tick()
+        check = self.client.get("/api/agents/tick", headers=headers).json()
+        self.assertTrue(check["can_act"])
+        self.assertEqual(check["tick"], 1)
+        self.assertIsNotNone(check["next_tick_not_before"])
+        self.client.post(
+            "/api/agents/me/actions", headers=headers, json={"action": "rest"}
+        )
+        self.now += timedelta(seconds=300)
+        check = self.client.get("/api/agents/tick", headers=headers).json()
+        self.assertFalse(check["can_act"])
+        self.assertEqual(check["reason"], "turn_used")
+
+    def test_tick_cooldown_is_per_agent_and_concurrent_checks_charge_once(self):
+        first = self.register().json()
+        second = self.register(name="Other poller").json()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            codes = list(
+                pool.map(
+                    lambda _: (
+                        self.client.get(
+                            "/api/agents/tick", headers=self.headers(first)
+                        ).status_code
+                    ),
+                    range(2),
+                )
+            )
+        self.assertEqual(sorted(codes), [200, 429])
+        self.assertEqual(
+            self.client.get(
+                "/api/agents/tick", headers=self.headers(second)
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT request_count FROM agent_tokens WHERE agent_id=%s",
+                (first["id"],),
+            ).fetchone()["request_count"],
+            1,
+        )
+
+    def test_expected_tick_refuses_stale_and_invalid_values_without_consuming_turn(
+        self,
+    ):
+        registered = self.register().json()
+        headers = self.headers(registered)
+        self.tick()
+        balance = self.conn.execute(
+            "SELECT balance FROM society_agents WHERE id=%s", (registered["id"],)
+        ).fetchone()
+        for value, status in [
+            (0, 409),
+            (2, 409),
+            (True, 400),
+            (-1, 400),
+            ("1", 400),
+            (None, 400),
+        ]:
+            response = self.client.post(
+                "/api/agents/me/actions",
+                headers=headers,
+                json={
+                    "action": "post",
+                    "text": "Not submitted.",
+                    "expected_tick": value,
+                },
+            )
+            self.assertEqual(response.status_code, status)
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT balance FROM society_agents WHERE id=%s", (registered["id"],)
+            ).fetchone(),
+            balance,
+        )
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT count(*) AS n FROM society_turns WHERE agent_id=%s",
+                (registered["id"],),
+            ).fetchone()["n"],
+            0,
+        )
+        body = {
+            "action": "post",
+            "text": "A single guarded submission.",
+            "expected_tick": 1,
+        }
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            codes = list(
+                pool.map(
+                    lambda _: (
+                        self.client.post(
+                            "/api/agents/me/actions", headers=headers, json=body
+                        ).status_code
+                    ),
+                    range(2),
+                )
+            )
+        self.assertEqual(sorted(codes), [200, 409])
+        self.tick()
+        self.assertEqual(
+            self.client.post(
+                "/api/agents/me/actions", headers=headers, json=body
+            ).status_code,
+            409,
+        )
+        # Legacy clients can still submit without expected_tick.
+        self.assertEqual(
+            self.client.post(
+                "/api/agents/me/actions", headers=headers, json={"action": "rest"}
+            ).status_code,
+            200,
+        )
+        self.assertEqual(society.audit(self.conn), [])
+
+    def test_rotation_invalidates_old_token_and_preserves_limits_and_isolation(self):
+        first = self.register().json()
+        second = self.register(name="Other identity").json()
+        headers = self.headers(first)
+        self.assertEqual(
+            self.client.get("/api/agents/tick", headers=headers).status_code, 200
+        )
+        rotated = self.client.post(
+            "/api/agents/me/credentials/rotate", headers=headers, json={}
+        )
+        self.assertEqual(rotated.status_code, 200)
+        self.assertEqual(rotated.headers["Cache-Control"], "no-store")
+        self.assertNotEqual(rotated.json()["token"], first["token"])
+        self.assertEqual(
+            self.client.get("/api/agents/me", headers=headers).status_code, 401
+        )
+        new_headers = self.headers(rotated.json())
+        self.assertEqual(
+            self.client.get("/api/agents/tick", headers=new_headers).status_code, 429
+        )
+        self.assertEqual(
+            self.client.get("/api/agents/me", headers=new_headers).json()["id"],
+            first["id"],
+        )
+        self.assertEqual(
+            self.client.get("/api/agents/me", headers=self.headers(second)).json()[
+                "id"
+            ],
+            second["id"],
+        )
+        row = self.conn.execute(
+            "SELECT * FROM agent_tokens WHERE agent_id=%s", (first["id"],)
+        ).fetchone()
+        self.assertEqual(row["request_count"], 3)
+        self.assertNotIn(rotated.json()["token"], json.dumps(row, default=str))
+        self.conn.execute(
+            "UPDATE agent_tokens SET request_count=59 WHERE agent_id=%s", (first["id"],)
+        )
+        self.conn.commit()
+        final = self.client.post(
+            "/api/agents/me/credentials/rotate", headers=new_headers, json={}
+        )
+        self.assertEqual(final.status_code, 200)
+        self.assertEqual(
+            self.client.get(
+                "/api/agents/me", headers=self.headers(final.json())
+            ).status_code,
+            429,
+        )
+
+    def test_concurrent_rotation_and_controls_cannot_be_bypassed(self):
+        registered = self.register().json()
+        headers = self.headers(registered)
+        # Invalid rotation payload is charged but leaves the credential intact.
+        self.assertEqual(
+            self.client.post(
+                "/api/agents/me/credentials/rotate",
+                headers=headers,
+                json={"agent_id": "alder"},
+            ).status_code,
+            400,
+        )
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(
+                pool.map(
+                    lambda _: self.client.post(
+                        "/api/agents/me/credentials/rotate", headers=headers, json={}
+                    ),
+                    range(2),
+                )
+            )
+        self.assertEqual(sorted(r.status_code for r in responses), [200, 401])
+        headers = self.headers(
+            next(r.json() for r in responses if r.status_code == 200)
+        )
+        external.control_agent(self.conn, registered["id"], "suspend", self.now)
+        self.conn.commit()
+        for path in ("/api/agents/tick", "/api/agents/me/credentials/rotate"):
+            method = "POST" if path.endswith("rotate") else "GET"
+            self.assertEqual(
+                self.client.request(method, path, headers=headers, json={}).status_code,
+                403,
+            )
+        external.control_agent(self.conn, registered["id"], "revoke", self.now)
+        self.conn.commit()
+        self.assertEqual(
+            self.client.post(
+                "/api/agents/me/credentials/rotate", headers=headers, json={}
+            ).status_code,
+            401,
+        )
+
+    def test_configured_capacity_is_atomic_and_invalid_setting_refuses_registration(
+        self,
+    ):
+        with patch.dict(os.environ, KLADOS_EXTERNAL_AGENT_CAPACITY="1"):
+            invitations = [self.invitation(), self.invitation()]
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                codes = list(
+                    pool.map(
+                        lambda n: (
+                            self.register(
+                                invitations[n], name=f"Capacity {n}"
+                            ).status_code
+                        ),
+                        range(2),
+                    )
+                )
+            self.assertEqual(sorted(codes), [201, 409])
+        with patch.dict(os.environ, KLADOS_EXTERNAL_AGENT_CAPACITY="100"):
+            for index in range(9):
+                self.assertEqual(
+                    self.register(name=f"Expanded {index}").status_code, 201
+                )
+        invitation = self.invitation()
+        with patch.dict(os.environ, KLADOS_EXTERNAL_AGENT_CAPACITY="101"):
+            self.assertEqual(
+                self.register(invitation, name="Config failure").status_code, 503
+            )
+        self.assertEqual(
+            self.register(invitation, name="Config failure").status_code, 409
+        )
+        with patch.dict(os.environ, KLADOS_EXTERNAL_AGENT_CAPACITY="100"):
+            self.assertEqual(
+                self.register(invitation, name="Config failure").status_code, 201
+            )
+
     def test_single_use_expiry_revocation_and_only_digests_persist(self):
         invitation = self.invitation()
         response = self.register(invitation)

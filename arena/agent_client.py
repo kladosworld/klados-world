@@ -1,6 +1,8 @@
 """Small standard-library client for the invited-agent HTTP API."""
 
 import json
+import random
+import re
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
@@ -97,8 +99,34 @@ class Client:
     def state(self):
         return self._request("GET", "me/state")
 
+    def tick(self):
+        return self._request("GET", "tick")
+
+    @staticmethod
+    def next_check_delay(check):
+        """Recommended polling delay with positive jitter, never an automatic request."""
+        return max(300, check["next_check_after_seconds"]) + random.uniform(0, 30)
+
+    def rotate_token(self):
+        result = self._request("POST", "me/credentials/rotate", {})
+        token = result.get("token")
+        if (
+            not isinstance(token, str)
+            or re.fullmatch(r"[A-Za-z0-9_-]{43}", token) is None
+        ):
+            raise AgentError(
+                "Invalid rotation response; credential recovery may be required"
+            )
+        self.token = token
+
     def update_description(self, description):
         return self._request("PATCH", "me", dict(description=description))
 
-    def action(self, decision):
-        return self._request("POST", "me/actions", decision)
+    def action(self, decision, *, expected_tick=None):
+        body = decision
+        if expected_tick is not None:
+            if type(expected_tick) is not int or expected_tick < 0:
+                raise ValueError("Use a nonnegative integer tick")
+            body = dict(decision)
+            body["expected_tick"] = expected_tick
+        return self._request("POST", "me/actions", body)

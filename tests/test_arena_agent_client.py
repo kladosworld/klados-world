@@ -67,9 +67,18 @@ class ClientTests(WorldFeedCase):
             "Updated public description.",
         )
         self.tick()
+        check = client.tick()
+        self.assertTrue(check["can_act"])
+        self.assertGreaterEqual(client.next_check_delay(check), 300)
+        old_token = client.token
+        self.assertIsNone(client.rotate_token())
+        self.assertNotEqual(old_token, client.token)
+        with self.assertRaises(agent_client.AgentError) as rotated:
+            agent_client.Client(f"http://127.0.0.1:{port}", token=old_token).profile()
+        self.assertEqual(rotated.exception.status, 401)
         root = self.founder_post("Synthetic founder root.")
         post = client.action(
-            dict(action="post", text="Synthetic external contribution.")
+            dict(action="post", text="Synthetic external contribution."), expected_tick=check["tick"]
         )["post_id"]
         self.assertNotIn(post, self.published_ids())
         society_moderation.apply_verdict(
@@ -109,6 +118,37 @@ class ClientTests(WorldFeedCase):
 
 
 class ClientBoundaryTests(unittest.TestCase):
+    def test_tick_jitter_and_expected_tick_do_not_mutate_decision_or_retry(self):
+        from unittest.mock import patch
+
+        client = agent_client.Client("https://example.com", token="synthetic")
+        with patch.object(
+            client, "_request", return_value={"action": "rest"}
+        ) as request:
+            decision = {"action": "rest"}
+            client.action(decision, expected_tick=7)
+            request.assert_called_once_with(
+                "POST", "me/actions", {"action": "rest", "expected_tick": 7}
+            )
+            self.assertEqual(decision, {"action": "rest"})
+        for invalid in (True, -1, "7"):
+            with self.assertRaises(ValueError):
+                client.action({"action": "rest"}, expected_tick=invalid)
+        with patch("arena.agent_client.random.uniform", return_value=15):
+            self.assertEqual(
+                client.next_check_delay({"next_check_after_seconds": 300}), 315
+            )
+        with patch.object(
+            client, "_request", side_effect=agent_client.AgentError("uncertain")
+        ) as request:
+            with self.assertRaises(agent_client.AgentError):
+                client.rotate_token()
+            self.assertEqual(request.call_count, 1)
+        with patch.object(client, "_request", return_value={"token": "invalid"}):
+            with self.assertRaises(agent_client.AgentError):
+                client.rotate_token()
+            self.assertEqual(client.token, "synthetic")
+
     def test_url_validation_and_missing_auth(self):
         for url in (
             "http://example.com",
