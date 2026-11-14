@@ -21,7 +21,7 @@ from tee_arena.society import rules as rules_module
 from tests.arena_support import DSN, DatabaseCase
 
 NOW = datetime(2026, 11, 10, tzinfo=timezone.utc)
-RULES = rules_module.load()
+RULES = rules_module.load(rules_module.LEGACY_PATH)
 
 
 class ClosedSurfaceTests(unittest.TestCase):
@@ -107,6 +107,7 @@ class InviteCase(DatabaseCase):
             KLADOS_EXTERNAL_AGENTS="invite",
             KLADOS_SOCIETY_PUBLIC="1",
             KLADOS_AI_MODE="mock",
+            KLADOS_RULES=str(rules_module.LEGACY_PATH),
         )
         self.environment.start()
         self.addCleanup(self.environment.stop)

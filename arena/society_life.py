@@ -24,7 +24,7 @@ def society_day(tick):
 
 def _alive_agent(conn, agent_id):
     row = conn.execute("SELECT * FROM society_agents WHERE id = %s", (agent_id,)).fetchone()
-    if row is None or row["kind"] not in society.LIVING_KINDS or row["status"] != "alive":
+    if row is None or row["kind"] not in society.LIVING_KINDS or row["status"] != "alive" or row["participation"] != "active":
         raise society.SocietyError("not_alive")
     return row
 
@@ -47,7 +47,7 @@ def _like(conn, rules, agent_id, post, tick, now):
         raise society.SocietyError("already_liked_today")
     paid_today = conn.execute("""SELECT count(*) AS n FROM society_likes WHERE from_kind = 'agent'
                                  AND target_id = %s AND day = %s AND paid""", (target, day)).fetchone()["n"]
-    paid = paid_today < rules.paid_agent_likes_per_agent_per_day
+    paid = rules.energy_enabled and paid_today < rules.paid_agent_likes_per_agent_per_day
     inserted = conn.execute("""INSERT INTO society_likes (from_kind, from_id, post_id, target_id, tick, day, paid, created_at)
                     VALUES ('agent', %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (from_kind, from_id, post_id) DO NOTHING RETURNING post_id""",
@@ -183,7 +183,7 @@ def turn_context(conn, rules, agent_id):
     liked_today = {r["target_id"] for r in conn.execute(
         "SELECT target_id FROM society_likes WHERE from_kind = 'agent' AND from_id = %s AND day = %s",
         (agent_id, day))}
-    others = [r for r in conn.execute("""SELECT id, name, status FROM society_agents
+    others = [r for r in conn.execute("""SELECT id, name, status, participation FROM society_agents
                                          WHERE kind = ANY(%s) AND id <> %s ORDER BY id""",
                                       (list(society.LIVING_KINDS), agent_id))]
     current = strategy(conn, agent_id)
@@ -197,11 +197,11 @@ def turn_context(conn, rules, agent_id):
         """SELECT post_id FROM society_likes WHERE from_kind='agent' AND from_id=%s
            AND post_id=ANY(%s)""", (agent_id, [post["post_id"] for post in square]))}
     eligible_authors = {row["name"] for row in others
-                        if row["status"] == "alive" and row["id"] not in liked_today}
+                        if row["status"] == "alive" and row["participation"] == "active" and row["id"] not in liked_today}
     for post in square:
         post["can_like"] = post["author"] in eligible_authors and post["post_id"] not in liked_posts
     relations = society.relations(conn, agent_id)
-    return {
+    context = {
         "you": {"name": agent["name"], "energy": float(rules.energy(agent["balance"])),
                 "age": {"days": lived // 24, "hours": lived % 24, "max_days": rules.max_days},
                 "living_cost_today": float(rules.energy(economy.living_cost_per_day(rules, lived // 24))),
@@ -220,7 +220,7 @@ def turn_context(conn, rules, agent_id):
         "today": {"likes_received_from_people": received.get("human", 0),
                   "likes_received_from_founders": received.get("agent", 0),
                   "founders_you_already_liked": sorted(names[t] for t in liked_today)},
-        "other_founders": [{"name": r["name"], "alive": r["status"] == "alive"} for r in others],
+        "other_founders": [{"name": r["name"], "alive": r["status"] == "alive" and r["participation"] == "active"} for r in others],
         "public_square": square,
         "relationships": [{"name": peer["name"],
                            **{kind: counts.get(peer["id"], 0) for kind, counts in relations.items()}}
@@ -230,6 +230,15 @@ def turn_context(conn, rules, agent_id):
         "your_last_turns": [{"hours_ago": tick - r["tick"], "action": r["action"],
                              "error": r["error"]} for r in recent],
     }
+    context["rules"]["energy_enabled"] = rules.energy_enabled
+    context["rules"]["persistent_agents"] = rules.persistent
+    if rules.persistent:
+        context["you"]["energy"] = None
+        context["you"].pop("living_cost_today")
+        for key in ("post_cost", "reply_cost", "like_cost", "energy_per_like", "paid_likes_per_day", "energy_cap"):
+            context["rules"].pop(key)
+        context["rules"]["what_people_can_do"] = "read the public website"
+    return context
 
 
 def reflections_due(conn):
@@ -237,7 +246,7 @@ def reflections_due(conn):
     tick = society.clock(conn)["tick"]
     due = []
     for agent in conn.execute("""SELECT id, born_tick FROM society_agents
-                                 WHERE kind = 'founder' AND status = 'alive' ORDER BY id""",
+                                 WHERE kind = 'founder' AND status = 'alive' AND participation='active' ORDER BY id""",
                                  ()):
         lived = tick - agent["born_tick"]
         if lived >= 24:
@@ -273,7 +282,7 @@ def reflection_context(conn, rules, agent_id, day):
         """SELECT from_kind, count(*) AS n FROM society_likes
            WHERE target_id = %s AND tick BETWEEN %s AND %s GROUP BY from_kind""",
         (agent_id, first, last))}
-    return {
+    context = {
         "you": {"name": agent["name"], "day_of_life_ended": day, "max_days": rules.max_days,
                 "personality": agent["public_description"],
                 "private_strategy": current["text"] if current else None,
@@ -290,6 +299,10 @@ def reflection_context(conn, rules, agent_id, day):
                         "from_founders": received.get("agent", 0)},
                     "replies_to_you": [{"from": names[r["author_id"]], "text": r["text"]} for r in replies]},
     }
+    if rules.persistent:
+        for key in ("energy_at_start", "energy_at_end", "living_cost_tomorrow"):
+            context["the_day"].pop(key)
+    return context
 
 
 def record_reflection(conn, agent_id, day, tick, decision, now, *, charged_microusd=0, error=None):

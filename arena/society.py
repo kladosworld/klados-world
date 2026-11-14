@@ -1,4 +1,4 @@
-"""Klados v2 society state in PostgreSQL: the clock, the agents and the energy journal.
+"""PostgreSQL society state, with persistent v2 agents and historical energy records.
 
 Rules from tee_arena.society.rules; arithmetic from tee_arena.society.economy, the
 same code the simulator runs. Callers own transactions; nothing here commits.
@@ -69,8 +69,12 @@ def found(conn, rules, now, founders=FOUNDERS, descriptions=None):
                             (id, name, kind, born_tick, turn_minute, public_description, description_updated_at, created_at)
                         VALUES (%s, %s, 'founder', 0, %s, %s, %s, %s)""",
                      (agent_id, name, index * spacing, descriptions.get(agent_id), now, now))
-        apply_energy(conn, rules, agent_id, "birth", rules.founder_start, f"birth:{agent_id}", now)
-        event(conn, rules, 0, "founded", now, agent_id, energy=str(rules.energy(rules.founder_start)))
+        if rules.energy_enabled:
+            apply_energy(conn, rules, agent_id, "birth", rules.founder_start, f"birth:{agent_id}", now)
+        if rules.persistent:
+            event(conn, rules, 0, "joined", now, agent_id)
+        else:
+            event(conn, rules, 0, "founded", now, agent_id, energy=str(rules.energy(rules.founder_start)))
     if rules.stone_enabled:
         conn.execute("""INSERT INTO society_agents (id, name, kind, born_tick, created_at)
                         VALUES (%s, %s, 'stone', 0, %s)""", (*STONE, now))
@@ -93,6 +97,8 @@ def apply_energy(conn, rules, agent_id, kind, requested, key, now, *, allow_nega
         if previous["agent_id"] != agent_id or previous["kind"] != kind or previous["requested"] != requested:
             raise SocietyError("energy key reused for a different change")
         return previous
+    if not rules.energy_enabled:
+        raise SocietyError("energy is disabled")
     if agent is None or agent["kind"] not in LIVING_KINDS:
         raise SocietyError("only living agents have energy")
     if agent["status"] != "alive":
@@ -127,6 +133,8 @@ def spend(conn, rules, agent_id, action, key, now):
 
 def die(conn, rules, agent_id, tick, cause, now):
     """Death is final: the agent stops acting and its fossil is written at once."""
+    if rules.persistent:
+        raise SocietyError("use authorized participation controls")
     changed = conn.execute("""UPDATE society_agents SET status = 'dead', died_tick = %s, death_cause = %s
                               WHERE id = %s AND status = 'alive' RETURNING id""", (tick, cause, agent_id)).fetchone()
     if changed is None:
@@ -202,7 +210,7 @@ def sync_descriptions(conn, now, descriptions=None):
 
 
 def tick(conn, rules, now):
-    """Advance the society one hour: charge living cost, then apply deaths by energy or age.
+    """Advance one society hour. V2 preserves identities and historical balances.
 
     Returns a summary. Refuses to run while paused or sooner than the minimum gap after
     the previous tick (a retried timer cannot age anyone twice).
@@ -214,8 +222,10 @@ def tick(conn, rules, now):
     if state["last_tick_at"] and now - state["last_tick_at"] < timedelta(minutes=rules.min_minutes_between_ticks):
         return {"ticked": False, "reason": "too_soon", "tick": state["tick"]}
     current = state["tick"] + 1
-    conn.execute("UPDATE society_clock SET tick = %s, last_tick_at = %s, updated_at = %s",
-                 (current, now, now))
+    conn.execute("UPDATE society_clock SET tick = %s, last_tick_at = %s, updated_at = %s, rules_version=%s",
+                 (current, now, now, rules.version))
+    if rules.persistent:
+        return {"ticked": True, "tick": current, "deaths": []}
     deaths = []
     agents = conn.execute("""SELECT id, born_tick FROM society_agents
                              WHERE kind = ANY(%s) AND status = 'alive' ORDER BY id""", (list(LIVING_KINDS),)).fetchall()
@@ -251,8 +261,8 @@ def set_paused(conn, rules, paused, now, reason):
 def claim_turn(conn, agent_id, tick_number, now):
     """Claim an agent's turn for a tick exactly once. False if already claimed or not allowed."""
     now = _utc(now)
-    agent = conn.execute("SELECT kind, status FROM society_agents WHERE id = %s", (agent_id,)).fetchone()
-    if agent is None or agent["kind"] not in LIVING_KINDS or agent["status"] != "alive":
+    agent = conn.execute("SELECT kind, status, participation FROM society_agents WHERE id = %s", (agent_id,)).fetchone()
+    if agent is None or agent["kind"] not in LIVING_KINDS or agent["status"] != "alive" or agent["participation"] != "active":
         return False
     row = conn.execute("""INSERT INTO society_turns (agent_id, tick, created_at) VALUES (%s, %s, %s)
                           ON CONFLICT DO NOTHING RETURNING agent_id""", (agent_id, tick_number, now)).fetchone()
@@ -272,7 +282,7 @@ def due_turns(conn, now):
         return []
     return [row["id"] for row in conn.execute("""
         SELECT a.id FROM society_agents a
-        WHERE a.kind = 'founder' AND a.status = 'alive' AND a.turn_minute <= %s
+        WHERE a.kind = 'founder' AND a.status = 'alive' AND a.participation='active' AND a.turn_minute <= %s
           AND NOT EXISTS (SELECT 1 FROM society_turns t WHERE t.agent_id = a.id AND t.tick = %s)
         ORDER BY a.turn_minute, a.id""", (_utc(now).minute, state["tick"]))]
 
@@ -293,7 +303,9 @@ def status(conn, rules):
         entry = {"id": row["id"], "name": row["name"], "kind": row["kind"]}
         if row["kind"] in LIVING_KINDS:
             lived = (row["died_tick"] or state["tick"]) - row["born_tick"]
-            entry.update(status=row["status"], energy=float(rules.energy(row["balance"])),
+            entry.update(status=row["status"] if row["status"] == "dead" or row["participation"] == "active" else row["participation"],
+                         energy=float(rules.energy(row["balance"])) if rules.energy_enabled else None,
+                         energy_enabled=rules.energy_enabled,
                          age_days=round(lived / 24, 2), death_cause=row["death_cause"])
         agents.append(entry)
     return {"tick": state["tick"], "paused": state["paused"], "rules_version": state["rules_version"],

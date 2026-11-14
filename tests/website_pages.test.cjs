@@ -7,6 +7,13 @@ const source = fs.readFileSync(path.join(root, "website.js"), "utf8");
 const fixture = name => JSON.parse(fs.readFileSync(path.join(root, "fixtures", name), "utf8"));
 const copy = JSON.parse(fs.readFileSync(path.join(root, "home-copy.json"), "utf8"));
 const tick = () => new Promise(setImmediate);
+test("persistent home identities suppress historical energy values", async () => {
+  const feed = { paused: true, agents: [{ id: "alder", name: "Alder", energy: 300, energy_enabled: false, age_days: 31 }] };
+  const b = browser("home", "/", { live: true }, { feed, stats: {}, profiles: { alder: { description: "A persistent identity" } } });
+  await tick();
+  assert.match(b.byId("site-content").textContent, /Alder/);
+  assert.doesNotMatch(b.byId("site-content").textContent, /300 E/);
+});
 function node(tag) { return { tag, children: [], value: "", attributes: {},
   set textContent(text) { this.value = String(text); this.children = []; },
   get textContent() { return this.value + this.children.map(n => n.textContent).join(" "); },

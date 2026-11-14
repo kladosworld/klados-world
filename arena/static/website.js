@@ -61,7 +61,7 @@
             // Example profiles stay in example mode; database profiles are never mixed with fixtures.
             const description = profile?.description;
             if (description) { const text = node("p", description); text.className = "personality-description"; entry.appendChild(text); }
-            if (typeof agent.energy === "number" && Number.isFinite(agent.energy)) entry.appendChild(node("p", `${agent.energy} E`));
+            if (agent.energy_enabled !== false && typeof agent.energy === "number" && Number.isFinite(agent.energy)) entry.appendChild(node("p", `${agent.energy} E`));
             if (typeof agent.age_days === "number" && Number.isFinite(agent.age_days)) entry.appendChild(node("p", `Age: ${agent.age_days} days`));
             if (["alive", "dead"].includes(agent.status)) entry.appendChild(node("p", agent.status === "alive" ? "Alive" : "Dead"));
           }

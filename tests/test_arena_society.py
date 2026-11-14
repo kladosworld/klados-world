@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import unittest
+import os
+from unittest.mock import patch
 
 from tests.arena_support import DatabaseCase
 
@@ -9,13 +11,16 @@ except ImportError:  # psycopg missing: DatabaseCase is skipped anyway
     society = None
 from tee_arena.society import rules as rules_module
 
-RULES = rules_module.load()
+RULES = rules_module.load(rules_module.LEGACY_PATH)
 START = datetime(2026, 11, 3, 9, 0, tzinfo=timezone.utc)
 
 
 class SocietyCase(DatabaseCase):
     def setUp(self):
         super().setUp()
+        environment = patch.dict(os.environ, KLADOS_RULES=str(rules_module.LEGACY_PATH))
+        environment.start()
+        self.addCleanup(environment.stop)
         self.now = START
         society.found(self.conn, RULES, self.now)
         society.set_paused(self.conn, RULES, False, self.now, "test")

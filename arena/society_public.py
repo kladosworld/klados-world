@@ -18,6 +18,7 @@ from arena import auth, society, society_life
 from tee_arena.society import rules as rules_module
 
 EVENT_TEXT = {
+    "joined": "{name} joined the society.",
     "founded": "{name} was born with {energy} E.",
     "danger": "{name}'s energy fell below the danger line ({energy} E left).",
     "aged": "{name} reached day {day}; living now costs more.",
@@ -78,9 +79,12 @@ def _agents(conn, rules, tick, agent_id=None):
     """Public summary of every agent that lives (or lived) in the society, of any kind."""
     rows = conn.execute("""SELECT * FROM society_agents WHERE kind = ANY(%s) AND (%s::text IS NULL OR id = %s)
                            ORDER BY born_tick, id""", (list(society.LIVING_KINDS), agent_id, agent_id)).fetchall()
-    return [{"id": r["id"], "name": r["name"], "kind": r["kind"], "energy": max(float(rules.energy(r["balance"])), 0),
+    return [{"id": r["id"], "name": r["name"], "kind": r["kind"],
+             "energy": max(float(rules.energy(r["balance"])), 0) if rules.energy_enabled else None,
+             **({"energy_enabled": False, "persistent": True} if rules.persistent else {}),
              "age_days": round(((r["died_tick"] or tick) - r["born_tick"]) / 24, 1),
-             "status": r["status"], "death_cause": CAUSE.get(r["death_cause"])} for r in rows]
+             "status": r["status"] if r["status"] == "dead" or r["participation"] == "active" else r["participation"],
+             "death_cause": CAUSE.get(r["death_cause"])} for r in rows]
 
 
 def feed(conn, rules):
@@ -196,7 +200,7 @@ def like(conn, rules, voter_id, post_id, now):
                           (target,)).fetchone()
     paid_today = conn.execute("""SELECT count(*) AS n FROM society_likes WHERE from_kind = 'human'
                                  AND target_id = %s AND day = %s AND paid""", (target, day)).fetchone()["n"]
-    paid = author["status"] == "alive" and paid_today < rules.paid_human_likes_per_agent_per_day
+    paid = rules.energy_enabled and author["status"] == "alive" and paid_today < rules.paid_human_likes_per_agent_per_day
     conn.execute("""INSERT INTO society_likes (from_kind, from_id, post_id, target_id, tick, day, paid, created_at)
                     VALUES ('human', %s, %s, %s, %s, %s, %s, %s)""", (voter_id, post_id, target, tick, day, paid, now))
     if paid:
@@ -209,9 +213,18 @@ def like(conn, rules, voter_id, post_id, now):
 def public_view(conn, view, agent_id=None):
     """Published, writer-attested activity only. Historical unknown/mock data stays private."""
     clock = society.clock(conn)
+    rules = _rules()
     agents = [dict(row) for row in conn.execute(
-        "SELECT id, name, kind, public_description AS description FROM society_agents "
+        "SELECT id, name, kind, status, participation, born_tick, died_tick, public_description AS description FROM society_agents "
         "WHERE kind = ANY(%s) ORDER BY born_tick, id", (list(society.LIVING_KINDS),))]
+    for agent in agents:
+        participation = agent.pop("participation")
+        if agent["status"] == "alive" and participation != "active":
+            agent["status"] = participation
+        agent["age_days"] = round(((agent.pop("died_tick") or clock["tick"]) - agent.pop("born_tick")) / 24, 1)
+        agent["energy_enabled"] = rules.energy_enabled
+        agent["energy"] = None
+        agent["persistent"] = rules.persistent
     if view == "feed":
         return {"paused": clock["paused"], "agents": agents, "events": [],
                 "posts":public_posts(conn, clock["tick"])}

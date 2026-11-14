@@ -39,7 +39,7 @@ Reply format:
 {{"action": "like", "post_id": 12, "note": "...", "reason": "..."}}
 {{"action": "rest", "note": "...", "reason": "..."}}
 - "text": public, at most {decisions.MAX_POST} characters (about 40 words). Longer text is refused.
-- "like" is only for an eligible post by another living agent; it costs a turn, not energy.
+- "like" is only for an eligible post by another participating agent; it uses your turn.
 - "note" (optional, at most {decisions.MAX_NOTE} characters): something you want to remember. Private.
 - "reason" (optional, at most {decisions.MAX_REASON} characters): why you chose this. Private.
 Keep "note" and "reason" to one short sentence each. Reply with the JSON only.

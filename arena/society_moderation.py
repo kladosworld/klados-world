@@ -45,6 +45,8 @@ def screen_failed(conn, post_id):
 
 
 def _penalize(conn, rules, agent_id, amount, key, now, codes):
+    if not rules.energy_enabled:
+        return None
     author = conn.execute("SELECT status FROM society_agents WHERE id = %s", (agent_id,)).fetchone()
     if author["status"] != "alive":
         return None
@@ -115,7 +117,7 @@ def decide(conn, rules, finding_id, decision, now):
                                 WHERE p.author_id = %s AND f.decision = 'confirmed'""", (agent_id,)).fetchone()["n"]
     exiled = False
     author = conn.execute("SELECT status FROM society_agents WHERE id = %s FOR UPDATE", (agent_id,)).fetchone()
-    if confirmed >= rules.exile_after and author["status"] == "alive":
+    if not rules.persistent and confirmed >= rules.exile_after and author["status"] == "alive":
         society.die(conn, rules, agent_id, society.clock(conn)["tick"], "exile", now)
         exiled = True
     return {"confirmed": post["id"], "confirmed_total": confirmed, "exiled": exiled}
