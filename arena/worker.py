@@ -187,7 +187,7 @@ class Worker:
                 self.conn.rollback()
                 code = str(error) if str(error) in ("invalid_config", "invalid_response", "service_unavailable", "credential_unavailable") else "invalid_response"
                 self.log.append({"post": post["id"], "error": "moderation_" + code})
-                if code in ("service_unavailable", "credential_unavailable"):
+                if code in ("service_unavailable", "credential_unavailable", "invalid_config"):
                     if not self._observer_outage(post, "moderation_" + code):
                         return "stop"
                     return None

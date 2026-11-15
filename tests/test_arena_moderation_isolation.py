@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 from tests.test_arena_society import RULES
 from tests.test_arena_society_fossils import FossilTests
 from tests.test_arena_society_life import CLEAN, WorkerCase
-from tests.arena_support import psycopg
+from tests.arena_support import DSN, psycopg
 
 if psycopg:
     from arena import society, society_moderation
@@ -373,6 +373,40 @@ class ModerationIsolationTests(WorkerCase):
         run.moderation_client.classify.return_value = []
         run.screen()
         self.assertEqual(self.posts()[post_id], ("published", 0))
+
+
+    def test_invalid_config_repeated_outages_preserve_posts_and_founder_state(self):
+        from arena import moderation
+        first = self.pending_post()
+        second = self.pending_post()
+        run = self.make({name: REST for name in ("Alder", "Birch", "Cedar", "Hazel")})
+        founders = self.conn.execute("SELECT * FROM society_agents ORDER BY id").fetchall()
+        clock = dict(society.clock(self.conn))
+        before_ledger = run.gateway.ledger.path.read_bytes()
+        with patch.object(moderation, "load_config", side_effect=moderation.ModerationError("invalid_config")), \
+                patch.object(observer, "review") as review, \
+                patch.object(run, "_failed", side_effect=AssertionError("classifier cannot pause founders")):
+            for _ in range(4):
+                self.assertIsNone(run.screen())
+                self.assertEqual(self.posts(), {first: ("pending", 0), second: ("pending", 0)})
+                self.assertEqual(run.failures, 0)
+            review.assert_not_called()
+        self.assertEqual(run.moderation_client.classify.call_count, 0)
+        self.assertEqual(self.events("moderation_request"), [])
+        outages = self.events("moderation_outage")
+        self.assertEqual([e["data"] for e in outages],
+                         [{"post_id": first, "category": "moderation_invalid_config"}] * 4)
+        # Read independently to prove outage evidence survived committed transactions.
+        with psycopg.connect(DSN) as check:
+            query = psycopg.sql.SQL("SELECT count(*) FROM {}.society_events WHERE kind='moderation_outage'").format(
+                psycopg.sql.Identifier(self.schema))
+            self.assertEqual(check.execute(query).fetchone()[0], 4)
+        self.assertEqual(self.conn.execute("SELECT * FROM society_agents ORDER BY id").fetchall(), founders)
+        self.assertEqual(dict(society.clock(self.conn)), clock)
+        self.assertEqual(run.gateway.ledger.path.read_bytes(), before_ledger)
+        with patch.object(observer, "review", return_value=CLEAN.copy()):
+            run.screen()
+        self.assertEqual(self.posts(), {first: ("published", 0), second: ("published", 0)})
 
 
 class LastWordsIsolationTests(WorkerCase):
