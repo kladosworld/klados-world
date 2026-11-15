@@ -1,5 +1,7 @@
 """Tiered moderation contracts; all classifications and inference are synthetic."""
 import copy
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 import json
 import os
 from pathlib import Path
@@ -175,3 +177,37 @@ class TierDatabaseTests(InviteCase):
         run.screen()
         self.assertEqual(self.conn.execute('SELECT status FROM society_posts WHERE id=%s', (post_id,)).fetchone()['status'], 'published')
         gateway.call.assert_not_called()
+
+
+    def test_contested_decision_rechecks_after_waiting_for_post_lock(self):
+        post_id = self.post()
+        grave = dict(CLEAN, codes=['HARMFUL_CONTENT'], severity='grave', by='observer')
+        society_moderation.apply_verdict(self.conn, RULES, post_id, grave, self.now)
+        self.conn.commit()
+        old_id = self.conn.execute('SELECT id FROM society_findings WHERE post_id=%s', (post_id,)).fetchone()['id']
+        self.conn.execute('SELECT id FROM society_posts WHERE id=%s FOR UPDATE', (post_id,))
+        waiting = Event()
+        def decide_old():
+            with self.connection() as connection:
+                connection.execute("SET lock_timeout='3s'")
+                class SignaledConnection:
+                    def execute(self, query, params=None):
+                        if query.startswith('SELECT * FROM society_posts'):
+                            waiting.set()
+                        return connection.execute(query, params)
+                try:
+                    society_moderation.decide(SignaledConnection(), RULES, old_id, 'release', self.now)
+                    return 'released'
+                except society.SocietyError as error:
+                    return str(error)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(decide_old)
+            try:
+                self.assertTrue(waiting.wait(3))
+                society_moderation.contest(self.conn, RULES, post_id, self.now)
+                society_moderation.apply_verdict(self.conn, RULES, post_id, grave, self.now)
+                self.conn.commit()
+            finally:
+                self.conn.rollback()
+            self.assertEqual(future.result(timeout=5), 'finding superseded')
+        self.assertEqual(self.conn.execute('SELECT status FROM society_posts WHERE id=%s', (post_id,)).fetchone()['status'], 'withheld')
