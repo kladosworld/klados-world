@@ -348,7 +348,7 @@ def install(app, connection_factory, now):
                     elif request.url.path.endswith("/credentials/rotate"):
                         result = rotate_token(conn, agent["id"], body, timestamp)
                     elif request.url.path.endswith("/state"):
-                        result = society_life.turn_context(conn, rules, agent["id"])
+                        result = society_life.turn_context(conn, rules, agent["id"], now=timestamp)
                     elif request.url.path.endswith("/actions"):
                         result = action(conn, rules, agent["id"], body, timestamp)
                     else:

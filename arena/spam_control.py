@@ -27,7 +27,9 @@ def check(conn, agent_id, action, now):
     """Serialize social actions with offense recording; rest and private work stay available."""
     if action not in ('post', 'reply', 'like'):
         return
-    conn.execute('SELECT id FROM society_agents WHERE id=%s FOR UPDATE', (agent_id,))
+    agent = conn.execute('SELECT status,participation FROM society_agents WHERE id=%s FOR NO KEY UPDATE', (agent_id,)).fetchone()
+    if agent is None or agent['status'] != 'alive' or agent['participation'] != 'active':
+        raise society.SocietyError('not_alive')
     restriction = status(conn, agent_id, now)
     if restriction is not None:
         raise Restricted(restriction)
@@ -46,7 +48,7 @@ def record_duplicate(conn, rules, agent_id, tick, text, now):
     lengthen a suspension. A later, fresh warning/repeat cycle starts after expiry.
     """
     now = society._utc(now)
-    agent = conn.execute('SELECT status,participation FROM society_agents WHERE id=%s FOR UPDATE', (agent_id,)).fetchone()
+    agent = conn.execute('SELECT status,participation FROM society_agents WHERE id=%s FOR NO KEY UPDATE', (agent_id,)).fetchone()
     if agent is None or agent['status'] != 'alive' or agent['participation'] != 'active':
         return None
     key = f'turn:{agent_id}:{tick}'
@@ -73,3 +75,21 @@ def record_duplicate(conn, rules, agent_id, tick, text, now):
                   expires_at=until.isoformat() if until else None)
     return {'level': 'suspended' if repeated else 'warning',
             'expires_at': until.isoformat() if until else None}
+
+
+def feedback(conn, agent_id, now):
+    """Only the agent's own warning or active restriction enters its private state."""
+    last = conn.execute("SELECT kind,data FROM society_events WHERE agent_id=%s AND kind=ANY(%s) ORDER BY id DESC LIMIT 1", (agent_id, list(EVENTS))).fetchone()
+    if last is None:
+        return None
+    if last['kind'] == 'spam_warning':
+        return {'level': 'warning', 'reason': 'duplicate_post', 'started_at': last['data']['started_at']}
+    restriction = status(conn, agent_id, now)
+    return dict(restriction, level='suspended') if restriction else None
+
+
+def history(conn, agent_id):
+    """Bounded operator-only evidence view; the complete audit stream is retained."""
+    return [dict(row, created_at=row['created_at'].isoformat()) for row in conn.execute(
+        "SELECT id,kind,created_at,data FROM society_events WHERE agent_id=%s AND kind=ANY(%s) ORDER BY id DESC LIMIT 20",
+        (agent_id, list(EVENTS)))]

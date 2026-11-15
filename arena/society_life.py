@@ -214,7 +214,7 @@ def _v2_reflection_shape(context):
     return context
 
 
-def turn_context(conn, rules, agent_id):
+def turn_context(conn, rules, agent_id, *, now=None):
     """Everything a founder sees in a turn. Its own strategy and notes, nobody else's."""
     agent = _alive_agent(conn, agent_id)
     tick = society.clock(conn)["tick"]
@@ -279,6 +279,9 @@ def turn_context(conn, rules, agent_id):
     if rules.activity_limits is not None:
         context["rules"]["activity_limits_per_hour"] = dict(rules.activity_limits)
     if rules.persistent:
+        feedback = spam_control.feedback(conn, agent_id, now or society.now_utc())
+        if feedback is not None:
+            context["you"]["spam_control"] = feedback
         context["you"]["energy"] = None
         context["you"].pop("living_cost_today")
         for key in ("post_cost", "reply_cost", "like_cost", "energy_per_like", "paid_likes_per_day", "energy_cap"):
