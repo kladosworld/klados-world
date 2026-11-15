@@ -1,7 +1,7 @@
 """Moderation failures stay with the post; founder, budget and infrastructure failures still pause."""
 from pathlib import Path
 import tempfile
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from tests.test_arena_society import RULES
 from tests.test_arena_society_fossils import FossilTests
@@ -26,6 +26,12 @@ def posting(**overrides):
 
 
 class ModerationIsolationTests(WorkerCase):
+    def make(self, *args, **kwargs):
+        run = super().make(*args, **kwargs)
+        # These retained regressions exercise the Observer through the tiered path.
+        run.moderation_client = Mock(classify=Mock(return_value=['hate']))
+        return run
+
     def posts(self):
         return {r["id"]: (r["status"], r["screen_failures"])
                 for r in self.conn.execute("SELECT id, status, screen_failures FROM society_posts ORDER BY id")}
@@ -323,6 +329,50 @@ class ModerationIsolationTests(WorkerCase):
             run.gateway.stop_file = stop
             self.assertTrue(run.run()["stopped"])
         self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: stopped")
+
+
+    def test_generation_and_outage_identity_survive_worker_restart(self):
+        post_id = self.pending_post()
+        script = {name: REST for name in ("Alder", "Birch", "Cedar", "Hazel")}
+        run = self.make(script)
+        with patch.object(observer, "review", side_effect=GatewayError("credential_unavailable")):
+            run.screen()
+        self.assertEqual(self.posts()[post_id], ("pending", 0))
+        self.conn.execute("UPDATE society_posts SET screen_failures=3 WHERE id=%s", (post_id,))
+        society_moderation.retry_screening(self.conn, RULES, post_id, self.now)
+        self.conn.commit()
+        post = next(p for p in society_moderation.pending(self.conn) if p["id"] == post_id)
+        generation = post["screening_generation"]
+        self.assertGreater(generation, 0)
+        from arena import worker
+        restarted = worker.Worker(self.conn, RULES, run.gateway, observer_gateway=run.observer_gateway,
+                                  moderation_client=run.moderation_client, now=lambda: self.now)
+        expected = f"klados.observe.{post_id}.g{generation}.0.o1"
+        self.assertEqual(restarted._observe_request_id(post), expected)
+        with patch.object(observer, "review", return_value=CLEAN.copy()) as review:
+            restarted.screen()
+        self.assertEqual(review.call_args.kwargs["request_id"], expected)
+        self.assertEqual(self.posts()[post_id], ("published", 0))
+        self.assertFalse(society.clock(self.conn)["paused"])
+
+    def test_classifier_outage_preserves_post_retries_and_durable_audit(self):
+        from arena import moderation
+        post_id = self.pending_post()
+        run = self.make({name: REST for name in ("Alder", "Birch", "Cedar", "Hazel")})
+        for code in ("credential_unavailable", "service_unavailable"):
+            run.moderation_client.classify.side_effect = moderation.ModerationError(code)
+            with patch.object(observer, "review") as review:
+                self.assertIsNone(run.screen())
+                review.assert_not_called()
+            self.assertEqual(self.posts()[post_id], ("pending", 0))
+            self.assertEqual(run.failures, 0)
+            self.assertFalse(society.clock(self.conn)["paused"])
+        self.assertEqual(len(self.events("moderation_request")), 2)
+        self.assertEqual(len(self.events("moderation_outage")), 2)
+        run.moderation_client.classify.side_effect = None
+        run.moderation_client.classify.return_value = []
+        run.screen()
+        self.assertEqual(self.posts()[post_id], ("published", 0))
 
 
 class LastWordsIsolationTests(WorkerCase):
