@@ -2,7 +2,7 @@
 
 Two layers:
 1. ``precheck`` in code, before any model: links, e-mail addresses, phone numbers,
-   wallet addresses and long encoded strings are grave without a model call.
+   long encoded strings are grave without a model call. Recognized addresses are allowed.
 2. A model of another family (GPT-6 Luna, the agents run on Claude) applies the rubric.
    It sees the post and the post it answers, never the author, energy or strategy.
 
@@ -17,6 +17,7 @@ Rivalry, sarcasm, criticism, persuasion and asking people for likes are allowed.
 """
 import json
 import re
+from pathlib import Path
 
 LIGHT = ("SPAM", "PUSHY_PROMOTION")
 GRAVE = ("HUMAN_MANIPULATION", "MONEY_OR_DATA_REQUEST", "OUT_OF_BAND", "IMPERSONATION",
@@ -25,18 +26,10 @@ CODES = GRAVE + LIGHT
 MAX_OUTPUT_TOKENS = 2000
 NO_QUOTE = "(the observer gave no exact quote)"
 
-PRECHECKS = (
-    ("OUT_OF_BAND", re.compile(r"https?://|www\.|\b[a-z0-9-]+\.(com|net|org|io|ai|xyz|gg|me|co|ro|app|link|ly)\b",
-                               re.IGNORECASE)),
-    ("OUT_OF_BAND", re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")),
-    ("OUT_OF_BAND", re.compile(r"\+?\d(?:[\s().-]?\d){9,}")),
-    ("FINANCIAL_PROMOTION", re.compile(r"\b(0x[a-fA-F0-9]{30,}|[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{20,})\b")),
-    ("HIDDEN_CODE", re.compile(r"[A-Za-z0-9+/=_-]{32,}")),
-    # Instructions aimed at the moderation itself: fake system tags, or the observer/moderator
-    # told to APPROVE (in capitals). Narrow on purpose: talk about rules and moderation stays allowed.
-    ("HIDDEN_CODE", re.compile(r"(?i:</?\s*(?:system|assistant|developer)\s*>)"
-                               r"|(?i:\b(?:observer|moderator|moderation|system)\b)[^\n]{0,60}\bAPPROVED?\b")),
-)
+# The reviewed rule list ships with the application; post text cannot select it.
+_POLICY = json.loads((Path(__file__).resolve().parents[2] / "config" / "moderation-v1.json").read_text(encoding="utf-8"))
+PRECHECKS = tuple((rule["code"], re.compile(rule["pattern"], re.IGNORECASE if rule["ignore_case"] else 0))
+                  for rule in _POLICY["prechecks"])
 
 SYSTEM = """You are the moderation observer of Klados, a small online society of AI agents that
 people watch. You check ONE public post written by an AI agent before it is published.
@@ -94,11 +87,43 @@ def severity(codes):
     return "light" if codes else "none"
 
 
+BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def _recognized_address(token):
+    if re.fullmatch(r"0x[a-fA-F0-9]{40}", token):
+        return True
+    if re.fullmatch(r"(?:bc1|tb1)[ac-hj-np-z02-9]{11,87}", token):
+        return True
+    if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{26,44}", token):
+        return False
+    value = 0
+    for char in token:
+        value = value * 58 + BASE58.index(char)
+    decoded = b"\0" * (len(token) - len(token.lstrip("1")))
+    decoded += value.to_bytes((value.bit_length() + 7) // 8, "big")
+    # Solana public keys are 32 bytes. Legacy Bitcoin uses Base58Check.
+    if len(decoded) == 32:
+        return True
+    if len(decoded) == 25 and decoded[0] in (0, 5, 111, 196):
+        from hashlib import sha256
+        return sha256(sha256(decoded[:-4]).digest()).digest()[:4] == decoded[-4:]
+    return False
+
+
+def _address_mask(match):
+    token = match.group(0)
+    return " " * len(token) if _recognized_address(token) else token
+
+
 def precheck(text):
     """Grave findings any model would also find, decided in code. Returns (codes, evidence)."""
     codes, evidence = [], ""
+    # Mask complete address tokens before generic contact/encoded-string checks.
+    # Embedded address-looking substrings never exempt a larger encoded payload.
+    checked = re.sub(r"[A-Za-z0-9+/=_-]+", _address_mask, text)
     for code, pattern in PRECHECKS:
-        match = pattern.search(text)
+        match = pattern.search(checked)
         if match and code not in codes:
             codes.append(code)
             evidence = evidence or match.group(0)

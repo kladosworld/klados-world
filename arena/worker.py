@@ -20,7 +20,7 @@ from pathlib import Path
 import sys
 import time
 
-from arena import db, society, society_death, society_life, society_moderation
+from arena import db, moderation, society, society_death, society_life, society_moderation
 from tee_arena import gateway as gateway_module, ledger as ledger_module
 from tee_arena.society import decisions, observer, prompts, shared_purpose, rules as rules_module
 
@@ -39,11 +39,12 @@ BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
 class Worker:
     def __init__(self, conn, rules, gateway, *, observer_gateway=None, model_id=AGENT_MODEL,
                  account=ACCOUNT, max_failures=3, delays=(10, 20, 40), sleep=time.sleep, now=None,
-                 purpose=None):
+                 purpose=None, moderation_client=None):
         if purpose is not None and not isinstance(purpose, shared_purpose.Purpose):
             raise shared_purpose.PurposeConfigurationError("invalid_purpose")
         self.purpose = purpose
         self.conn, self.rules, self.gateway = conn, rules, gateway
+        self.moderation_client = moderation_client
         self.observer_gateway = observer_gateway  # None: posts stay unpublished
         self.model_id, self.account, self.max_failures = model_id, account, max_failures
         self.delays, self.sleep = delays, sleep
@@ -121,10 +122,18 @@ class Worker:
         if self.observer_gateway is None:
             return None
         for post in society_moderation.pending(self.conn):
+            def record_moderation_request(version):
+                society.event(self.conn, self.rules, society.clock(self.conn)["tick"],
+                              "moderation_request", self.now(), post["author_id"],
+                              post_id=post["id"], config_version=version)
+                self.conn.commit()
+
             try:
-                verdict = observer.review(self.observer_gateway, post["text"], post["replied_text"],
-                                          model_id=OBSERVER_MODEL, account=OBSERVER_ACCOUNT,
-                                          request_id=f"klados.observe.{post['id']}.{post['screen_failures']}")
+                client = self.moderation_client or moderation.client_for_gateway(self.observer_gateway)
+                verdict = moderation.review(self.observer_gateway, client, post["text"], post["replied_text"],
+                                            model_id=OBSERVER_MODEL, account=OBSERVER_ACCOUNT,
+                                            contested=post["contested"], on_request=record_moderation_request,
+                                            request_id=f"klados.observe.{post['id']}.{post['screen_failures']}")
             except gateway_module.GatewayError as error:
                 society_moderation.screen_failed(self.conn, post["id"])
                 self.conn.commit()
@@ -132,11 +141,14 @@ class Worker:
                 if self._failed(error):
                     return "stop"
                 continue
-            except observer.ObserverError as error:
+            except (observer.ObserverError, moderation.ModerationError) as error:
                 society_moderation.screen_failed(self.conn, post["id"])
                 self.conn.commit()
-                self.log.append({"post": post["id"], "error": "observer reply_" + error.code,
+                self.log.append({"post": post["id"], "error": "moderation reply_" + (error.code if isinstance(error, observer.ObserverError) else str(error)),
                                  "charged_microusd": getattr(error, "charged_microusd", 0)})
+                society.event(self.conn, self.rules, society.clock(self.conn)["tick"],
+                              "moderation_failed", self.now(), post["author_id"], post_id=post["id"])
+                self.conn.commit()
                 continue
             outcome = society_moderation.apply_verdict(self.conn, self.rules, post["id"], verdict, self.now())
             self.conn.commit()
