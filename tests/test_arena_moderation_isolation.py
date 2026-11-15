@@ -10,6 +10,7 @@ from tests.arena_support import psycopg
 
 if psycopg:
     from arena import society, society_moderation
+from tee_arena import store
 from tee_arena.gateway import GatewayError
 from tee_arena.society import observer
 
@@ -187,6 +188,104 @@ class ModerationIsolationTests(WorkerCase):
         self.assertIn({"post": 1, "error": "screening_persistence_failure"}, run.log)
         self.assertNotIn("CANARY", str(run.log))
         self.assertEqual(run.run()["turns"], 4)  # once the database records again, the next pass runs
+
+    # Request ids after an outage, with the real gateway and ledger (Technical Lead review on #39).
+
+    def ledger_requests(self, run, prefix="klados.observe."):
+        _, document = store.read(run.gateway.ledger.path)
+        kinds = {}
+        for event in document["events"]:
+            if event["kind"] == "reserve":
+                kinds[event["reservation"]] = [event["request_id"], "open"]
+            elif event["kind"] in ("settle", "release"):
+                kinds[event["reservation"]][1] = event["kind"]
+        return [tuple(v) for v in kinds.values() if v[0].startswith(prefix)]
+
+    def test_missing_key_released_then_restored_screens_without_duplicate_or_retry_loss(self):
+        post_id = self.pending_post()
+        state = {"key": False}
+
+        def observer_reply(request):
+            if not state["key"]:  # what OpenRouterProvider raises before sending without a key
+                raise GatewayError("credential_unavailable")
+            return '{"codes": [], "evidence": ""}'
+        run = self.make({"observer": observer_reply, **{n: REST for n in ("Alder", "Birch", "Cedar", "Hazel")}})
+        for _ in range(3):  # three passes while the key is missing
+            self.assertIsNone(run.screen())
+        self.assertEqual(self.posts()[post_id], ("pending", 0))  # no retry lost
+        self.assertEqual(self.ledger_requests(run), [
+            (f"klados.observe.{post_id}.0", "release"),
+            (f"klados.observe.{post_id}.0.o1", "release"),
+            (f"klados.observe.{post_id}.0.o2", "release")])
+        state["key"] = True  # key restored
+        self.assertIsNone(run.screen())
+        self.assertEqual(self.posts()[post_id], ("published", 0))
+        self.assertEqual(self.ledger_requests(run)[-1], (f"klados.observe.{post_id}.0.o3", "settle"))
+        self.assertNotIn("duplicate_request", str(run.log))
+        self.assertEqual(run.failures, 0)
+        self.assertFalse(society.clock(self.conn)["paused"])
+        outages = self.events("moderation_outage")
+        self.assertEqual([(e["agent_id"], e["data"]) for e in outages],
+                         [(None, {"post_id": post_id, "category": "credential_unavailable"})] * 3)
+
+    def test_every_release_before_send_outage_gets_a_new_id(self):
+        class Rejected(Exception):
+            def __init__(self, status):
+                super().__init__("synthetic")
+                self.status_code = status
+        cases = [("credential_unavailable", lambda: GatewayError("credential_unavailable")),
+                 ("sdk_unavailable", lambda: GatewayError("sdk_unavailable"))]
+        cases += [(f"http_{status}", lambda status=status: Rejected(status)) for status in (401, 402, 403, 429)]
+        for name, failure in cases:
+            with self.subTest(name=name):
+                self.conn.execute("UPDATE society_posts SET status = 'published' WHERE status = 'pending'")
+                self.conn.commit()
+                post_id = self.pending_post()
+                state = {"down": True}
+
+                def observer_reply(request, failure=failure, state=state):
+                    if state["down"]:
+                        raise failure()
+                    return '{"codes": [], "evidence": ""}'
+                run = self.make({"observer": observer_reply, **{n: REST for n in ("Alder", "Birch", "Cedar", "Hazel")}})
+                with patch("time.sleep"):  # 429 is first retried by the observer itself
+                    self.assertIsNone(run.screen())
+                    self.assertIsNone(run.screen())
+                    state["down"] = False
+                    self.assertIsNone(run.screen())
+                self.assertEqual(self.posts()[post_id], ("published", 0))
+                requests = self.ledger_requests(run)
+                per_pass = 4 if name == "http_429" else 1
+                self.assertEqual([r[1] for r in requests], ["release"] * 2 * per_pass + ["settle"])
+                self.assertEqual(len({r[0] for r in requests}), len(requests))  # every id used once
+                self.assertNotIn("duplicate_request", str(run.log))
+                self.assertFalse(society.clock(self.conn)["paused"])
+
+    def test_a_paid_attempt_is_never_repeated_under_the_same_id(self):
+        post_id = self.pending_post()
+        run = self.make({n: REST for n in ("Alder", "Birch", "Cedar", "Hazel")})
+        book = run.gateway.ledger  # a crash after a paid call: the id is reserved and settled
+        book.settle(book.reserve("society-observer", 100, f"klados.observe.{post_id}.0"), 90)
+        before = len(self.provider.requests)
+        self.assertIsNone(run.screen())
+        self.assertEqual(len(self.provider.requests), before)  # no second paid call for that id
+        self.assertEqual(self.posts()[post_id], ("pending", 1))  # a post failure: the id advances
+        self.assertIn({"post": post_id, "error": "observer call_duplicate_request"}, run.log)
+        self.assertIsNone(run.screen())
+        self.assertEqual(self.posts()[post_id], ("published", 1))
+        self.assertEqual(self.ledger_requests(run)[-1], (f"klados.observe.{post_id}.1", "settle"))
+
+    def test_post_specific_rejections_still_cost_a_retry(self):
+        class Rejected(Exception):
+            status_code = 413
+        post_id = self.pending_post()
+
+        def observer_reply(request):
+            raise Rejected("synthetic")
+        run = self.make({"observer": observer_reply, **{n: REST for n in ("Alder", "Birch", "Cedar", "Hazel")}})
+        self.assertIsNone(run.screen())
+        self.assertEqual(self.posts()[post_id], ("pending", 1))
+        self.assertEqual(self.events("moderation_outage"), [])
 
     # Founder inference, budget and infrastructure failures keep their existing safety pause.
 

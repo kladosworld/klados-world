@@ -37,8 +37,16 @@ PAUSE_AT_ONCE = ("cap_exceeded", "credential_unavailable", "stopped", "model_not
 BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
 # Observer outages: screening stops for the pass and the posts stay unpublished. Moderation
 # never pauses the society (administrative, budget and infrastructure pauses come from founder calls).
-MODERATION_OUTAGE = ("cap_exceeded", "credential_unavailable", "stopped", "model_not_allowed")
+MODERATION_OUTAGE = ("cap_exceeded", "credential_unavailable", "sdk_unavailable", "stopped", "model_not_allowed")
+# Unbilled provider refusals that concern the observer as a whole (key, credit, permission, rate).
+OBSERVER_WIDE_STATUSES = (401, 402, 403, 429)
 OBSERVER_CODES = ("invalid_json", "schema", "unknown_code")
+
+
+def _observer_wide(error):
+    """An outage of the observer itself, not a problem of the post being screened."""
+    return error.category in MODERATION_OUTAGE or (
+        error.category == "provider_rejected" and error.status in OBSERVER_WIDE_STATUSES)
 
 
 def _observer_code(error):
@@ -132,7 +140,8 @@ class Worker:
         Moderation failures are isolated: a failed or unexpected screening stays with its post
         (unpublished, ``screen_failures`` + 1, retried up to the limit), and an observer outage
         (spent observer cap, missing key, stop file, disallowed model, or repeated failures) only
-        ends this pass's screening without charging the posts a retry. Only founder inference
+        ends this pass's screening without charging the posts a retry; it is recorded as a
+        ``moderation_outage`` event, so the next attempt uses a new ledger request id. Only founder inference
         reaches ``_failed`` and its safety pause. Returns "stop" only when a failed screening
         cannot be recorded (database): the pass ends, the society clock is not touched.
         """
@@ -141,20 +150,22 @@ class Worker:
         failures = 0
         for post in society_moderation.pending(self.conn):
             try:
+                request_id = self._observe_request_id(post)
                 # A malformed post or verdict cannot leave a partial publication behind.
                 with self.conn.transaction():
                     verdict = observer.review(self.observer_gateway, post["text"], post["replied_text"],
                                               model_id=OBSERVER_MODEL, account=OBSERVER_ACCOUNT,
-                                              request_id=f"klados.observe.{post['id']}.{post['screen_failures']}")
+                                              request_id=request_id)
                     outcome = society_moderation.apply_verdict(self.conn, self.rules, post["id"], verdict, self.now())
                     record = {"post": post["id"], "moderation": outcome, "codes": verdict["codes"],
                               "by": verdict["by"], "charged_microusd": verdict["charged_microusd"]}
                 self.conn.commit()
             except gateway_module.GatewayError as error:
                 self.log.append({"post": post["id"], "error": "observer call_" + error.category})
-                outage = error.category in MODERATION_OUTAGE
-                # An outage is not the post's fault: it keeps its retries.
-                if not outage and not self._screen_failed(post["id"]):
+                outage = _observer_wide(error)
+                # An outage is not the post's fault: it keeps its retries, and the next attempt
+                # gets a new request id (the ledger never accepts a used one, even if released).
+                if not (self._observer_outage(post, error.category) if outage else self._screen_failed(post["id"])):
                     return "stop"
                 failures += error.category not in BAD_REPLY
                 if outage or failures >= self.max_failures:
@@ -174,6 +185,32 @@ class Worker:
                 continue
             self.log.append(record)
         return None
+
+    def _observe_request_id(self, post):
+        """One ledger request id per screening attempt, stable across a crash and restart.
+
+        Every failed attempt advances it: a post failure through ``screen_failures``, an observer
+        outage through a recorded ``moderation_outage`` event. A crash after a paid call reuses the
+        id, so the ledger refuses a second paid call (``duplicate_request`` is a post failure).
+        """
+        outages = self.conn.execute(
+            "SELECT count(*) AS n FROM society_events WHERE kind = 'moderation_outage' AND data->>'post_id' = %s",
+            (str(post["id"]),)).fetchone()["n"]
+        suffix = f".o{outages}" if outages else ""
+        return f"klados.observe.{post['id']}.{post['screen_failures']}{suffix}"
+
+    def _observer_outage(self, post, category):
+        """Record an observer outage for the post (no retry penalty). False if it cannot be recorded."""
+        try:
+            with self.conn.transaction():
+                society.event(self.conn, self.rules, society.clock(self.conn)["tick"], "moderation_outage",
+                              self.now(), post_id=post["id"], category=category)
+            self.conn.commit()
+            return True
+        except Exception:
+            self.conn.rollback()
+            self.log.append({"post": post["id"], "error": "screening_persistence_failure"})
+            return False
 
     def _screen_failed(self, post_id):
         """Record one failed screening. False when the database cannot record it."""
