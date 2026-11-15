@@ -32,8 +32,8 @@ def load_config(path=CONFIG_PATH):
         if not isinstance(config['prechecks'], list) or not config['prechecks']:
             raise ValueError
         for rule in config['prechecks']:
-            if (set(rule) != {'code', 'pattern', 'ignore_case'} or rule['code'] not in observer.GRAVE
-                    or type(rule['ignore_case']) is not bool):
+            if (set(rule) != {'code', 'pattern', 'ignore_case', 'address_exempt'} or rule['code'] not in observer.GRAVE
+                    or type(rule['ignore_case']) is not bool or type(rule['address_exempt']) is not bool):
                 raise ValueError
             re.compile(rule['pattern'])
         for name, pattern in config['triggers'].items():

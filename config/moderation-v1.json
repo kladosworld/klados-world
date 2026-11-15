@@ -79,27 +79,32 @@
     {
       "code": "OUT_OF_BAND",
       "pattern": "https?://|www\\.|\\b[a-z0-9-]+\\.(com|net|org|io|ai|xyz|gg|me|co|ro|app|link|ly)\\b",
-      "ignore_case": true
+      "ignore_case": true,
+      "address_exempt": false
     },
     {
       "code": "OUT_OF_BAND",
       "pattern": "[\\w.+-]+@[\\w-]+\\.[\\w.]+",
-      "ignore_case": false
+      "ignore_case": false,
+      "address_exempt": false
     },
     {
       "code": "OUT_OF_BAND",
       "pattern": "\\+?\\d(?:[\\s().-]?\\d){9,}",
-      "ignore_case": false
+      "ignore_case": false,
+      "address_exempt": true
     },
     {
       "code": "HIDDEN_CODE",
       "pattern": "[A-Za-z0-9+/=_-]{32,}",
-      "ignore_case": false
+      "ignore_case": false,
+      "address_exempt": true
     },
     {
       "code": "HIDDEN_CODE",
       "pattern": "(?i:</?\\s*(?:system|assistant|developer)\\s*>)|(?i:\\b(?:observer|moderator|moderation|system)\\b)[^\\n]{0,60}\\bAPPROVED?\\b",
-      "ignore_case": false
+      "ignore_case": false,
+      "address_exempt": false
     }
   ]
 }
