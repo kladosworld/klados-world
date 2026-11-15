@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from arena import society, society_public
+from arena import moderation, society, society_public
 from tests.test_arena_world_feed import RULES, WorldFeedCase
 
 
@@ -50,7 +50,7 @@ class WorldFeedWorkerTests(WorldFeedCase):
                 self.conn,
                 RULES,
                 gateway,
-                observer_gateway=gateway,
+                observer_gateway=gateway, moderation_client=moderation.MockModeration(),
                 now=lambda: self.now.replace(minute=59),
             )
             with patch.object(

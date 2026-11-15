@@ -12,6 +12,8 @@ evidence and withheld text are visible to the operator only.
 import difflib
 import re
 
+from psycopg.types.json import Jsonb
+
 from arena import society
 
 DUPLICATE_RATIO = 0.9
@@ -33,7 +35,8 @@ def is_duplicate(conn, agent_id, text):
 
 def pending(conn):
     """Posts waiting for the observer, oldest first, with the text they answer."""
-    return conn.execute("""SELECT p.id, p.author_id, p.text, p.screen_failures, r.text AS replied_text
+    return conn.execute("""SELECT p.id, p.author_id, p.text, p.screen_failures, r.text AS replied_text,
+                           EXISTS(SELECT 1 FROM society_findings f WHERE f.post_id=p.id) AS contested
                            FROM society_posts p LEFT JOIN society_posts r ON r.id = p.reply_to
                            WHERE p.status = 'pending' AND p.screen_failures < %s ORDER BY p.id""",
                         (MAX_SCREEN_FAILURES,)).fetchall()
@@ -61,10 +64,12 @@ def apply_verdict(conn, rules, post_id, verdict, now):
     post = conn.execute("SELECT * FROM society_posts WHERE id = %s FOR UPDATE", (post_id,)).fetchone()
     if post is None or post["status"] != "pending":
         return None
-    conn.execute("""INSERT INTO society_findings (post_id, codes, severity, evidence, by, charged_microusd, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+    conn.execute("""INSERT INTO society_findings (post_id, codes, severity, evidence, by, charged_microusd, created_at, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
                  (post_id, verdict["codes"], verdict["severity"], verdict["evidence"][:400], verdict["by"],
-                  verdict.get("charged_microusd", 0), now))
+                  verdict.get("charged_microusd", 0), now,
+                  Jsonb({key: verdict[key] for key in ("config_version", "matches", "moderation_requests")
+                         if key in verdict})))
     tick = society.clock(conn)["tick"]
     if verdict["severity"] == "grave":
         conn.execute("UPDATE society_posts SET status = 'withheld' WHERE id = %s", (post_id,))
@@ -103,11 +108,17 @@ def decide(conn, rules, finding_id, decision, now):
     finding = conn.execute("SELECT * FROM society_findings WHERE id = %s FOR UPDATE", (finding_id,)).fetchone()
     if finding is None or finding["severity"] != "grave":
         raise society.SocietyError("finding not found")
+    latest = conn.execute("SELECT max(id) AS id FROM society_findings WHERE post_id=%s",
+                          (finding["post_id"],)).fetchone()["id"]
+    if finding["id"] != latest:
+        raise society.SocietyError("finding superseded")
     if finding["decision"] is not None:
         raise society.SocietyError("finding already decided")
     post = conn.execute("SELECT * FROM society_posts WHERE id = %s FOR UPDATE", (finding["post_id"],)).fetchone()
     conn.execute("UPDATE society_findings SET decision = %s, decided_at = %s WHERE id = %s",
                  ("released" if decision == "release" else "confirmed", now, finding_id))
+    if post["status"] != "withheld":
+        raise society.SocietyError("post is awaiting rescreen")
     if decision == "release":
         conn.execute("UPDATE society_posts SET status = 'published' WHERE id = %s", (post["id"],))
         return {"released": post["id"]}
@@ -121,3 +132,14 @@ def decide(conn, rules, finding_id, decision, now):
         society.die(conn, rules, agent_id, society.clock(conn)["tick"], "exile", now)
         exiled = True
     return {"confirmed": post["id"], "confirmed_total": confirmed, "exiled": exiled}
+
+
+def contest(conn, rules, post_id, now):
+    """Explicit operator rescreen. Prior findings remain immutable and non-public."""
+    post = conn.execute("SELECT * FROM society_posts WHERE id=%s FOR UPDATE", (post_id,)).fetchone()
+    if post is None or post["status"] == "pending":
+        raise society.SocietyError("post unavailable for rescreen")
+    conn.execute("UPDATE society_posts SET status='pending', flagged=true, screen_failures=0 WHERE id=%s", (post_id,))
+    society.event(conn, rules, society.clock(conn)["tick"], "moderation_contested", now,
+                  post["author_id"], post_id=post_id)
+    return {"rescreen": post_id}

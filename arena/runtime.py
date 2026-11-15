@@ -23,6 +23,7 @@ def main(argv=None):
     parser.add_argument('--cap-usd', default='1.00')
     parser.add_argument('--yes', action='store_true')
     parser.add_argument('--finding', type=int)
+    parser.add_argument('--rescreen', type=int)
     parser.add_argument('--decision', choices=['release', 'confirm'])
     args = parser.parse_args(argv)
     try:
@@ -87,7 +88,12 @@ def main(argv=None):
                     raise ValueError('Energy journal mismatch')
                 result = {'ok': True}
             elif args.command == 'review':
-                result = society_moderation.review_queue(conn)
+                if args.rescreen is not None:
+                    if not args.yes:
+                        raise ValueError('rescreen requires --yes')
+                    result = society_moderation.contest(conn, rules, args.rescreen, now)
+                else:
+                    result = society_moderation.review_queue(conn)
             elif args.command in ('show', 'decide'):
                 if args.finding is None:
                     raise ValueError('--finding is required')

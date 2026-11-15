@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from arena import society, society_life, society_moderation
+from arena import moderation, society, society_life, society_moderation
 from tee_arena.society import prompts
 from tests.test_arena_world_feed import RULES, WorldFeedCase
 
@@ -95,7 +95,7 @@ class FounderDecisionContextTests(WorldFeedCase):
             gateway = Gateway(ledger=ledger,models={MODEL:ModelPrice('0.10','0.50'),OBSERVER:ModelPrice('0.10','0.50')},
                               providers={'openrouter':provider},stop_file=None)
             def run():
-                return worker.Worker(self.conn,RULES,gateway,observer_gateway=gateway,
+                return worker.Worker(self.conn,RULES,gateway,observer_gateway=gateway, moderation_client=moderation.MockModeration(),
                                      now=lambda:self.now.replace(minute=59),sleep=lambda _:None).run()
             self.assertEqual(run()['turns'],4)
             actual = {row['agent_id']:row['action'] for row in self.conn.execute('SELECT agent_id,action FROM society_turns WHERE tick=2')}
