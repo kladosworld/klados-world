@@ -88,7 +88,9 @@ def review_queue(conn):
     return [dict(r, created_at=r["created_at"].isoformat()) for r in conn.execute("""
         SELECT f.id, f.post_id, p.author_id, f.codes, f.created_at
         FROM society_findings f JOIN society_posts p ON p.id = f.post_id
-        WHERE f.severity = 'grave' AND f.decision IS NULL ORDER BY f.id""")]
+        WHERE f.severity = 'grave' AND f.decision IS NULL AND p.status='withheld'
+          AND f.id=(SELECT max(latest.id) FROM society_findings latest WHERE latest.post_id=f.post_id)
+        ORDER BY f.id""")]
 
 
 def show(conn, finding_id):

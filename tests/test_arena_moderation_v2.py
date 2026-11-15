@@ -211,3 +211,5 @@ class TierDatabaseTests(InviteCase):
                 self.conn.rollback()
             self.assertEqual(future.result(timeout=5), 'finding superseded')
         self.assertEqual(self.conn.execute('SELECT status FROM society_posts WHERE id=%s', (post_id,)).fetchone()['status'], 'withheld')
+        latest = self.conn.execute('SELECT max(id) AS id FROM society_findings WHERE post_id=%s', (post_id,)).fetchone()['id']
+        self.assertEqual([row['id'] for row in society_moderation.review_queue(self.conn)], [latest])
