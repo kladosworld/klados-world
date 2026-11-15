@@ -20,7 +20,7 @@ from pathlib import Path
 import sys
 import time
 
-from arena import db, society, society_death, society_life, society_moderation
+from arena import db, moderation, society, society_death, society_life, society_moderation
 from tee_arena import gateway as gateway_module, ledger as ledger_module
 from tee_arena.society import decisions, observer, prompts, shared_purpose, rules as rules_module
 
@@ -39,11 +39,12 @@ BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
 class Worker:
     def __init__(self, conn, rules, gateway, *, observer_gateway=None, model_id=AGENT_MODEL,
                  account=ACCOUNT, max_failures=3, delays=(10, 20, 40), sleep=time.sleep, now=None,
-                 purpose=None):
+                 purpose=None, moderation_client=None):
         if purpose is not None and not isinstance(purpose, shared_purpose.Purpose):
             raise shared_purpose.PurposeConfigurationError("invalid_purpose")
         self.purpose = purpose
         self.conn, self.rules, self.gateway = conn, rules, gateway
+        self.moderation_client = moderation_client
         self.observer_gateway = observer_gateway  # None: posts stay unpublished
         self.model_id, self.account, self.max_failures = model_id, account, max_failures
         self.delays, self.sleep = delays, sleep
@@ -117,31 +118,52 @@ class Worker:
         return "done"
 
     def screen(self):
-        """Run the observer on every unpublished post. Returns "stop" if the society was paused."""
+        """Screen posts independently; only persistence failures stop this worker pass."""
         if self.observer_gateway is None:
             return None
         for post in society_moderation.pending(self.conn):
-            try:
-                verdict = observer.review(self.observer_gateway, post["text"], post["replied_text"],
-                                          model_id=OBSERVER_MODEL, account=OBSERVER_ACCOUNT,
-                                          request_id=f"klados.observe.{post['id']}.{post['screen_failures']}")
-            except gateway_module.GatewayError as error:
-                society_moderation.screen_failed(self.conn, post["id"])
+            def record_request(version):
+                society.event(self.conn, self.rules, society.clock(self.conn)["tick"],
+                              "moderation_request", self.now(), post["author_id"],
+                              post_id=post["id"], config_version=version)
                 self.conn.commit()
-                self.log.append({"post": post["id"], "error": "observer call_" + error.category})
-                if self._failed(error):
+
+            try:
+                client = self.moderation_client or moderation.client_for_gateway(self.observer_gateway)
+                verdict = moderation.review(self.observer_gateway, client, post["text"], post["replied_text"],
+                    model_id=OBSERVER_MODEL, account=OBSERVER_ACCOUNT, contested=post["contested"],
+                    on_request=record_request,
+                    request_id=f"klados.observe.{post['id']}.g{post['screening_generation']}.{post['screen_failures']}")
+                verdict["screening_generation"] = post["screening_generation"]
+                # A malformed post or verdict cannot leave a partial publication behind.
+                with self.conn.transaction():
+                    outcome = society_moderation.apply_verdict(self.conn, self.rules, post["id"], verdict, self.now())
+                    record = {"post": post["id"], "moderation": outcome, "codes": verdict["codes"],
+                              "by": verdict["by"], "charged_microusd": verdict["charged_microusd"]}
+                self.conn.commit()
+            except Exception as error:
+                if isinstance(error, gateway_module.GatewayError):
+                    code = "observer call_" + error.category
+                elif isinstance(error, observer.ObserverError):
+                    safe = error.code if error.code in ("invalid_json", "schema", "unknown_code") else "invalid_response"
+                    code = "observer reply_" + safe
+                elif isinstance(error, moderation.ModerationError):
+                    safe = str(error) if str(error) in ("invalid_config", "invalid_response", "service_unavailable", "credential_unavailable") else "invalid_response"
+                    code = "moderation_" + safe
+                else:
+                    code = "screening_unexpected"
+                self.log.append({"post": post["id"], "error": code})
+                try:
+                    with self.conn.transaction():
+                        society_moderation.screen_failed(self.conn, post["id"])
+                    self.conn.commit()
+                except Exception:
+                    # A broken persistence layer may stop this pass, without administrative pause.
+                    self.conn.rollback()
+                    self.log.append({"post": post["id"], "error": "screening_persistence_failure"})
                     return "stop"
                 continue
-            except observer.ObserverError as error:
-                society_moderation.screen_failed(self.conn, post["id"])
-                self.conn.commit()
-                self.log.append({"post": post["id"], "error": "observer reply_" + error.code,
-                                 "charged_microusd": getattr(error, "charged_microusd", 0)})
-                continue
-            outcome = society_moderation.apply_verdict(self.conn, self.rules, post["id"], verdict, self.now())
-            self.conn.commit()
-            self.log.append({"post": post["id"], "moderation": outcome, "codes": verdict["codes"],
-                             "by": verdict["by"], "charged_microusd": verdict["charged_microusd"]})
+            self.log.append(record)
         return None
 
     def reflect(self, agent_id, day, tick):
@@ -199,16 +221,19 @@ class Worker:
             system, messages = prompts.last_words(society_death.context(self.conn, self.rules, agent_id),
                                                  purpose=self.purpose)
             request = f"klados.lastwords.{agent_id}.{fossil['last_words_attempts']}"
+            observing = False
             try:
                 result = self.call(system, messages, request)
                 text = decisions.parse_last_words(result.text)
+                observing = True
                 verdict = observer.review(self.observer_gateway, text, model_id=OBSERVER_MODEL,
                                           account=OBSERVER_ACCOUNT, request_id=request + ".observe")
             except gateway_module.GatewayError as error:
                 society_death.failed(self.conn, agent_id)
                 self.conn.commit()
-                self.log.append({"agent": agent_id, "error": "last words call_" + error.category})
-                if self._failed(error):
+                prefix = "last words observer_" if observing else "last words call_"
+                self.log.append({"agent": agent_id, "error": prefix + error.category})
+                if not observing and self._failed(error):
                     return "stop"
                 continue
             except (decisions.DecisionError, observer.ObserverError) as error:
