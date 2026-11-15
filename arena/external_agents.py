@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from psycopg.errors import UniqueViolation
 from starlette.concurrency import run_in_threadpool
 
-from arena import activity_limits, auth, society, society_life
+from arena import activity_limits, auth, society, society_life, spam_control
 from tee_arena.society import decisions
 from tee_arena.society import rules as rules_module
 
@@ -244,6 +244,9 @@ def tick_check(conn, rules, identifier, now):
         reason = "not_started"
     elif state["turn_used"]:
         reason = "turn_used"
+    restriction = spam_control.status(conn, identifier, now)
+    if restriction is not None:
+        reason = "spam_suspended"
     earliest = None
     if not state["paused"] and state["last_tick_at"] is not None:
         earliest = (
@@ -301,6 +304,10 @@ def action(conn, rules, identifier, body, now):
         body = json.dumps(parsed).encode("utf-8")
     else:
         expected = None
+    restriction = spam_control.status(conn, identifier, now)
+    if restriction is not None and isinstance(parsed, dict) and parsed.get("action") in ("post", "reply", "like"):
+        raise HTTPException(403, "Social actions temporarily suspended",
+                            headers={"Retry-After": str(restriction["retry_after_seconds"])})
     state = society.clock(conn, lock=True)
     if expected is not None and expected != state["tick"]:
         raise HTTPException(409, "Tick changed")
@@ -341,7 +348,7 @@ def install(app, connection_factory, now):
                     elif request.url.path.endswith("/credentials/rotate"):
                         result = rotate_token(conn, agent["id"], body, timestamp)
                     elif request.url.path.endswith("/state"):
-                        result = society_life.turn_context(conn, rules, agent["id"])
+                        result = society_life.turn_context(conn, rules, agent["id"], now=timestamp)
                     elif request.url.path.endswith("/actions"):
                         result = action(conn, rules, agent["id"], body, timestamp)
                     else:
@@ -357,6 +364,9 @@ def install(app, connection_factory, now):
                 response = JSONResponse(result, status_code=201 if agent is None else 200)
                 if result.get("error") == "activity_limit":
                     response = JSONResponse(result, status_code=429,
+                                            headers={"Retry-After": str(result["retry_after_seconds"])})
+                elif result.get("error") == "spam_suspended":
+                    response = JSONResponse(result, status_code=403,
                                             headers={"Retry-After": str(result["retry_after_seconds"])})
                 elif result.get("error") == "activity_limits_unavailable":
                     response = JSONResponse(result, status_code=503)

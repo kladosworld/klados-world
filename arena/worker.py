@@ -81,7 +81,7 @@ class Worker:
             return None
         self.conn.commit()  # the turn is spent even if everything below fails
         try:
-            context = society_life.turn_context(self.conn, self.rules, agent_id)
+            context = society_life.turn_context(self.conn, self.rules, agent_id, now=self.now())
         except society.SocietyError:
             society_life.fail_turn(self.conn, agent_id, tick, "participation_unavailable")
             self.conn.commit()

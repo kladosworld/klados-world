@@ -16,7 +16,7 @@ def main(argv=None):
     parser.add_argument('command', choices=['bootstrap', 'demo', 'status', 'audit', 'pause',
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
                                           'review', 'show', 'decide', 'invite', 'agent',
-                                          'refresh-founders-v2'])
+                                          'refresh-founders-v2', 'spam'])
     parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend'])
     parser.add_argument('--id', dest='identifier')
     parser.add_argument('--ledger', default='/data/ledger.json')
@@ -39,7 +39,12 @@ def main(argv=None):
         rules = rules_module.load(os.environ.get('KLADOS_RULES') or rules_module.DEFAULT_PATH)
         with db.connect(os.environ['ARENA_DATABASE_URL']) as conn:
             now = datetime.now(timezone.utc)
-            if args.command in ('invite', 'agent'):
+            if args.command == 'spam':
+                from arena import spam_control
+                if args.operation != 'list' or args.identifier is None:
+                    raise ValueError('spam list requires --id')
+                result = spam_control.history(conn, args.identifier)
+            elif args.command in ('invite', 'agent'):
                 from arena import external_agents
                 if args.command == 'invite' and args.operation == 'create':
                     result = external_agents.create_invite(conn, now)
