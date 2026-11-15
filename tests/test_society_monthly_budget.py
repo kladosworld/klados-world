@@ -55,6 +55,58 @@ class MonthlyTests(unittest.TestCase):
         self.assertEqual(old.path.read_bytes(), before)
         self.assertEqual(old.totals()['global_cap'], 1_000_000)
 
+    def test_reporting_empty_history_has_explicit_cursor_and_no_writes(self):
+        empty = ledger.Ledger.create(Path(self.directory.name) / 'empty.json', global_cap=1_000_000)
+        before = empty.path.read_bytes()
+        status = empty.budget_status()
+        self.assertEqual(status['schema'], 1)
+        self.assertEqual(status['accounts'], {})
+        self.assertEqual(status['events'], 0)
+        self.assertIsNone(status['last_event_id'])
+        self.assertIsNone(status['monthly_cap_microusd'])
+        self.assertEqual(status['lifetime_cap_microusd'], 1_000_000)
+        self.assertEqual(empty.path.read_bytes(), before)
+
+    def test_reporting_classifies_policy_events_and_effective_account_caps(self):
+        hold = self.book.reserve('society-agents', 600, 'report.settled')
+        self.book.settle(hold, 400)
+        released = self.book.reserve('society-observer', 200, 'report.released')
+        self.book.release(released)
+        self.book.reserve('society-observer', 100, 'report.pending')
+        self.policy(10_000_000)
+        self.book.raise_cap(31_000_000, reference='synthetic-cap-approval', approved_by='test',
+                            account='society-observer', apply=True, approved=True)
+        before = self.path.read_bytes()
+        document = store.read(self.path)[1]
+        status = self.book.budget_status()
+        self.assertEqual(status['events'], len(document['events']))
+        self.assertEqual(status['last_event_id'], document['events'][-1]['id'])
+        self.assertEqual(status['accounts'], {
+            'society-agents': {'cap_microusd': 30_000_000, 'charged_microusd': 400, 'reserved_microusd': 0},
+            'society-observer': {'cap_microusd': 31_000_000, 'charged_microusd': 0, 'reserved_microusd': 100}})
+        self.assertEqual(status['lifetime_charged_microusd'], 400)
+        self.assertEqual(status['lifetime_reserved_microusd'], 100)
+        self.assertEqual(status['charged_microusd'], 400)
+        self.assertEqual(status['reserved_microusd'], 100)
+        self.assertEqual(status['lifetime_cap_microusd'], 30_000_000)
+        self.assertEqual(ledger.Ledger(self.path).budget_status(), status)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.book.reserve('society-agents', 1, 'report.next')
+        following = self.book.budget_status()
+        self.assertEqual(following['events'], status['events'] + 1)
+        self.assertNotEqual(following['last_event_id'], status['last_event_id'])
+
+    def test_reporting_refuses_unknown_or_corrupt_events_without_rewriting(self):
+        original = self.path.read_bytes()
+        document = store.read(self.path)[1]
+        document['events'][-1]['kind'] = 'synthetic-unknown'
+        for content in (json.dumps(document).encode(), b'{broken'):
+            self.path.write_bytes(content)
+            with self.assertRaises((ledger.LedgerError, json.JSONDecodeError)):
+                self.book.budget_status()
+            self.assertEqual(self.path.read_bytes(), content)
+        self.path.write_bytes(original)
+
     def test_maximum_reservation_warning_and_no_partial_write(self):
         self.policy()
         hold = self.book.reserve('society-agents', 700, 'turn')
