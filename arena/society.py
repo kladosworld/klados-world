@@ -337,11 +337,13 @@ def due_turns(conn, now):
     state = clock(conn)
     if state["paused"] or state["tick"] == 0:
         return []
+    from arena import spam_control
     return [row["id"] for row in conn.execute("""
         SELECT a.id FROM society_agents a
         WHERE a.kind = 'founder' AND a.status = 'alive' AND a.participation='active' AND a.turn_minute <= %s
           AND NOT EXISTS (SELECT 1 FROM society_turns t WHERE t.agent_id = a.id AND t.tick = %s)
-        ORDER BY a.turn_minute, a.id""", (_utc(now).minute, state["tick"]))]
+        ORDER BY a.turn_minute, a.id""", (_utc(now).minute, state["tick"]))
+            if spam_control.status(conn, row["id"], now) is None]
 
 
 def audit(conn):

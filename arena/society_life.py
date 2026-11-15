@@ -9,7 +9,7 @@ module publishes them; public pages must read only posts, likes, energy and even
 """
 from psycopg.types.json import Jsonb
 
-from arena import activity_limits, society
+from arena import activity_limits, society, spam_control
 from tee_arena.society import economy
 
 SQUARE_SIZE = 20
@@ -76,6 +76,7 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
         with conn.transaction():  # savepoint: a refused action leaves nothing behind
             _alive_agent(conn, agent_id)
             action = decision["action"]
+            spam_control.check(conn, agent_id, action, now)
             activity_limits.check(conn, rules, agent_id, action, now)
             if action in ("post", "reply"):
                 reply_to = _post(conn, decision["post_id"])["id"] if action == "reply" else None
@@ -95,6 +96,9 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
             if decision.get("note"):
                 conn.execute("INSERT INTO society_notes (agent_id, tick, text, created_at) VALUES (%s, %s, %s, %s)",
                              (agent_id, tick, decision["note"], now))
+    except spam_control.Restricted as error:
+        outcome = {"action": "rest", "error": "spam_suspended", "wanted": decision["action"],
+                   **error.restriction}
     except activity_limits.ActivityLimit as error:
         outcome = {"action": "rest", "error": "activity_limit", "wanted": error.action,
                    "limit": error.limit, "window_seconds": activity_limits.WINDOW_SECONDS,
@@ -113,6 +117,9 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
             "activity_limits_unavailable": "activity_limits_unavailable",
         }.get(str(error), "action_refused")
         outcome = {"action": "rest", "error": code, "wanted": decision["action"]}
+        if code == "duplicate_post" and rules.persistent:
+            outcome["spam_control"] = spam_control.record_duplicate(
+                conn, rules, agent_id, tick, decision["text"], now)
     log = dict(private or {}, decision=decision, outcome=outcome)
     conn.execute("""UPDATE society_turns SET status = %s, action = %s, charged_microusd = %s, private = %s
                     WHERE agent_id = %s AND tick = %s""",
