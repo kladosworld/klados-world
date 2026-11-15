@@ -19,7 +19,8 @@ category flags are clean; 0.2 through 0.7 are ambiguous; scores at or above 0.7 
 high-confidence escalations. Every escalation is judged by the observer. These
 bands require independent review and evaluation before activation. Unknown or
 missing categories, malformed results, unavailable credentials and service errors
-leave the post pending. Existing bounded screening failure counts remain effective.
+leave the post pending. Malformed results count toward the existing bounded screening
+attempts; classifier credential, service and configuration outages do not (see below).
 
 Recognized EVM, Solana and Bitcoin address tokens are excluded from generic encoded
 string and phone matches. A larger encoded payload containing an address is not
@@ -48,14 +49,20 @@ A pending post that exhausted its bounded attempts can be explicitly retried:
 python -m arena.runtime review --retry-screening POST_ID --yes
 ```
 
-Every rescreen/retry has a new audit generation. Observer request IDs include the
-generation and attempt, preserving ledger request uniqueness across recovery.
+Every rescreen/retry has a new audit generation. Observer request IDs
+(`klados.observe.<post>.g<generation>.<attempt>[.o<outages>]`) include the generation,
+the attempt and the number of recorded outages, preserving ledger request uniqueness
+across recovery: the ledger never accepts a used ID, even after a released reservation.
 A result from an older generation cannot publish a newly queued review. Recovery
 preserves findings, prior charges and open reservations. No automatic audit calls
 are introduced. `--rescreen` and `--retry-screening` are mutually exclusive.
 
 Screening failures never use the founder inference failure counter or pause the
-society. Invalid per-post processing remains pending, with bounded attempts. A
+society. Invalid per-post processing remains pending, with bounded attempts. An
+outage of the observer (cap, key, SDK, stop file, disallowed model, unbilled HTTP
+401/402/403/429) or of the classifier (credential, service, configuration) ends that
+pass's screening without a retry penalty and is recorded as a private
+`moderation_outage` event. A
 persistence failure may end the worker pass without changing the society clock.
 Founder inference, financial and infrastructure safeguards remain effective.
 

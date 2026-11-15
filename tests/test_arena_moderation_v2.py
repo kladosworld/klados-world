@@ -175,11 +175,17 @@ class TierDatabaseTests(InviteCase):
         gateway = Mock(providers={})
         run = worker.Worker(self.conn, RULES, gateway, observer_gateway=gateway,
                             moderation_client=client, now=lambda: self.now)
-        for _ in range(4):
+        for _ in range(4):  # a classifier outage (#39): no retry penalty, screening halted per pass
+            run.screen()
+        row = self.conn.execute('SELECT status,screen_failures FROM society_posts WHERE id=%s', (post_id,)).fetchone()
+        self.assertEqual((row['status'], row['screen_failures']), ('pending', 0))
+        self.assertEqual(client.classify.call_count, 4)
+        client.classify.side_effect = moderation.ModerationError('invalid_response')
+        for _ in range(4):  # an unusable classification is the post's attempt: bounded retries
             run.screen()
         row = self.conn.execute('SELECT status,screen_failures FROM society_posts WHERE id=%s', (post_id,)).fetchone()
         self.assertEqual((row['status'], row['screen_failures']), ('pending', 3))
-        self.assertEqual(client.classify.call_count, 3)
+        self.assertEqual(client.classify.call_count, 7)
         gateway.call.assert_not_called()
         self.conn.execute('UPDATE society_posts SET screen_failures=0 WHERE id=%s', (post_id,))
         self.conn.commit()

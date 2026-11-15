@@ -25,7 +25,21 @@ def posting(**overrides):
     return script
 
 
-class ModerationIsolationTests(WorkerCase):
+class EscalatingModeration:
+    """Moderation v2: a classification that always escalates, so every post reaches the observer."""
+
+    def classify(self, text, config):
+        return ["harassment"]
+
+
+class ObserverPathCase(WorkerCase):
+    def make(self, *args, **kwargs):
+        run = super().make(*args, **kwargs)
+        run.moderation_client = EscalatingModeration()
+        return run
+
+
+class ModerationIsolationTests(ObserverPathCase):
     def posts(self):
         return {r["id"]: (r["status"], r["screen_failures"])
                 for r in self.conn.execute("SELECT id, status, screen_failures FROM society_posts ORDER BY id")}
@@ -214,13 +228,13 @@ class ModerationIsolationTests(WorkerCase):
             self.assertIsNone(run.screen())
         self.assertEqual(self.posts()[post_id], ("pending", 0))  # no retry lost
         self.assertEqual(self.ledger_requests(run), [
-            (f"klados.observe.{post_id}.0", "release"),
-            (f"klados.observe.{post_id}.0.o1", "release"),
-            (f"klados.observe.{post_id}.0.o2", "release")])
+            (f"klados.observe.{post_id}.g0.0", "release"),
+            (f"klados.observe.{post_id}.g0.0.o1", "release"),
+            (f"klados.observe.{post_id}.g0.0.o2", "release")])
         state["key"] = True  # key restored
         self.assertIsNone(run.screen())
         self.assertEqual(self.posts()[post_id], ("published", 0))
-        self.assertEqual(self.ledger_requests(run)[-1], (f"klados.observe.{post_id}.0.o3", "settle"))
+        self.assertEqual(self.ledger_requests(run)[-1], (f"klados.observe.{post_id}.g0.0.o3", "settle"))
         self.assertNotIn("duplicate_request", str(run.log))
         self.assertEqual(run.failures, 0)
         self.assertFalse(society.clock(self.conn)["paused"])
@@ -265,7 +279,7 @@ class ModerationIsolationTests(WorkerCase):
         post_id = self.pending_post()
         run = self.make({n: REST for n in ("Alder", "Birch", "Cedar", "Hazel")})
         book = run.gateway.ledger  # a crash after a paid call: the id is reserved and settled
-        book.settle(book.reserve("society-observer", 100, f"klados.observe.{post_id}.0"), 90)
+        book.settle(book.reserve("society-observer", 100, f"klados.observe.{post_id}.g0.0"), 90)
         before = len(self.provider.requests)
         self.assertIsNone(run.screen())
         self.assertEqual(len(self.provider.requests), before)  # no second paid call for that id
@@ -273,7 +287,7 @@ class ModerationIsolationTests(WorkerCase):
         self.assertIn({"post": post_id, "error": "observer call_duplicate_request"}, run.log)
         self.assertIsNone(run.screen())
         self.assertEqual(self.posts()[post_id], ("published", 1))
-        self.assertEqual(self.ledger_requests(run)[-1], (f"klados.observe.{post_id}.1", "settle"))
+        self.assertEqual(self.ledger_requests(run)[-1], (f"klados.observe.{post_id}.g0.1", "settle"))
 
     def test_post_specific_rejections_still_cost_a_retry(self):
         class Rejected(Exception):
@@ -286,6 +300,57 @@ class ModerationIsolationTests(WorkerCase):
         self.assertIsNone(run.screen())
         self.assertEqual(self.posts()[post_id], ("pending", 1))
         self.assertEqual(self.events("moderation_outage"), [])
+
+    # Moderation v2 classifier errors and operator generations, integrated with the outage ids.
+
+    def test_classifier_outages_have_no_retry_penalty_and_invalid_responses_stay_bounded(self):
+        from arena import moderation
+        post_id = self.pending_post()
+        run = self.resting()
+        client = type("Client", (), {})()
+        for code in ("credential_unavailable", "service_unavailable", "invalid_config"):
+            client.classify = lambda text, config, code=code: (_ for _ in ()).throw(moderation.ModerationError(code))
+            run.moderation_client = client
+            self.assertIsNone(run.screen())
+            self.assertEqual(self.posts()[post_id], ("pending", 0))
+            self.assertIn({"moderation": "halted_for_this_pass", "reason": "moderation_" + code}, run.log)
+        self.assertEqual(len(self.events("moderation_outage")), 3)
+        client.classify = lambda text, config: (_ for _ in ()).throw(moderation.ModerationError("PRIVATE_CANARY"))
+        for _ in range(4):
+            self.assertIsNone(run.screen())
+        self.assertEqual(self.posts()[post_id], ("pending", 3))  # sanitized to invalid_response, bounded
+        self.assertNotIn("CANARY", str(run.log))
+        self.assertFalse(society.clock(self.conn)["paused"])
+
+    def test_operator_generation_and_outage_ids_combine_without_reuse(self):
+        post_id = self.pending_post()
+        state = {"key": False}
+
+        def observer_reply(request):
+            if not state["key"]:
+                raise GatewayError("credential_unavailable")
+            return '{"codes": [], "evidence": ""}'
+        run = self.make({"observer": observer_reply, **{n: REST for n in ("Alder", "Birch", "Cedar", "Hazel")}})
+        self.assertIsNone(run.screen())  # outage: released, no retry lost
+        state["key"] = True
+        self.assertIsNone(run.screen())
+        self.assertEqual(self.posts()[post_id], ("published", 0))
+        society_moderation.contest(self.conn, RULES, post_id, self.now)  # operator rescreen: new generation
+        self.conn.commit()
+        generation = self.conn.execute("SELECT max(id) AS g FROM society_events WHERE kind='moderation_contested'").fetchone()["g"]
+        state["key"] = False
+        self.assertIsNone(run.screen())
+        state["key"] = True
+        self.assertIsNone(run.screen())
+        self.assertEqual(self.posts()[post_id], ("published", 0))
+        self.assertEqual(self.ledger_requests(run), [
+            (f"klados.observe.{post_id}.g0.0", "release"),
+            (f"klados.observe.{post_id}.g0.0.o1", "settle"),
+            (f"klados.observe.{post_id}.g{generation}.0.o1", "release"),
+            (f"klados.observe.{post_id}.g{generation}.0.o2", "settle")])
+        self.assertNotIn("duplicate_request", str(run.log))
+        self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM society_findings WHERE post_id=%s",
+                                           (post_id,)).fetchone()["n"], 2)  # history kept, one per generation
 
     # Founder inference, budget and infrastructure failures keep their existing safety pause.
 
@@ -325,7 +390,7 @@ class ModerationIsolationTests(WorkerCase):
         self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: stopped")
 
 
-class LastWordsIsolationTests(WorkerCase):
+class LastWordsIsolationTests(ObserverPathCase):
     # Helpers only; inheriting FossilTests would run its tests twice.
     starve, fossil, last_words_script = FossilTests.starve, FossilTests.fossil, FossilTests.last_words_script
 
