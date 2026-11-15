@@ -366,7 +366,13 @@ class Ledger:
         remaining = None if ceiling is None else max(0, ceiling - use["charged"] - use["reserved"])
         def policy(event):
             return {key: event[key] for key in ("id", "kind", "at", "month", "microusd", "reference", "approved_by", "account") if key in event} if event else None
+        accounts = {name: {"cap_microusd": state["cap"],
+                           "charged_microusd": state["charged"],
+                           "reserved_microusd": state["reserved"]}
+                    for name, state in summary["accounts"].items()}
         return {"schema": 1, "as_of": at, "month": month, "monthly_cap_microusd": ceiling,
+                "accounts": accounts, "events": len(document["events"]),
+                "last_event_id": document["events"][-1]["id"] if document["events"] else None,
                 "charged_microusd": use["charged"], "reserved_microusd": use["reserved"],
                 "available_microusd": remaining,
                 "warning_microusd": budget["warning_microusd"] if budget else None,

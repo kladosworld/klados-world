@@ -74,6 +74,21 @@ nonzero with sanitized diagnostics. Report schema 1 contains:
 
 A null monthly ceiling means no monthly policy has been activated. The monthly
 remaining amount does not override a tighter lifetime or account ceiling.
+The additive schema-1 fields `accounts`, `events` and `last_event_id` support guard
+reconciliation. `accounts` maps each account ID to its effective `cap_microusd`,
+`charged_microusd` and `reserved_microusd`, including approved cap events. `events`
+counts all validated ledger events. `last_event_id` is the final event ID, or null
+for empty history. These cursors describe the ledger snapshot. `as_of` is report
+generation time and does not establish provider-data freshness.
+
+Only settlement events add actual charges. Reserve events hold maximum cost;
+settlement or release closes the reservation. Budget/cap events change policy or
+effective ceilings and add no spending. Open events establish account ceilings.
+Unknown events or malformed accounting fail closed before emitting a report.
+Consumers must use this validated report instead of summing arbitrary event amounts.
+The guard must separately verify provider-data freshness, unexplained differences
+and history continuity. Event count and final ID alone do not prove history integrity.
+
 Raw `global_cap` in the file is the immutable initial cap. Consumers must use the
 derived report to account for approved later `cap` events.
 
