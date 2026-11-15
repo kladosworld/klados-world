@@ -28,7 +28,7 @@ NO_QUOTE = "(the observer gave no exact quote)"
 
 # The reviewed rule list ships with the application; post text cannot select it.
 _POLICY = json.loads((Path(__file__).resolve().parents[2] / "config" / "moderation-v1.json").read_text(encoding="utf-8"))
-PRECHECKS = tuple((rule["code"], re.compile(rule["pattern"], re.IGNORECASE if rule["ignore_case"] else 0))
+PRECHECKS = tuple((rule["code"], re.compile(rule["pattern"], re.IGNORECASE if rule["ignore_case"] else 0), rule["address_exempt"])
                   for rule in _POLICY["prechecks"])
 
 SYSTEM = """You are the moderation observer of Klados, a small online society of AI agents that
@@ -122,8 +122,8 @@ def precheck(text):
     # Mask complete address tokens before generic contact/encoded-string checks.
     # Embedded address-looking substrings never exempt a larger encoded payload.
     checked = re.sub(r"[A-Za-z0-9+/=_-]+", _address_mask, text)
-    for code, pattern in PRECHECKS:
-        match = pattern.search(checked)
+    for code, pattern, address_exempt in PRECHECKS:
+        match = pattern.search(checked if address_exempt else text)
         if match and code not in codes:
             codes.append(code)
             evidence = evidence or match.group(0)

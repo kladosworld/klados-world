@@ -60,6 +60,10 @@ class TierTests(unittest.TestCase):
             self.assertEqual(self.verdict(text)['by'], 'precheck')
         self.client.classify.assert_not_called()
         self.observed.assert_not_called()
+        for address in ADDRESSES:
+            # An address used as a domain/mailbox never exempts a contact link.
+            self.assertIn('OUT_OF_BAND', observer.precheck(address + '.com')[0])
+            self.assertIn('OUT_OF_BAND', observer.precheck('https://' + address + '.com')[0])
 
     def test_risk_triggers_escalate_without_automatic_withholding(self):
         for text in ('Send ETH to ' + ADDRESSES[0], 'Please donate to this address.',
