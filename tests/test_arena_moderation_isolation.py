@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from tests.test_arena_society import RULES
 from tests.test_arena_society_fossils import FossilTests
-from tests.test_arena_society_life import WorkerCase
+from tests.test_arena_society_life import CLEAN, WorkerCase
 from tests.arena_support import psycopg
 
 if psycopg:
@@ -89,10 +89,104 @@ class ModerationIsolationTests(WorkerCase):
         self.assert_running(summary)
         self.assertEqual(self.posts(), {1: ("pending", 2), 2: ("published", 0)})
         self.assertFalse(self.conn.execute("SELECT flagged FROM society_posts WHERE id=1").fetchone()["flagged"])
-        self.assertIn({"post": 1, "error": "screening_KeyError"}, run.log)
+        self.assertIn({"post": 1, "error": "screening_unexpected"}, run.log)
         with patch.object(observer, "review", side_effect=ValueError("synthetic parser bug")):
             self.assert_running(run.run())
         self.assertEqual(self.posts()[1], ("pending", 3))
+
+    # Safeguards and diagnostics (adapted from klados-world#38).
+
+    def pending_post(self, text="A synthetic pending question."):
+        post = self.conn.execute("""INSERT INTO society_posts (author_id, tick, text, created_at)
+                                    VALUES ('alder', 1, %s, %s) RETURNING id""", (text, self.now)).fetchone()["id"]
+        self.conn.commit()
+        return post
+
+    def resting(self):
+        return self.make({name: REST for name in ("Alder", "Birch", "Cedar", "Hazel")})
+
+    def test_observer_errors_never_reach_the_founder_safety_path(self):
+        post_id = self.pending_post()
+        run = self.resting()
+        for category in ("provider_failure", "credential_unavailable", "cap_exceeded", "stopped",
+                         "model_not_allowed", "response_invalid"):
+            with self.subTest(category=category):
+                with patch.object(observer, "review", side_effect=GatewayError(category)), \
+                        patch.object(run, "_failed", side_effect=AssertionError("observer cannot pause")) as failed:
+                    self.assertIsNone(run.screen())
+                failed.assert_not_called()
+                self.assertFalse(society.clock(self.conn)["paused"])
+                self.assertEqual(run.failures, 0)
+        self.assertEqual(self.posts()[post_id], ("pending", 2))  # provider_failure, response_invalid only
+
+    def test_private_text_never_reaches_the_log(self):
+        first = self.pending_post("A malformed synthetic fixture.")
+        second = self.pending_post("Another independent synthetic contribution.")
+        run = self.resting()
+
+        def review(_gateway, text, *_args, **_kwargs):
+            if "malformed" in text:
+                raise TypeError("PRIVATE_CONTENT_CANARY")
+            return dict(CLEAN)
+        with patch.object(observer, "review", side_effect=review):
+            self.assertIsNone(run.screen())
+        with patch.object(observer, "review", side_effect=observer.ObserverError("PRIVATE_CODE_CANARY")):
+            self.assertIsNone(run.screen())
+        self.assertEqual(self.posts(), {first: ("pending", 2), second: ("published", 0)})
+        self.assertIn({"post": first, "error": "observer reply_invalid_response", "charged_microusd": 0}, run.log)
+        self.assertNotIn("CANARY", str(run.log))
+        self.assertFalse(society.clock(self.conn)["paused"])
+
+    def test_a_partial_verdict_write_is_rolled_back_before_the_failure_count(self):
+        post_id = self.pending_post()
+        run = self.resting()
+
+        def partial(conn, *_args):
+            conn.execute("UPDATE society_posts SET status = 'published' WHERE id = %s", (post_id,))
+            raise RuntimeError("PRIVATE_VERDICT_CANARY")
+        with patch.object(observer, "review", return_value=dict(CLEAN)), \
+                patch.object(society_moderation, "apply_verdict", side_effect=partial):
+            self.assertIsNone(run.screen())
+        self.assertEqual(self.posts()[post_id], ("pending", 1))
+        self.assertNotIn("CANARY", str(run.log))
+
+    def test_missing_verdict_metadata_cannot_publish_or_crash_the_loop(self):
+        post_id = self.pending_post()
+        later = self.pending_post("A second synthetic contribution.")
+        run = self.resting()
+        malformed = dict(CLEAN)
+        malformed.pop("charged_microusd")
+        with patch.object(observer, "review", side_effect=[malformed, dict(CLEAN)]):
+            self.assertIsNone(run.screen())
+        self.assertEqual(self.posts(), {post_id: ("pending", 1), later: ("published", 0)})
+        self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM society_findings WHERE post_id = %s",
+                                           (post_id,)).fetchone()["n"], 0)
+
+    def test_unusable_verdicts_stay_bounded(self):
+        post_id = self.pending_post()
+        run = self.resting()
+        with patch.object(observer, "review", side_effect=observer.ObserverError("invalid_json")) as review:
+            for _ in range(5):
+                self.assertIsNone(run.screen())
+        self.assertEqual(review.call_count, 3)
+        self.assertEqual(self.posts()[post_id], ("pending", 3))
+        self.assertEqual(run.failures, 0)
+
+    def test_a_persistence_failure_ends_only_the_pass(self):
+        self.pending_post()
+        run = self.resting()
+        with patch.object(observer, "review", side_effect=ValueError("PRIVATE_CANARY")), \
+                patch.object(society_moderation, "screen_failed", side_effect=RuntimeError("PRIVATE_DATABASE_CANARY")):
+            self.assertEqual(run.screen(), "stop")
+            summary = run.run()
+        self.assertTrue(summary["stopped"])
+        self.assertEqual(summary["turns"], 0)
+        self.assertFalse(society.clock(self.conn)["paused"])
+        self.assertEqual(self.events("paused"), [])
+        self.assertEqual(run.failures, 0)
+        self.assertIn({"post": 1, "error": "screening_persistence_failure"}, run.log)
+        self.assertNotIn("CANARY", str(run.log))
+        self.assertEqual(run.run()["turns"], 4)  # once the database records again, the next pass runs
 
     # Founder inference, budget and infrastructure failures keep their existing safety pause.
 
@@ -145,7 +239,8 @@ class LastWordsIsolationTests(WorkerCase):
                     self.starve("hazel")
                 self.conn.execute("UPDATE society_fossils SET last_words_attempts = 0, last_words_status = 'pending'")
                 self.conn.commit()
-                with patch.object(observer, "review", side_effect=error):
+                with patch.object(observer, "review", side_effect=error), \
+                        patch.object(run, "_failed", side_effect=AssertionError("observer cannot pause")):
                     self.assertFalse(run.run()["stopped"])
                 self.assertFalse(society.clock(self.conn)["paused"])
                 fossil = self.fossil("hazel")
