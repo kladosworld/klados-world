@@ -10,7 +10,8 @@ Safety:
 - A turn is claimed and committed before the call, so a crash can never give an agent
   a second turn in the same hour. A failed call or an unusable reply is a rest.
 - Stops on errors: a spent cap, a missing key or the stop file pauses the society at
-  once; ``max_failures`` failed calls in a row pause it too. A paused society does not
+  once; ``max_failures`` failed founder calls in a row pause it too. Observer (moderation)
+  failures never pause it: they stay with the post, or end the pass's screening. A paused society does not
   age, so nobody dies of an outage.
 """
 import argparse
@@ -34,6 +35,9 @@ MAX_OUTPUT_TOKENS = 1200  # the model may spend part of it reasoning before the 
 PAUSE_AT_ONCE = ("cap_exceeded", "credential_unavailable", "stopped", "model_not_allowed")
 # The provider answered, but the reply cannot be used: a rest, not an outage.
 BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
+# Observer outages: screening stops for the pass and the posts stay unpublished. Moderation
+# never pauses the society (administrative, budget and infrastructure pauses come from founder calls).
+MODERATION_OUTAGE = ("cap_exceeded", "credential_unavailable", "stopped", "model_not_allowed")
 
 
 class Worker:
@@ -117,29 +121,48 @@ class Worker:
         return "done"
 
     def screen(self):
-        """Run the observer on every unpublished post. Returns "stop" if the society was paused."""
+        """Run the observer on every unpublished post. Never pauses the society.
+
+        Moderation failures are isolated: a failed or unexpected screening stays with its post
+        (unpublished, ``screen_failures`` + 1, retried up to the limit), and an observer outage
+        (spent observer cap, missing key, stop file, disallowed model, or repeated failures) only
+        ends this pass's screening. Only founder inference reaches ``_failed`` and its safety pause.
+        """
         if self.observer_gateway is None:
             return None
+        failures = 0
         for post in society_moderation.pending(self.conn):
             try:
                 verdict = observer.review(self.observer_gateway, post["text"], post["replied_text"],
                                           model_id=OBSERVER_MODEL, account=OBSERVER_ACCOUNT,
                                           request_id=f"klados.observe.{post['id']}.{post['screen_failures']}")
-            except gateway_module.GatewayError as error:
-                society_moderation.screen_failed(self.conn, post["id"])
+                outcome = society_moderation.apply_verdict(self.conn, self.rules, post["id"], verdict, self.now())
                 self.conn.commit()
+            except gateway_module.GatewayError as error:
+                self.conn.rollback()
+                outage = error.category in MODERATION_OUTAGE
+                if not outage:  # this post's own attempt; an outage is not the post's fault
+                    society_moderation.screen_failed(self.conn, post["id"])
+                    self.conn.commit()
                 self.log.append({"post": post["id"], "error": "observer call_" + error.category})
-                if self._failed(error):
-                    return "stop"
+                failures += error.category not in BAD_REPLY
+                if outage or failures >= self.max_failures:
+                    self.log.append({"moderation": "halted_for_this_pass", "reason": error.category})
+                    return None
                 continue
             except observer.ObserverError as error:
+                self.conn.rollback()
                 society_moderation.screen_failed(self.conn, post["id"])
                 self.conn.commit()
                 self.log.append({"post": post["id"], "error": "observer reply_" + error.code,
                                  "charged_microusd": getattr(error, "charged_microusd", 0)})
                 continue
-            outcome = society_moderation.apply_verdict(self.conn, self.rules, post["id"], verdict, self.now())
-            self.conn.commit()
+            except Exception as error:  # one post must never stop the society; never log its text
+                self.conn.rollback()
+                society_moderation.screen_failed(self.conn, post["id"])
+                self.conn.commit()
+                self.log.append({"post": post["id"], "error": "screening_" + type(error).__name__})
+                continue
             self.log.append({"post": post["id"], "moderation": outcome, "codes": verdict["codes"],
                              "by": verdict["by"], "charged_microusd": verdict["charged_microusd"]})
         return None
@@ -202,8 +225,6 @@ class Worker:
             try:
                 result = self.call(system, messages, request)
                 text = decisions.parse_last_words(result.text)
-                verdict = observer.review(self.observer_gateway, text, model_id=OBSERVER_MODEL,
-                                          account=OBSERVER_ACCOUNT, request_id=request + ".observe")
             except gateway_module.GatewayError as error:
                 society_death.failed(self.conn, agent_id)
                 self.conn.commit()
@@ -211,12 +232,23 @@ class Worker:
                 if self._failed(error):
                     return "stop"
                 continue
-            except (decisions.DecisionError, observer.ObserverError) as error:
+            except decisions.DecisionError as error:
                 society_death.failed(self.conn, agent_id)
                 self.conn.commit()
                 self.log.append({"agent": agent_id, "error": "last words reply_" + error.code})
                 continue
             self.failures = 0
+            try:  # moderation of the last words: a failure stays with this fossil, never a pause
+                verdict = observer.review(self.observer_gateway, text, model_id=OBSERVER_MODEL,
+                                          account=OBSERVER_ACCOUNT, request_id=request + ".observe")
+            except Exception as error:
+                self.conn.rollback()
+                society_death.failed(self.conn, agent_id)
+                self.conn.commit()
+                code = (error.category if isinstance(error, gateway_module.GatewayError) else
+                        error.code if isinstance(error, observer.ObserverError) else type(error).__name__)
+                self.log.append({"agent": agent_id, "error": "last words observer_" + code})
+                continue
             outcome = society_death.record(self.conn, self.rules, agent_id, text, verdict, self.now())
             self.conn.commit()
             self.log.append({"agent": agent_id, "last_words": outcome, "codes": verdict["codes"]})
