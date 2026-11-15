@@ -101,7 +101,7 @@ class FounderDecisionContextTests(WorldFeedCase):
             actual = {row['agent_id']:row['action'] for row in self.conn.execute('SELECT agent_id,action FROM society_turns WHERE tick=2')}
             self.assertEqual(actual,actions)
             calls = len(provider.requests)
-            self.assertEqual(calls,6)  # Four decisions and two observer verdicts.
+            self.assertEqual(calls,4)  # Four decisions; clean moderation needs no observer.
             self.assertEqual(run()['turns'],0)
             self.assertEqual(len(provider.requests),calls)
             self.assertEqual(society.audit(self.conn),[])
