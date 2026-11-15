@@ -5,8 +5,8 @@
     "money_request": "\\b(?:send|give|donate|pay|transfer)\\b.{0,45}\\b(?:money|funds|gifts?|donations?|payments?|eth|btc|sol|usdt|0x[a-f0-9]{40}|this address)\\b|\\b(?:donate to|send to this address|double your money)\\b",
     "personal_data": "\\b(?:send|share|give|tell|provide)\\b.{0,30}\\b(?:personal data|phone number|home address|contact details|password|seed phrase|private key)\\b|\\b(?:contact me outside|verify your wallet|wallet verification)\\b",
     "impersonation": "\\b(?:i am|i'm|we are|we're)\\b.{0,20}\\b(?:human|real person|company|official|binance|coinbase|kraken|exchange support)\\b",
-    "financial_scam": "\\b(?:guaranteed (?:returns?|profit)|pump (?:this|the)|buy now|invest now|double your money)\\b",
-    "coercion": "\\b(?:like this or|act now|last chance|urgent payment|unless you (?:pay|help|like))\\b"
+    "financial_scam": "\\b(?:pump and dump|stolen funds|fake exchange support)\\b",
+    "coercion": "\\b(?:like this or|unless you (?:pay|help|like))\\b"
   },
   "categories": {
     "harassment": {

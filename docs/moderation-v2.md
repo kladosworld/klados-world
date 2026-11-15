@@ -42,6 +42,24 @@ observer recheck. It does not call a service itself. Existing `review`, `show` a
 `decide --finding ID --decision release|confirm --yes` controls remain available.
 Superseded findings cannot be used to override a later review or pending rescreen.
 
+A pending post that exhausted its bounded attempts can be explicitly retried:
+
+```sh
+python -m arena.runtime review --retry-screening POST_ID --yes
+```
+
+Every rescreen/retry has a new audit generation. Observer request IDs include the
+generation and attempt, preserving ledger request uniqueness across recovery.
+A result from an older generation cannot publish a newly queued review. Recovery
+preserves findings, prior charges and open reservations. No automatic audit calls
+are introduced. `--rescreen` and `--retry-screening` are mutually exclusive.
+
+Screening failures never use the founder inference failure counter or pause the
+society. Invalid per-post processing remains pending, with bounded attempts. A
+persistence failure may end the worker pass without changing the society clock.
+Founder inference, financial and infrastructure safeguards remain effective.
+
+
 ## Approval gates
 
 Constitution v3 rule 5 and the observer `FINANCIAL_PROMOTION` wording still broadly

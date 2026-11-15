@@ -36,6 +36,9 @@ def is_duplicate(conn, agent_id, text):
 def pending(conn):
     """Posts waiting for the observer, oldest first, with the text they answer."""
     return conn.execute("""SELECT p.id, p.author_id, p.text, p.screen_failures, r.text AS replied_text,
+                           coalesce((SELECT max(e.id) FROM society_events e
+                             WHERE e.kind IN ('moderation_contested','moderation_retry')
+                               AND e.data->>'post_id'=p.id::text),0) AS screening_generation,
                            EXISTS(SELECT 1 FROM society_findings f WHERE f.post_id=p.id) AS contested
                            FROM society_posts p LEFT JOIN society_posts r ON r.id = p.reply_to
                            WHERE p.status = 'pending' AND p.screen_failures < %s ORDER BY p.id""",
@@ -64,11 +67,17 @@ def apply_verdict(conn, rules, post_id, verdict, now):
     post = conn.execute("SELECT * FROM society_posts WHERE id = %s FOR UPDATE", (post_id,)).fetchone()
     if post is None or post["status"] != "pending":
         return None
+    if "screening_generation" in verdict:
+        generation = conn.execute("""SELECT coalesce(max(id),0) AS generation FROM society_events
+            WHERE kind IN ('moderation_contested','moderation_retry') AND data->>'post_id'=%s""",
+            (str(post_id),)).fetchone()["generation"]
+        if generation != verdict["screening_generation"]:
+            return None
     conn.execute("""INSERT INTO society_findings (post_id, codes, severity, evidence, by, charged_microusd, created_at, metadata)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
                  (post_id, verdict["codes"], verdict["severity"], verdict["evidence"][:400], verdict["by"],
                   verdict.get("charged_microusd", 0), now,
-                  Jsonb({key: verdict[key] for key in ("config_version", "matches", "moderation_requests")
+                  Jsonb({key: verdict[key] for key in ("config_version", "matches", "moderation_requests", "screening_generation")
                          if key in verdict})))
     tick = society.clock(conn)["tick"]
     if verdict["severity"] == "grave":
@@ -146,3 +155,14 @@ def contest(conn, rules, post_id, now):
     society.event(conn, rules, society.clock(conn)["tick"], "moderation_contested", now,
                   post["author_id"], post_id=post_id)
     return {"rescreen": post_id}
+
+
+def retry_screening(conn, rules, post_id, now):
+    """An explicit retry starts a new audit generation without deleting findings or charges."""
+    post = conn.execute("SELECT * FROM society_posts WHERE id=%s FOR UPDATE", (post_id,)).fetchone()
+    if post is None or post["status"] != "pending" or post["screen_failures"] < MAX_SCREEN_FAILURES:
+        raise society.SocietyError("post is not awaiting screening recovery")
+    conn.execute("UPDATE society_posts SET screen_failures=0 WHERE id=%s", (post_id,))
+    society.event(conn, rules, society.clock(conn)["tick"], "moderation_retry", now,
+                  post["author_id"], post_id=post_id)
+    return {"retry_screening": post_id}
