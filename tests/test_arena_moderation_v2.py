@@ -178,6 +178,15 @@ class TierDatabaseTests(InviteCase):
         for _ in range(4):
             run.screen()
         row = self.conn.execute('SELECT status,screen_failures FROM society_posts WHERE id=%s', (post_id,)).fetchone()
+        self.assertEqual((row['status'], row['screen_failures']), ('pending', 0))
+        self.assertEqual(client.classify.call_count, 4)
+        self.assertFalse(society.clock(self.conn)['paused'])
+        # A malformed result is post-scoped and still has bounded retries.
+        client.classify.reset_mock()
+        client.classify.side_effect = moderation.ModerationError('invalid_response')
+        for _ in range(4):
+            run.screen()
+        row = self.conn.execute('SELECT status,screen_failures FROM society_posts WHERE id=%s', (post_id,)).fetchone()
         self.assertEqual((row['status'], row['screen_failures']), ('pending', 3))
         self.assertEqual(client.classify.call_count, 3)
         gateway.call.assert_not_called()
