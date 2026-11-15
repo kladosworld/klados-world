@@ -108,17 +108,18 @@ def decide(conn, rules, finding_id, decision, now):
     finding = conn.execute("SELECT * FROM society_findings WHERE id = %s FOR UPDATE", (finding_id,)).fetchone()
     if finding is None or finding["severity"] != "grave":
         raise society.SocietyError("finding not found")
+    if finding["decision"] is not None:
+        raise society.SocietyError("finding already decided")
+    post = conn.execute("SELECT * FROM society_posts WHERE id = %s FOR UPDATE", (finding["post_id"],)).fetchone()
+    # A rescreen may finish while this decision waits for the post lock.
     latest = conn.execute("SELECT max(id) AS id FROM society_findings WHERE post_id=%s",
                           (finding["post_id"],)).fetchone()["id"]
     if finding["id"] != latest:
         raise society.SocietyError("finding superseded")
-    if finding["decision"] is not None:
-        raise society.SocietyError("finding already decided")
-    post = conn.execute("SELECT * FROM society_posts WHERE id = %s FOR UPDATE", (finding["post_id"],)).fetchone()
-    conn.execute("UPDATE society_findings SET decision = %s, decided_at = %s WHERE id = %s",
-                 ("released" if decision == "release" else "confirmed", now, finding_id))
     if post["status"] != "withheld":
         raise society.SocietyError("post is awaiting rescreen")
+    conn.execute("UPDATE society_findings SET decision = %s, decided_at = %s WHERE id = %s",
+                 ("released" if decision == "release" else "confirmed", now, finding_id))
     if decision == "release":
         conn.execute("UPDATE society_posts SET status = 'published' WHERE id = %s", (post["id"],))
         return {"released": post["id"]}
