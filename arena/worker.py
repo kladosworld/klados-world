@@ -346,13 +346,13 @@ def build_gateway(ledger, models_path=MODELS_PATH, environ=os.environ, role="age
     if role not in ("agents", "observer"):
         raise ValueError("role must be agents or observer")
     models = gateway_module.load_models(models_path)
-    mode = environ.get("KLADOS_AI_MODE", "live")
+    mode = environ.get("KLADOS_AI_MODE")
     if mode == "mock":
         from arena.mock_provider import MockProvider
         return gateway_module.Gateway(ledger=ledger, models=models,
                                       providers={"openrouter": MockProvider()})
     if mode != "live":
-        raise ValueError("KLADOS_AI_MODE must be mock or live")
+        raise ValueError("KLADOS_AI_MODE must be explicitly set to mock or live")
     own = f"OPENROUTER_API_KEY_{role.upper()}"
     variable = own if environ.get(own) else "OPENROUTER_API_KEY"
     prices = {m.split(":", 1)[1]: p for m, p in models.items() if m.startswith("openrouter:")}
