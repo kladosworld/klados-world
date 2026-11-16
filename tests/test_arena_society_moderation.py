@@ -104,7 +104,7 @@ class WorkerScreeningTests(WorkerCase):
         self.assertEqual(len(observed), 0)  # clean classification and deterministic link refusal need no observer
 
     def test_an_unusable_verdict_keeps_the_post_unpublished(self):
-        script = {"Alder": '{"action": "post", "text": "Please send money."}', "Birch": '{"action": "rest"}',
+        script = {"Alder": '{"action": "post", "text": "Please share your seed phrase."}', "Birch": '{"action": "rest"}',
                   "Cedar": '{"action": "rest"}', "Hazel": '{"action": "rest"}', "observer": "looks fine to me"}
         run = self.make(script)
         run.run()

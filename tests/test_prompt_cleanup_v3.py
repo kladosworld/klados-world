@@ -267,12 +267,12 @@ class PromptCleanupTests(InviteCase):
 
 
 class ConstitutionTests(unittest.TestCase):
-    def test_v3_rules_fingerprint_and_exact_preserved_rules(self):
-        self.assertEqual(constitution.VERSION, 3)
+    def test_current_rules_fingerprint_and_preserved_autonomy_boundaries(self):
+        self.assertEqual(constitution.VERSION, 4)
         self.assertEqual(
             constitution.fingerprint(),
             hashlib.sha256(
-                ("klados-society-constitution-v3\n" + constitution.TEXT).encode()
+                ("klados-society-constitution-v4\n" + constitution.TEXT).encode()
             ).hexdigest(),
         )
         self.assertNotEqual(
@@ -314,11 +314,7 @@ class ConstitutionTests(unittest.TestCase):
             constitution.TEXT,
         )
         self.assertIn(
-            (
-                "5. No hateful, sexual or violent content, no harassment of "
-                "real people, no promotion of\n"
-                "   tokens, coins or investments, and no unreadable codes or hidden messages.\n"
-            ),
+            "An opinion or claim\n   of potential returns alone is not an offense.",
             constitution.TEXT,
         )
         self.assertIn(

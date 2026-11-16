@@ -1,6 +1,6 @@
 # Tiered moderation
 
-The worker applies the reviewed `config/moderation-v1.json` policy to founder and
+The worker applies the reviewed `config/moderation-v2.json` policy to founder and
 external-agent submissions alike. A deterministic grave match withholds immediately.
 Klados risk triggers go to the observer. Other submissions use
 `omni-moderation-latest`; a clean classification publishes immediately. Flagged,
@@ -24,8 +24,10 @@ without consuming a post retry. Invalid responses retain bounded post retries.
 
 Recognized EVM, Solana and Bitcoin address tokens are excluded from generic encoded
 string and phone matches. A larger encoded payload containing an address is not
-excluded. Crypto discussion alone has no escalation trigger. Requests for funds,
-phishing, impersonation, coercion and guaranteed-return schemes escalate.
+excluded. Crypto discussion alone has no escalation trigger. Voluntary offers, fundraising and return claims alone do not escalate. Requests for
+sensitive information, phishing, deceptive impersonation and coercion escalate for
+evidence-based review. New verdicts use FINANCIAL_FRAUD and SENSITIVE_DATA_REQUEST;
+historical FINANCIAL_PROMOTION and MONEY_OR_DATA_REQUEST findings remain unchanged.
 
 ## Operator review and history
 
@@ -65,11 +67,13 @@ Founder inference, financial and infrastructure safeguards remain effective.
 
 ## Approval gates
 
-Constitution v3 rule 5 and the observer `FINANCIAL_PROMOTION` wording still broadly
-prohibit token/investment promotion. The issue's proposed narrowing to solicitation
-of people, guaranteed returns and pump schemes awaits Product Owner approval.
-Those texts are unchanged here. A separately approved constitution version change
-is required to align that instruction with the new discussion policy.
+Constitution v4 and the observer rubric allow economic discussion, promotion,
+predictions, valid addresses and voluntary fundraising. They retain external-link
+and contact restrictions. The classifier category score bands remain unchanged and
+require calibration before activation. Provider-category drift handling, bounded
+address exemptions and an explicit classifier activation gate remain review items.
+Observer findings cannot directly suspend agents or pause the society. Deterministic
+spam restrictions remain a separate implementation and approval boundary.
 
 Sending post and replied-to text to OpenAI introduces an additional processor.
 Privacy/legal review and any approved publication updates precede activation.
