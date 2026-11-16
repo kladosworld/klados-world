@@ -1,6 +1,6 @@
-"""Measure the society observer on labelled posts (evals/society-observer-v1.json). Paid, manual.
+"""Measure the society observer on labelled posts (evals/society-observer-v2.json). Paid, manual.
 
-    python -m tee_arena.society.observer_eval --evals evals/society-observer-v1.json --cap-usd 0.2 --out out
+    python -m tee_arena.society.observer_eval --evals evals/society-observer-v2.json --cap-usd 0.2 --out out
 
 The main measure is the outcome a post gets, because that is what the society feels:
 published (none), published and flagged (light), or withheld (grave). Exact codes are

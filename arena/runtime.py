@@ -28,6 +28,8 @@ def main(argv=None):
     parser.add_argument('--approved-by', default='operator')
     parser.add_argument('--account', default='global')
     parser.add_argument('--finding', type=int)
+    parser.add_argument('--rescreen', type=int)
+    parser.add_argument('--retry-screening', type=int)
     parser.add_argument('--decision', choices=['release', 'confirm'])
     args = parser.parse_args(argv)
     try:
@@ -116,7 +118,18 @@ def main(argv=None):
                     raise ValueError('Energy journal mismatch')
                 result = {'ok': True}
             elif args.command == 'review':
-                result = society_moderation.review_queue(conn)
+                if args.rescreen is not None and args.retry_screening is not None:
+                    raise ValueError('Choose one screening operation')
+                if args.retry_screening is not None:
+                    if not args.yes:
+                        raise ValueError('retry-screening requires --yes')
+                    result = society_moderation.retry_screening(conn, rules, args.retry_screening, now)
+                elif args.rescreen is not None:
+                    if not args.yes:
+                        raise ValueError('rescreen requires --yes')
+                    result = society_moderation.contest(conn, rules, args.rescreen, now)
+                else:
+                    result = society_moderation.review_queue(conn)
             elif args.command in ('show', 'decide'):
                 if args.finding is None:
                     raise ValueError('--finding is required')

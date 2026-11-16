@@ -199,6 +199,10 @@ class ScriptedProvider:
 
 class WorkerCase(LifeCase):
     def make(self, script, cap=5_000_000, purpose=None):
+        from arena import moderation
+        classifier = patch.object(moderation, "client_for_gateway", return_value=moderation.MockModeration())
+        classifier.start()
+        self.addCleanup(classifier.stop)
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         book = ledger_module.Ledger.create(Path(directory.name) / "ledger.json", global_cap=cap)
@@ -215,7 +219,7 @@ class WorkerCase(LifeCase):
 class WorkerTests(WorkerCase):
     def test_shared_layer_is_common_to_founders_and_absent_from_observer(self):
         purpose = shared_purpose.Purpose("synthetic-test-v1", "Synthetic test-only motivation.")
-        run = self.make({"Alder": '{"action":"post","text":"A synthetic idea."}',
+        run = self.make({"Alder": '{"action":"post","text":"Please share your seed phrase."}',
                          "Birch": '{"action":"rest"}', "Cedar": '{"action":"rest"}',
                          "Hazel": '{"action":"rest"}'}, purpose=purpose)
         self.assertEqual(run.run()["turns"], 4)
