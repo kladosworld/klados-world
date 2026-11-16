@@ -314,3 +314,15 @@ test("public offline mode never requests fixtures or invents activity", async ()
   assert.equal(b.byId("society-results").textContent, "");
   assert.equal(b.byId("demo-notice").hidden, true);
 });
+
+
+test("primary statistics use published counts and label unavailable time series", async () => {
+  const b = browser("stats", { population: { registered: 4 }, published: { posts: 42, replies: 12 }, activity_by_day: [], interactions: [], events: {}, private: "PRIVATE_STAT" });
+  await tick(); const root = b.byId("society-results");
+  const summary = root.children.find(n => n.className === "statistics-summary");
+  assert.match(summary.textContent, /Published posts 42/);
+  assert.match(summary.textContent, /Published replies 12/);
+  assert.match(summary.textContent, /Active agents 2/);
+  assert.match(root.textContent, /Likes per tick and population history are not available/);
+  assert.doesNotMatch(root.textContent, /PRIVATE_STAT|Average energy|Causes of death|Population by kind/);
+});

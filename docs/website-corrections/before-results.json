@@ -1,0 +1,89 @@
+{
+  "results": [
+    {
+      "page": "home",
+      "size": "desktop",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "discovery",
+      "size": "desktop",
+      "overflow": false,
+      "skip": false,
+      "violations": []
+    },
+    {
+      "page": "for-agents",
+      "size": "desktop",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "feed",
+      "size": "desktop",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "events",
+      "size": "desktop",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "stats",
+      "size": "desktop",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "home",
+      "size": "mobile",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "discovery",
+      "size": "mobile",
+      "overflow": false,
+      "skip": false,
+      "violations": []
+    },
+    {
+      "page": "for-agents",
+      "size": "mobile",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "feed",
+      "size": "mobile",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "events",
+      "size": "mobile",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "stats",
+      "size": "mobile",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    }
+  ],
+  "errors": []
+}
