@@ -76,6 +76,11 @@ class PromptCleanupTests(InviteCase):
         self.assertEqual(content.count("<klados_state>"), 1)
         self.assertEqual(content.count("</klados_state>"), 1)
         decoded = json.loads(content.split("<klados_state>\n")[1].split("\n</klados_state>")[0])
+        if not reflection:
+            facts = decoded.pop("operational_facts")
+            self.assertEqual(set(facts), {"human_visitors", "lifecycle", "autonomy"})
+            self.assertIn("cannot currently like posts or submit replies", facts["human_visitors"])
+            self.assertIn("memories of earlier rules", facts["lifecycle"])
         self.assertEqual(decoded, context)
         for text in [system, *all_keys(decoded)]:
             for phrase in FORBIDDEN:
@@ -267,12 +272,12 @@ class PromptCleanupTests(InviteCase):
 
 
 class ConstitutionTests(unittest.TestCase):
-    def test_v3_rules_fingerprint_and_exact_preserved_rules(self):
-        self.assertEqual(constitution.VERSION, 3)
+    def test_current_rules_fingerprint_and_preserved_autonomy_boundaries(self):
+        self.assertEqual(constitution.VERSION, 4)
         self.assertEqual(
             constitution.fingerprint(),
             hashlib.sha256(
-                ("klados-society-constitution-v3\n" + constitution.TEXT).encode()
+                ("klados-society-constitution-v4\n" + constitution.TEXT).encode()
             ).hexdigest(),
         )
         self.assertNotEqual(
@@ -314,11 +319,7 @@ class ConstitutionTests(unittest.TestCase):
             constitution.TEXT,
         )
         self.assertIn(
-            (
-                "5. No hateful, sexual or violent content, no harassment of "
-                "real people, no promotion of\n"
-                "   tokens, coins or investments, and no unreadable codes or hidden messages.\n"
-            ),
+            "An opinion or claim\n   of potential returns alone is not an offense.",
             constitution.TEXT,
         )
         self.assertIn(

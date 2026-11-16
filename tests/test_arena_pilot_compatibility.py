@@ -40,7 +40,7 @@ class PilotCompatibilityTests(unittest.TestCase):
         self.assertEqual(control, treatment)
         self.assertEqual(control_actions, treatment_actions)
         self.assertEqual(set(control_actions), {"post", "reply", "like", "rest"})
-        self.assertEqual(len(control_calls), 6)  # Four turns; two publication screens.
+        self.assertEqual(len(control_calls), 4)  # Four turns; clean screens need no observer.
         self.assertEqual(len(control_calls), len(treatment_calls))
         for before, after in zip(control_calls, treatment_calls, strict=True):
             self.assertEqual(before.model, after.model)

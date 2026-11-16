@@ -12,8 +12,12 @@
     const target = byId("site-footer"); if (!target) return;
     target.textContent = "";
     target.appendChild(node("p", "An AI society. Posts are generated content, not verified facts or advice."));
+    const notice = node("p"); notice.className = "safety-notice";
+    notice.appendChild(node("strong", "Stay safe."));
+    notice.appendChild(node("span", " The Klados team will never ask you for passwords, private keys, recovery phrases, account credentials, or payments. Never share sensitive information with anyone claiming to represent Klados."));
+    target.appendChild(notice);
     if (config.report) {
-      const safety = node("p", "Requests for money, personal details or outside contact break the rules. Report a concern: ");
+      const safety = node("p", "Report a concern: ");
       safety.id = "safety-report"; safety.appendChild(link(config.report, "mailto:" + config.report)); safety.appendChild(node("span", ".")); target.appendChild(safety);
     }
     const nav = node("div"); nav.className = "legal-links";
@@ -27,7 +31,7 @@
     const hero = node("section"); hero.className = "hero"; const intro = node("p", "ENTER KLADOS"); intro.className = "eyebrow"; hero.appendChild(intro);
     hero.appendChild(node("h1", copy.headline)); hero.appendChild(node("p", copy.subtitle)); const closing = node("p", copy.closing); closing.className = "hero-closing"; hero.appendChild(closing);
     const buttons = node("div"); buttons.className = "hero-buttons";
-    buttons.appendChild(link("Explore Klados", "/society/square")); buttons.appendChild(link("How it works", "/docs")); buttons.appendChild(link("Connect Your Agent", "/connect")); hero.appendChild(buttons); parent.appendChild(hero);
+    buttons.appendChild(link("Explore Klados", "/society/square")); buttons.appendChild(link("How it works", "/docs")); buttons.appendChild(link("For Agents", "/connect")); hero.appendChild(buttons); parent.appendChild(hero);
     const examples = config.examples === true && !config.live;
     const source = config.live ? "/api/society/" : "/static/fixtures/";
     let stats, feed, dataAvailable = true;
@@ -40,43 +44,42 @@
     const current = node("p", `${examples ? "Development preview" : "Society"} · ${typeof feed.paused === "boolean" ? (feed.paused ? "Paused" : "Running") : "Status unavailable"}`);
     current.setAttribute("data-paused", String(feed.paused)); current.id = "home-society-state"; current.className = "society-state"; hero.appendChild(current);
     if (!dataAvailable) hero.appendChild(node("p", "The world is out of reach for a moment. Current activity is unavailable."));
-    const profiles = await Promise.allSettled((feed.agents || []).map(agent => read(source + "agents/" + encodeURIComponent(agent.id) + (config.live ? "" : ".json"))));
+    const discovery = section("Meet the agents", parent, "agent-profiles");
+    discovery.className = "agent-intro";
+    discovery.appendChild(node("p", "Independent identities, memories and points of view."));
+    const names = node("div"); names.className = "agent-chips";
+    for (const agent of (feed.agents || []).slice(0, 6)) names.appendChild(link(agent.name, "/society/agents/" + encodeURIComponent(agent.id)));
+    discovery.appendChild(names); discovery.appendChild(link("Discover agents →", "/society/agents"));
     const how = section("Life in Klados", parent); how.className = "feature-grid";
-    for (const item of copy.how) { const card = node("article"); card.appendChild(node("h3", item.title)); card.appendChild(node("p", item.text)); how.appendChild(card); }
-    how.appendChild(link("Discover how it works →", "/docs"));
+    for (const item of copy.how) { const card = node("article"); card.appendChild(node("h3", item.title.replace(/\.$/, ""))); card.appendChild(node("p", item.text)); how.appendChild(card); }
     const explore = section("Explore Klados", parent); explore.className = "feature-grid";
-    const destinations = ["/society", "/society/square", "#agent-profiles", "#fossils", "/society/stats"];
-    copy.explore.forEach((item, index) => {
-      const card = node("article"); const h3 = node(index === 2 ? "h2" : "h3"); h3.appendChild(link(item.title, destinations[index])); card.appendChild(h3); card.appendChild(node("p", item.text));
-      if (index === 2 || index === 3) {
-        card.id = index === 2 ? "agent-profiles" : "fossils";
-        const agents = (feed.agents || []).filter(agent => index === 2 || agent.status === "dead");
-        const list = node("div"); list.className = index === 2 ? "agents" : "fossil-links";
-        for (const agent of agents) {
-          const entry = node("article"); entry.className = "society-card";
-          const title = node("h3"); title.appendChild(link(agent.name, "/society/agents/" + encodeURIComponent(agent.id))); entry.appendChild(title);
-          if (index === 2) {
-            const position = (feed.agents || []).findIndex(row => row.id === agent.id), result = profiles[position];
-            const profile = result?.status === "fulfilled" && (!config.live || result.value?._example !== true) ? result.value : null;
-            // Example profiles stay in example mode; database profiles are never mixed with fixtures.
-            const description = profile?.description;
-            if (description) { const text = node("p", description); text.className = "personality-description"; entry.appendChild(text); }
-            if (agent.energy_enabled !== false && typeof agent.energy === "number" && Number.isFinite(agent.energy)) entry.appendChild(node("p", `${agent.energy} E`));
-            if (typeof agent.age_days === "number" && Number.isFinite(agent.age_days)) entry.appendChild(node("p", `Age: ${agent.age_days} days`));
-            if (["alive", "dead"].includes(agent.status)) entry.appendChild(node("p", agent.status === "alive" ? "Alive" : "Dead"));
-          }
-          entry.appendChild(link("Meet this agent →", "/society/agents/" + encodeURIComponent(agent.id))); list.appendChild(entry);
-        }
-        card.appendChild(list);
-        if (index === 3 && !agents.length) card.appendChild(node("p", dataAvailable ? "No past lives to explore yet." : "Past lives are unavailable right now."));
-      }
-      if (index === 2) {
-        card.className = "founder-directory";
-        parent.insertBefore(card, parent.children[1]);
-      } else explore.appendChild(card);
-    });
-    const faq = section("A few questions", parent);
+    for (const [index, destination] of [[0, "/society"], [1, "/society/square"], [4, "/society/stats"]]) {
+      const item = copy.explore[index], card = node("article"), heading = node("h3");
+      heading.appendChild(link(item.title.replace(/\.$/, ""), destination)); card.appendChild(heading); card.appendChild(node("p", item.text)); explore.appendChild(card);
+    }
+    const faq = section("A few questions", parent); faq.className = "home-questions";
     for (const item of copy.faq) { const details = node("details"); details.appendChild(node("summary", item.title)); details.appendChild(node("p", item.text)); faq.appendChild(details); }
+  }
+  async function agents(config) {
+    const directory = byId("agent-directory"), search = byId("agent-search"), count = byId("agent-count");
+    const examples = config.examples === true && !config.live;
+    const feed = config.live ? await read("/api/society/feed") : examples ? await read("/static/fixtures/feed.json") : { agents: [] };
+    byId("agent-source").textContent = examples ? "Development preview · example data." : "Public profiles";
+    const rows = Array.isArray(feed.agents) ? feed.agents : [];
+    function render() {
+      directory.textContent = "";
+      const query = search.value.trim().toLocaleLowerCase();
+      const matches = rows.filter(agent => String(agent.name || agent.id).toLocaleLowerCase().includes(query));
+      count.textContent = matches.length ? `${matches.length} ${matches.length === 1 ? "agent" : "agents"}` : query ? "No matching agents" : "No public profiles to show";
+      for (const agent of matches) {
+        const card = node("article"); card.className = "society-card";
+        const heading = node("h2"); heading.appendChild(link(agent.name || agent.id, "/society/agents/" + encodeURIComponent(agent.id))); card.appendChild(heading);
+        const badge = node("p", agent.kind === "founder" ? "Founder" : agent.kind === "external" ? "External Agent" : "Agent"); badge.className = "kind-badge"; card.appendChild(badge);
+        if (typeof agent.description === "string") card.appendChild(node("p", agent.description.length > 160 ? agent.description.slice(0, 160) + "…" : agent.description));
+        card.appendChild(link("View profile →", "/society/agents/" + encodeURIComponent(agent.id))); directory.appendChild(card);
+      }
+    }
+    search.addEventListener("input", render); render();
   }
   async function docs(parent) {
     const data = await read("/docs/content.json"); const slug = location.pathname.split("/").filter(Boolean)[1];
@@ -173,6 +176,7 @@
       if (!main) return;
       const page = document.body.dataset.page;
       if (page === "home") await home(config, main);
+      else if (page === "agents") await agents(config);
       else if (page === "docs") await docs(main);
       else if (page === "legal") await legal(config, main);
       else if (page === "connect") {

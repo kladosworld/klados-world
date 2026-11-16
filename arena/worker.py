@@ -21,7 +21,7 @@ from pathlib import Path
 import sys
 import time
 
-from arena import db, society, society_death, society_life, society_moderation
+from arena import db, moderation, society, society_death, society_life, society_moderation
 from tee_arena import gateway as gateway_module, ledger as ledger_module
 from tee_arena.society import decisions, observer, prompts, shared_purpose, rules as rules_module
 
@@ -32,12 +32,12 @@ OBSERVER_MODEL = "openrouter:openai/gpt-6-luna"  # another family than the agent
 ACCOUNT = "society-agents"
 OBSERVER_ACCOUNT = "society-observer"
 MAX_OUTPUT_TOKENS = 1200  # the model may spend part of it reasoning before the JSON
-PAUSE_AT_ONCE = ("cap_exceeded", "credential_unavailable", "stopped", "model_not_allowed")
+PAUSE_AT_ONCE = ("cap_exceeded", "credential_unavailable", "accounting_unavailable", "stopped", "model_not_allowed")
 # The provider answered, but the reply cannot be used: a rest, not an outage.
 BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
 # Observer outages: screening stops for the pass and the posts stay unpublished. Moderation
 # never pauses the society (administrative, budget and infrastructure pauses come from founder calls).
-MODERATION_OUTAGE = ("cap_exceeded", "credential_unavailable", "sdk_unavailable", "stopped", "model_not_allowed")
+MODERATION_OUTAGE = ("cap_exceeded", "credential_unavailable", "accounting_unavailable", "sdk_unavailable", "stopped", "model_not_allowed")
 # Unbilled provider refusals that concern the observer as a whole (key, credit, permission, rate).
 OBSERVER_WIDE_STATUSES = (401, 402, 403, 429)
 OBSERVER_CODES = ("invalid_json", "schema", "unknown_code")
@@ -55,13 +55,14 @@ def _observer_code(error):
 
 
 class Worker:
-    def __init__(self, conn, rules, gateway, *, observer_gateway=None, model_id=AGENT_MODEL,
+    def __init__(self, conn, rules, gateway, *, observer_gateway=None, moderation_client=None, model_id=AGENT_MODEL,
                  account=ACCOUNT, max_failures=3, delays=(10, 20, 40), sleep=time.sleep, now=None,
                  purpose=None):
         if purpose is not None and not isinstance(purpose, shared_purpose.Purpose):
             raise shared_purpose.PurposeConfigurationError("invalid_purpose")
         self.purpose = purpose
         self.conn, self.rules, self.gateway = conn, rules, gateway
+        self.moderation_client = moderation_client
         self.observer_gateway = observer_gateway  # None: posts stay unpublished
         self.model_id, self.account, self.max_failures = model_id, account, max_failures
         self.delays, self.sleep = delays, sleep
@@ -149,18 +150,28 @@ class Worker:
             return None
         failures = 0
         for post in society_moderation.pending(self.conn):
+            def record_request(version):
+                society.event(self.conn, self.rules, society.clock(self.conn)["tick"],
+                              "moderation_request", self.now(), post["author_id"],
+                              post_id=post["id"], config_version=version)
+                self.conn.commit()
+
             try:
                 request_id = self._observe_request_id(post)
-                # A malformed post or verdict cannot leave a partial publication behind.
+                client = self.moderation_client or moderation.client_for_gateway(self.observer_gateway)
+                # The classifier audit is committed before submission. Verdict application
+                # and its metadata remain atomic; any failed review is rolled back below.
+                verdict = moderation.review(self.observer_gateway, client, post["text"], post["replied_text"],
+                    model_id=OBSERVER_MODEL, account=OBSERVER_ACCOUNT, contested=post["contested"],
+                    on_request=record_request, request_id=request_id)
+                verdict["screening_generation"] = post["screening_generation"]
                 with self.conn.transaction():
-                    verdict = observer.review(self.observer_gateway, post["text"], post["replied_text"],
-                                              model_id=OBSERVER_MODEL, account=OBSERVER_ACCOUNT,
-                                              request_id=request_id)
                     outcome = society_moderation.apply_verdict(self.conn, self.rules, post["id"], verdict, self.now())
                     record = {"post": post["id"], "moderation": outcome, "codes": verdict["codes"],
                               "by": verdict["by"], "charged_microusd": verdict["charged_microusd"]}
                 self.conn.commit()
             except gateway_module.GatewayError as error:
+                self.conn.rollback()
                 self.log.append({"post": post["id"], "error": "observer call_" + error.category})
                 outage = _observer_wide(error)
                 # An outage is not the post's fault: it keeps its retries, and the next attempt
@@ -172,13 +183,26 @@ class Worker:
                     self.log.append({"moderation": "halted_for_this_pass", "reason": error.category})
                     return None
                 continue
+            except moderation.ModerationError as error:
+                self.conn.rollback()
+                code = str(error) if str(error) in ("invalid_config", "invalid_response", "service_unavailable", "credential_unavailable") else "invalid_response"
+                self.log.append({"post": post["id"], "error": "moderation_" + code})
+                if code in ("service_unavailable", "credential_unavailable", "invalid_config"):
+                    if not self._observer_outage(post, "moderation_" + code):
+                        return "stop"
+                    return None
+                if not self._screen_failed(post["id"]):
+                    return "stop"
+                continue
             except observer.ObserverError as error:
+                self.conn.rollback()
                 self.log.append({"post": post["id"], "error": "observer reply_" + _observer_code(error),
                                  "charged_microusd": getattr(error, "charged_microusd", 0)})
                 if not self._screen_failed(post["id"]):
                     return "stop"
                 continue
             except Exception:  # one post must never stop the society; never log its text
+                self.conn.rollback()
                 self.log.append({"post": post["id"], "error": "screening_unexpected"})
                 if not self._screen_failed(post["id"]):
                     return "stop"
@@ -197,7 +221,11 @@ class Worker:
             "SELECT count(*) AS n FROM society_events WHERE kind = 'moderation_outage' AND data->>'post_id' = %s",
             (str(post["id"]),)).fetchone()["n"]
         suffix = f".o{outages}" if outages else ""
-        return f"klados.observe.{post['id']}.{post['screen_failures']}{suffix}"
+        generation = post.get("screening_generation", 0)
+        prefix = f"klados.observe.{post['id']}"
+        if generation:
+            prefix += f".g{generation}"
+        return f"{prefix}.{post['screen_failures']}{suffix}"
 
     def _observer_outage(self, post, category):
         """Record an observer outage for the post (no retry penalty). False if it cannot be recorded."""
@@ -346,13 +374,13 @@ def build_gateway(ledger, models_path=MODELS_PATH, environ=os.environ, role="age
     if role not in ("agents", "observer"):
         raise ValueError("role must be agents or observer")
     models = gateway_module.load_models(models_path)
-    mode = environ.get("KLADOS_AI_MODE", "live")
+    mode = environ.get("KLADOS_AI_MODE")
     if mode == "mock":
         from arena.mock_provider import MockProvider
         return gateway_module.Gateway(ledger=ledger, models=models,
                                       providers={"openrouter": MockProvider()})
     if mode != "live":
-        raise ValueError("KLADOS_AI_MODE must be mock or live")
+        raise ValueError("KLADOS_AI_MODE must be explicitly set to mock or live")
     own = f"OPENROUTER_API_KEY_{role.upper()}"
     variable = own if environ.get(own) else "OPENROUTER_API_KEY"
     prices = {m.split(":", 1)[1]: p for m, p in models.items() if m.startswith("openrouter:")}

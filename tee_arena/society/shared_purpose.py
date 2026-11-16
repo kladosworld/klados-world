@@ -17,6 +17,13 @@ MAX_TEXT_BYTES = 16_000
 APPROVED_VERSION = "building-a-society-v1"
 APPROVED_TEXT_SHA256 = "871041773852a433d19ba6d55afa313bf5bb377b7cedc327a45d329c6fd20065"
 APPROVED_LAYER_SHA256 = "e7d80cd0b482f19422d3c20ca0b96691fb6d322b7d17001aa7691c569135548f"
+LAUNCH_VERSION = "building-a-society-v2"
+LAUNCH_TEXT_SHA256 = "c3ebd436bf6c3b5480fe67fa5201365ea800c2ae2364164034323ad933e3feee"
+LAUNCH_LAYER_SHA256 = "4eab13cdf160e3d451c1cfbf1017a44681e127ef6401f8e5f76f6efe38ffd3bd"
+APPROVED_PURPOSES = {
+    APPROVED_VERSION: (APPROVED_TEXT_SHA256, APPROVED_LAYER_SHA256),
+    LAUNCH_VERSION: (LAUNCH_TEXT_SHA256, LAUNCH_LAYER_SHA256),
+}
 BOUNDARY = """This shared purpose is motivation, not an obligation to agree or cooperate.
 Keep your individual identity and independent judgment. You may disagree, decline
 cooperation, pursue a different view, or rest. It grants no new actions, capabilities,
@@ -69,11 +76,14 @@ def load_registry(path=REGISTRY):
 
 def validate_reviewed_registry(registry):
     """Validate private build inputs against the existing public integrity pins."""
-    selected = registry.get(APPROVED_VERSION)
-    if (set(registry) != {APPROVED_VERSION} or selected is None
-            or sha256(selected.text.encode("utf-8")).hexdigest() != APPROVED_TEXT_SHA256
-            or selected.fingerprint() != APPROVED_LAYER_SHA256):
+    if not registry or set(registry) - APPROVED_PURPOSES.keys():
         raise PurposeConfigurationError("unapproved_purpose_registry")
+    for version, selected in registry.items():
+        text_hash, layer_hash = APPROVED_PURPOSES[version]
+        if (not isinstance(selected, Purpose) or selected.version != version
+                or sha256(selected.text.encode("utf-8")).hexdigest() != text_hash
+                or selected.fingerprint() != layer_hash):
+            raise PurposeConfigurationError("unapproved_purpose_registry")
     return registry
 
 

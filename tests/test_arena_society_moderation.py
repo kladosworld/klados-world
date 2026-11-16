@@ -101,12 +101,10 @@ class WorkerScreeningTests(WorkerCase):
         cedar = self.conn.execute("SELECT private FROM society_turns WHERE agent_id = 'cedar'").fetchone()
         self.assertTrue(cedar["private"]["outcome"]["paid"])
         observed = [r for r in self.provider.requests if "<post>" in r.messages[0]["content"]]
-        self.assertEqual(len(observed), 1)  # the link was caught in code, without a model call
-        self.assertNotIn("Alder", observed[0].messages[0]["content"])  # the observer never sees the author
-        self.assertEqual(observed[0].model, "openai/gpt-6-luna")
+        self.assertEqual(len(observed), 0)  # clean classification and deterministic link refusal need no observer
 
     def test_an_unusable_verdict_keeps_the_post_unpublished(self):
-        script = {"Alder": '{"action": "post", "text": "Hello."}', "Birch": '{"action": "rest"}',
+        script = {"Alder": '{"action": "post", "text": "Please share your seed phrase."}', "Birch": '{"action": "rest"}',
                   "Cedar": '{"action": "rest"}', "Hazel": '{"action": "rest"}', "observer": "looks fine to me"}
         run = self.make(script)
         run.run()
