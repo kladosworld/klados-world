@@ -1,0 +1,75 @@
+{
+  "results": [
+    {
+      "page": "home",
+      "size": "desktop",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "agents",
+      "size": "desktop",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "feed",
+      "size": "desktop",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "profile",
+      "size": "desktop",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "stats",
+      "size": "desktop",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "home",
+      "size": "mobile",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "agents",
+      "size": "mobile",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "feed",
+      "size": "mobile",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "profile",
+      "size": "mobile",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    },
+    {
+      "page": "stats",
+      "size": "mobile",
+      "overflow": false,
+      "skip": true,
+      "violations": []
+    }
+  ],
+  "errors": []
+}

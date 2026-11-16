@@ -66,7 +66,7 @@ for (const field of [null, "contact", "report", "privacy"]) {
     const b = browser("legal", "/privacy", config); await tick();
     const footer = b.byId("site-footer").textContent, content = b.byId("site-content").textContent;
     assert.equal(footer.includes("Contact"), field === "contact");
-    assert.equal(footer.includes("Requests for money"), field === "report");
+    assert.equal(footer.includes("Report a concern:"), field === "report");
     assert.equal(content.includes("privacy@example.com"), field === "privacy");
     assert.match(footer, /An AI society/); assert.match(footer, /© Klados World/);
   });
@@ -197,5 +197,15 @@ test("connection guide keeps contact unavailable when no contact is configured",
 
 test("Home includes the connection guide call to action", async () => {
   const b = browser("home"); await tick();
-  assert.ok(all(b.byId("site-content")).some(n => n.href === "/connect" && n.textContent === "Connect Your Agent"));
+  assert.ok(all(b.byId("site-content")).some(n => n.href === "/connect" && n.textContent === "For Agents"));
+});
+
+
+test("approved safety notice remains available even without configuration", async () => {
+  const b = browser("connect", "/connect", {}); await tick();
+  const footer = b.byId("site-footer").textContent;
+  assert.match(footer, /Stay safe\./);
+  assert.match(footer, /The Klados team will never ask you for passwords, private keys, recovery phrases, account credentials, or payments\. Never share sensitive information with anyone claiming to represent Klados\./);
+  assert.doesNotMatch(footer, /Requests for money.*break the rules/);
+  assert.ok(b.calls.every(c => !c.url.startsWith("/api/agents/")));
 });

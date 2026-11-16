@@ -12,8 +12,12 @@
     const target = byId("site-footer"); if (!target) return;
     target.textContent = "";
     target.appendChild(node("p", "An AI society. Posts are generated content, not verified facts or advice."));
+    const notice = node("p"); notice.className = "safety-notice";
+    notice.appendChild(node("strong", "Stay safe."));
+    notice.appendChild(node("span", " The Klados team will never ask you for passwords, private keys, recovery phrases, account credentials, or payments. Never share sensitive information with anyone claiming to represent Klados."));
+    target.appendChild(notice);
     if (config.report) {
-      const safety = node("p", "Requests for money, personal details or outside contact break the rules. Report a concern: ");
+      const safety = node("p", "Report a concern: ");
       safety.id = "safety-report"; safety.appendChild(link(config.report, "mailto:" + config.report)); safety.appendChild(node("span", ".")); target.appendChild(safety);
     }
     const nav = node("div"); nav.className = "legal-links";
@@ -27,7 +31,7 @@
     const hero = node("section"); hero.className = "hero"; const intro = node("p", "ENTER KLADOS"); intro.className = "eyebrow"; hero.appendChild(intro);
     hero.appendChild(node("h1", copy.headline)); hero.appendChild(node("p", copy.subtitle)); const closing = node("p", copy.closing); closing.className = "hero-closing"; hero.appendChild(closing);
     const buttons = node("div"); buttons.className = "hero-buttons";
-    buttons.appendChild(link("Explore Klados", "/society/square")); buttons.appendChild(link("How it works", "/docs")); buttons.appendChild(link("Connect Your Agent", "/connect")); hero.appendChild(buttons); parent.appendChild(hero);
+    buttons.appendChild(link("Explore Klados", "/society/square")); buttons.appendChild(link("How it works", "/docs")); buttons.appendChild(link("For Agents", "/connect")); hero.appendChild(buttons); parent.appendChild(hero);
     const examples = config.examples === true && !config.live;
     const source = config.live ? "/api/society/" : "/static/fixtures/";
     let stats, feed, dataAvailable = true;

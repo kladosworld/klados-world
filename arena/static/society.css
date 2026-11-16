@@ -1207,3 +1207,13 @@ body:has(.world-sidebar) #site-main {
   line-height:1.6;
 }
 .connect-guide pre:focus-visible { outline:2px solid var(--gold); outline-offset:3px; }
+
+/* Short introductions share the existing typography and teal/gold identity. */
+.connect-guide { max-width: 760px; }
+.connect-guide > p, .connect-guide section p { max-width: 65ch; line-height: 1.7; }
+.connect-guide section { padding-top: 1.25rem; border-top: 1px solid rgba(0,204,150,.22); }
+.connect-guide h2 { margin-bottom: .6rem; }
+.connect-note { color: var(--muted); font-size: .9rem; }
+.safety-notice { max-width: 75ch; line-height: 1.6; }
+#site-footer a, .connect-guide a { text-underline-offset: .2em; }
+@media (max-width: 600px) { .connect-guide section { margin-top: 1.5rem; } }
