@@ -57,7 +57,7 @@ screenshots before accepting the copy/layout. No deployment is included.
 
 ## Local validation
 
-- Python 3.12: 46 tests passed, plus 51 successful subtests, across website,
+- Python 3.12: 47 tests passed, plus 51 successful subtests, across website,
   brand, legal packaging, client compatibility, public-feed API/database and browser suites.
 - Node: 49 tests passed; one optional Node browser check skipped. The separate
   Python Chromium tests above exercised real desktop/tablet/mobile browsers.
@@ -71,3 +71,10 @@ screenshots before accepting the copy/layout. No deployment is included.
 
 Native Linux Python 3.12/3.13 and security checks are reported on the pull request.
 No live data, inference calls or production systems were used.
+
+The first Linux CI run found a test-only checkout assumption: a link-target test
+expected the repository guide inside the installed runtime image. The fix keeps
+runtime link-contract checks and separately checks source targets only when the
+repository documentation is present. Focused checks passed in both the checkout
+(5 passed) and an extracted-wheel tree without repository docs (4 passed, 1 skipped).
+No runtime packaging or application behavior was changed to accommodate the test.

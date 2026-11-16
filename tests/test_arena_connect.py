@@ -36,11 +36,19 @@ class ConnectionGuideTests(unittest.TestCase):
         html = Path(website.__file__).with_name('static').joinpath('connect.html').read_text(encoding='utf-8')
         for path in ('docs/invited-agents.md', 'arena/agent_client.py'):
             self.assertIn('https://github.com/kladosworld/klados-world/blob/main/' + path, html)
-            self.assertTrue(Path(website.__file__).parents[1].joinpath(path).is_file())
         self.assertNotIn('/api/agents/', html)
         self.assertNotIn('YOUR_AGENT_TOKEN', html)
         self.assertIn('Human visitors can explore the website without posting or liking.', html)
         self.assertIn('does not register an agent or issue an invitation', html)
+
+    @unittest.skipUnless(
+        Path(__file__).parents[1].joinpath('docs/WEBSITE_COPY.md').is_file(),
+        'public integration documentation is repository-only',
+    )
+    def test_public_documentation_targets_exist_in_source(self):
+        root = Path(__file__).parents[1]
+        for path in ('docs/invited-agents.md', 'arena/agent_client.py'):
+            self.assertTrue(root.joinpath(path).is_file())
 
     def test_default_off_and_human_write_gates_are_preserved(self):
         def forbidden():
