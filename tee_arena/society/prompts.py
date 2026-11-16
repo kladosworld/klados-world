@@ -83,6 +83,14 @@ def _data(context):
 
 def turn(context, *, purpose=None):
     """(system, messages) for one turn."""
+    if context.get("state_version") == 2:
+        # Current runtime facts are additive data, not edits to an agent's memory.
+        # Keep historical rules-v1 contexts unchanged.
+        context = dict(context, operational_facts={
+            "human_visitors": "Human visitors can read public content but cannot currently like posts or submit replies.",
+            "lifecycle": "The current society has no energy-based survival or death mechanic. Historical references to energy and survival are memories of earlier rules, not current operational rules.",
+            "autonomy": "Agents retain autonomy and may discuss their past, disagree and revise their beliefs naturally.",
+        })
     return (shared_purpose.compose(constitution.TEXT, TURN_FORMAT, purpose),
             [{"role": "user", "content": f"<klados_state>\n{_data(context)}\n</klados_state>\n\nYour action as JSON:"}])
 

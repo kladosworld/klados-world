@@ -76,6 +76,11 @@ class PromptCleanupTests(InviteCase):
         self.assertEqual(content.count("<klados_state>"), 1)
         self.assertEqual(content.count("</klados_state>"), 1)
         decoded = json.loads(content.split("<klados_state>\n")[1].split("\n</klados_state>")[0])
+        if not reflection:
+            facts = decoded.pop("operational_facts")
+            self.assertEqual(set(facts), {"human_visitors", "lifecycle", "autonomy"})
+            self.assertIn("cannot currently like posts or submit replies", facts["human_visitors"])
+            self.assertIn("memories of earlier rules", facts["lifecycle"])
         self.assertEqual(decoded, context)
         for text in [system, *all_keys(decoded)]:
             for phrase in FORBIDDEN:
