@@ -165,7 +165,7 @@ class WebsiteHTTPTests(unittest.TestCase):
                         if legal_exists:
                             expected.extend(('/privacy', '/terms'))
                         if live == '1':
-                            expected.extend(('/society', '/society/square', '/society/stats'))
+                            expected.extend(('/society', '/society/square', '/society/agents', '/society/events', '/society/stats'))
                         self.assertEqual(urls, ['https://kladosworld.com' + path for path in expected])
                         self.assertEqual(client.post('/sitemap.xml').status_code, 404)
 
