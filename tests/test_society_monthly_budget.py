@@ -107,6 +107,70 @@ class MonthlyTests(unittest.TestCase):
             self.assertEqual(self.path.read_bytes(), content)
         self.path.write_bytes(original)
 
+    def test_guard_snapshot_reconciles_reservation_months_and_lifetime_accounts(self):
+        book = ledger.Ledger.create(Path(self.directory.name) / 'guard.json', global_cap=1_000_000)
+        book.open_account('society-agents', 1_000_000)
+        book.open_account('society-observer', 1_000_000)
+        book.set_budget(10_000_000, reference='synthetic-policy', approved_by='test',
+                        warning_microusd=7_000_000, apply=True, approved=True)
+        late = book.reserve('society-agents', 600, 'guard.november-late')
+        book.reserve('society-agents', 200, 'guard.november-open')
+        self.clock.return_value = DECEMBER
+        book.settle(late, 400)
+        settled = book.reserve('society-observer', 100, 'guard.december-settled')
+        book.settle(settled, 80)
+        book.reserve('society-observer', 120, 'guard.december-open')
+        before = book.path.read_bytes()
+        status = book.budget_status()
+        self.assertEqual(status['month'], '2026-12')
+        self.assertEqual((status['charged_microusd'], status['reserved_microusd']), (80, 120))
+        self.assertEqual(status['pending_by_month'], {'2026-11': 200, '2026-12': 120})
+        self.assertEqual(status['accounts'], {
+            'society-agents': {'cap_microusd': 1_000_000, 'charged_microusd': 400, 'reserved_microusd': 200},
+            'society-observer': {'cap_microusd': 1_000_000, 'charged_microusd': 80, 'reserved_microusd': 120}})
+        self.assertEqual(status['lifetime_cap_microusd'], 1_000_000)
+        self.assertEqual(status['lifetime_charged_microusd'], 480)
+        self.assertEqual(status['lifetime_reserved_microusd'], 320)
+        self.assertEqual(status['lifetime_available_microusd'], 999_200)
+        self.assertEqual(status['available_microusd'], 9_999_800)
+        # Generating a newer report is not new ledger or provider activity.
+        self.clock.return_value = '2026-12-01T00:05:00+00:00'
+        following = ledger.Ledger(book.path).budget_status()
+        self.assertNotEqual(following['as_of'], status['as_of'])
+        self.assertEqual({k: v for k, v in following.items() if k != 'as_of'},
+                         {k: v for k, v in status.items() if k != 'as_of'})
+        self.assertEqual(book.path.read_bytes(), before)
+
+    def test_guard_report_keeps_tighter_account_cap_and_refused_request_cursor(self):
+        book = ledger.Ledger.create(Path(self.directory.name) / 'tight.json', global_cap=1_000_000)
+        book.open_account('society-agents', 100)
+        book.open_account('society-observer', 1_000_000)
+        book.set_budget(10_000_000, reference='synthetic-policy', approved_by='test', apply=True, approved=True)
+        book.reserve('society-agents', 100, 'guard.account-full')
+        status = book.budget_status()
+        before = book.path.read_bytes()
+        with self.assertRaises(ledger.CapExceeded) as failure:
+            book.reserve('society-agents', 1, 'guard.refused')
+        self.assertEqual(failure.exception.scope, 'society-agents')
+        self.assertGreater(status['available_microusd'], 0)
+        self.assertGreater(status['lifetime_available_microusd'], 0)
+        self.assertEqual(status['accounts']['society-agents']['cap_microusd'], 100)
+        self.assertEqual(status['accounts']['society-agents']['reserved_microusd'], 100)
+        self.assertEqual(book.budget_status(), status)
+        self.assertEqual(book.path.read_bytes(), before)
+
+    def test_guard_cli_failed_snapshot_emits_no_json_or_sensitive_diagnostics(self):
+        from arena import runtime
+        for content in (b'{PRIVATE_CONTENT_CANARY', b'{"format":"unknown","events":[]}'):
+            self.path.write_bytes(content)
+            with patch.object(runtime.db, 'connect', side_effect=AssertionError('no database')), \
+                    redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()) as errors:
+                self.assertEqual(runtime.main(['budget', 'show', '--ledger', str(self.path)]), 1)
+            self.assertEqual(output.getvalue(), '')
+            self.assertNotIn('PRIVATE_CONTENT_CANARY', errors.getvalue())
+            self.assertNotIn(str(self.path), errors.getvalue())
+            self.assertEqual(self.path.read_bytes(), content)
+
     def test_maximum_reservation_warning_and_no_partial_write(self):
         self.policy()
         hold = self.book.reserve('society-agents', 700, 'turn')
