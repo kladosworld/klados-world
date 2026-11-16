@@ -37,7 +37,7 @@ PAUSE_AT_ONCE = ("cap_exceeded", "credential_unavailable", "accounting_unavailab
 BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
 # Observer outages: screening stops for the pass and the posts stay unpublished. Moderation
 # never pauses the society (administrative, budget and infrastructure pauses come from founder calls).
-MODERATION_OUTAGE = ("cap_exceeded", "credential_unavailable", "sdk_unavailable", "stopped", "model_not_allowed")
+MODERATION_OUTAGE = ("cap_exceeded", "credential_unavailable", "accounting_unavailable", "sdk_unavailable", "stopped", "model_not_allowed")
 # Unbilled provider refusals that concern the observer as a whole (key, credit, permission, rate).
 OBSERVER_WIDE_STATUSES = (401, 402, 403, 429)
 OBSERVER_CODES = ("invalid_json", "schema", "unknown_code")

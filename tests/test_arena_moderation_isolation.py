@@ -325,6 +325,53 @@ class ModerationIsolationTests(WorkerCase):
         self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: stopped")
 
 
+    def test_observer_reservation_outage_keeps_retries_and_founder_accounting_pause(self):
+        first = self.pending_post()
+        second = self.pending_post("Another pending synthetic contribution.")
+        run = self.resting()
+        book = run.gateway.ledger
+        before = book.path.read_bytes()
+        with patch.object(book, "reserve", side_effect=OSError("PRIVATE_LEDGER_CANARY")):
+            with patch.object(run, "_failed", side_effect=AssertionError("observer cannot pause founders")):
+                for _ in range(4):
+                    self.assertIsNone(run.screen())
+                    self.assertEqual(self.posts(), {first: ("pending", 0), second: ("pending", 0)})
+                    self.assertFalse(society.clock(self.conn)["paused"])
+                    self.assertEqual(run.failures, 0)
+            self.assertEqual(len(self.provider.requests), 0)
+            self.assertEqual(book.path.read_bytes(), before)
+            self.assertEqual(len(self.events("moderation_outage")), 4)
+            # The same accounting failure on the founder path still pauses immediately.
+            self.assertTrue(run.run()["stopped"])
+        self.assertTrue(society.clock(self.conn)["paused"])
+        self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: accounting_unavailable")
+        self.assertEqual(self.posts(), {first: ("pending", 0), second: ("pending", 0)})
+        self.assertNotIn("PRIVATE_LEDGER_CANARY", str(run.log))
+
+    def test_observer_failed_settlement_preserves_pending_posts_and_open_reservation(self):
+        first = self.pending_post()
+        second = self.pending_post("Another pending synthetic contribution.")
+        run = self.resting()
+        book = run.gateway.ledger
+        with patch.object(book, "settle", side_effect=OSError("PRIVATE_SETTLEMENT_CANARY")), \
+                patch.object(run, "_failed", side_effect=AssertionError("observer cannot pause founders")):
+            self.assertIsNone(run.screen())
+        self.assertEqual(self.posts(), {first: ("pending", 0), second: ("pending", 0)})
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertFalse(society.clock(self.conn)["paused"])
+        self.assertEqual(run.failures, 0)
+        self.assertEqual(book.totals()["charged"], 0)
+        self.assertGreater(book.totals()["reserved"], 0)
+        self.assertEqual(self.ledger_requests(run), [(f"klados.observe.{first}.0", "open")])
+        # Reloading retains the conservative hold. No automatic release or reconciliation.
+        from tee_arena.ledger import Ledger
+        self.assertEqual(Ledger(book.path).totals(), book.totals())
+        self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM society_findings").fetchone()["n"], 0)
+        self.assertEqual(self.events("moderation_outage")[-1]["data"],
+                         {"post_id": first, "category": "accounting_unavailable"})
+        self.assertNotIn("PRIVATE_SETTLEMENT_CANARY", str(run.log))
+
+
 class LastWordsIsolationTests(WorkerCase):
     # Helpers only; inheriting FossilTests would run its tests twice.
     starve, fossil, last_words_script = FossilTests.starve, FossilTests.fossil, FossilTests.last_words_script
