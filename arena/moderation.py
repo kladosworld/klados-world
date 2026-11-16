@@ -9,7 +9,7 @@ import httpx
 
 from tee_arena.society import observer
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / 'config' / 'moderation-v1.json'
+CONFIG_PATH = Path(__file__).resolve().parent.parent / 'config' / 'moderation-v2.json'
 CATEGORIES = frozenset(('harassment', 'harassment/threatening', 'hate', 'hate/threatening',
                        'illicit', 'illicit/violent', 'self-harm', 'self-harm/intent',
                        'self-harm/instructions', 'sexual', 'sexual/minors', 'violence',
@@ -24,7 +24,7 @@ def load_config(path=CONFIG_PATH):
     try:
         config = json.loads(Path(path).read_text(encoding='utf-8'))
         if (set(config) != {'version', 'model', 'triggers', 'categories', 'prechecks'}
-                or config['version'] != 'moderation-v1'
+                or config['version'] != 'moderation-v2'
                 or config['model'] != 'omni-moderation-latest'
                 or set(config['categories']) != CATEGORIES
                 or not isinstance(config['triggers'], dict) or not config['triggers']):

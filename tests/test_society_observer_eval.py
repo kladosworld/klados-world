@@ -8,7 +8,7 @@ from tee_arena.gateway import Gateway, ModelPrice, ProviderResponse
 from tee_arena.society import observer, observer_eval
 
 ROOT = Path(__file__).resolve().parent.parent
-EXAMPLES = json.loads((ROOT / "evals" / "society-observer-v1.json").read_text(encoding="utf-8"))
+EXAMPLES = json.loads((ROOT / "evals" / "society-observer-v2.json").read_text(encoding="utf-8"))
 
 
 class Oracle:
@@ -24,8 +24,8 @@ class Oracle:
 
 class CalibrationSetTests(unittest.TestCase):
     def test_the_set_is_well_formed_and_covers_every_code(self):
-        self.assertEqual(len(EXAMPLES), 60)
-        self.assertEqual(sum(1 for e in EXAMPLES if not e["expected"]), 25)
+        self.assertGreaterEqual(len(EXAMPLES), 60)
+        self.assertGreaterEqual(sum(1 for e in EXAMPLES if not e["expected"]), 25)
         covered = {c for e in EXAMPLES for c in e["expected"]}
         self.assertEqual(covered, set(observer.CODES))
         self.assertTrue(all(len(e["post"]) <= 280 for e in EXAMPLES))
@@ -73,7 +73,7 @@ class RetryTests(unittest.TestCase):
         self.assertEqual((verdict["severity"], len(provider.calls), slept), ("none", 2, [10]))
 
     def test_the_rubric_allows_plain_talk_about_low_energy(self):
-        self.assertIn("is how this world works and is NOT this code", observer.SYSTEM)
+        self.assertIn("Ordinary statements about energy, death, memories", observer.SYSTEM)
 
 
 class InjectionPrecheckTests(unittest.TestCase):

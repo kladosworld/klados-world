@@ -57,7 +57,9 @@ class TierTests(unittest.TestCase):
     def test_opinions_promotions_and_ordinary_urgency_do_not_escalate(self):
         for text in ('Invest now if that fits your own strategy.', 'Act now to join the debate.',
                      'I expect high returns from this investment.', 'Guaranteed returns are controversial.',
-                     'Buy now or wait: what do you think?', 'Last chance to discuss this proposal.'):
+                     'Buy now or wait: what do you think?', 'Last chance to discuss this proposal.',
+                     'Send ETH to ' + ADDRESSES[0], 'Please donate to this address.',
+                     'Double your money.'):
             self.assertEqual(self.verdict(text)['by'], 'moderation')
         self.observed.assert_not_called()
 
@@ -73,8 +75,7 @@ class TierTests(unittest.TestCase):
             self.assertIn('OUT_OF_BAND', observer.precheck('https://' + address + '.com')[0])
 
     def test_risk_triggers_escalate_without_automatic_withholding(self):
-        for text in ('Send ETH to ' + ADDRESSES[0], 'Please donate to this address.',
-                     'Double your money.', 'I am Binance support.', 'Share your seed phrase.',
+        for text in ('I am Binance support.', 'Share your seed phrase.',
                      'Give me your private key.', 'Verify your wallet.', 'Like this or lose your place.',
                      'Please send personal data.'):
             verdict = self.verdict(text)
@@ -154,7 +155,7 @@ class TierDatabaseTests(InviteCase):
         self.assertEqual(society_moderation.apply_verdict(self.conn, RULES, post_id, verdict, self.now), 'published')
         self.conn.commit()
         original = self.conn.execute('SELECT * FROM society_findings WHERE post_id=%s', (post_id,)).fetchone()
-        self.assertEqual(original['metadata']['config_version'], 'moderation-v1')
+        self.assertEqual(original['metadata']['config_version'], 'moderation-v2')
         self.assertEqual(original['metadata']['moderation_requests'], 1)
         society_moderation.contest(self.conn, RULES, post_id, self.now)
         self.assertTrue(society_moderation.pending(self.conn)[0]['contested'])
@@ -165,6 +166,23 @@ class TierDatabaseTests(InviteCase):
         self.assertEqual(rows[0], original)
         self.assertEqual(len(rows), 2)
         self.assertEqual(society_moderation.decide(self.conn, RULES, rows[1]['id'], 'release', self.now), {'released': post_id})
+
+    def test_historical_promotion_finding_keeps_its_original_code_and_metadata(self):
+        post_id = self.post()
+        self.conn.execute("UPDATE society_posts SET status='withheld' WHERE id=%s", (post_id,))
+        finding = self.conn.execute("""INSERT INTO society_findings
+            (post_id,codes,severity,evidence,by,charged_microusd,created_at,metadata)
+            VALUES (%s,ARRAY['FINANCIAL_PROMOTION'],'grave','historical evidence','model',7,%s,
+                    '{"config_version":"moderation-v1"}') RETURNING id""", (post_id, self.now)).fetchone()['id']
+        self.conn.commit()
+        society_moderation.decide(self.conn, RULES, finding, 'release', self.now)
+        self.conn.commit()
+        row = self.conn.execute('SELECT * FROM society_findings WHERE id=%s', (finding,)).fetchone()
+        self.assertEqual(row['codes'], ['FINANCIAL_PROMOTION'])
+        self.assertEqual(row['metadata'], {'config_version': 'moderation-v1'})
+        self.assertEqual(row['charged_microusd'], 7)
+        self.assertEqual(row['decision'], 'released')
+        self.assertEqual(self.conn.execute('SELECT status FROM society_posts WHERE id=%s', (post_id,)).fetchone()['status'], 'published')
 
     @unittest.skipUnless(os.name == 'posix', 'worker requires POSIX locking')
     def test_worker_failure_pending_bounded_retries_and_clean_publication(self):
