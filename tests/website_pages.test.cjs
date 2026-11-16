@@ -35,7 +35,7 @@ function browser(page, pathname = "/", config = { live: false, examples: true },
 }
 module.exports = { browser, tick };
 
-test("Home copy is verbatim, founders are prominent and fixture agents/fossils come from data", async () => {
+test("Home hero is verbatim and compact identities link to discovery", async () => {
   const b = browser("home"); await tick(); const content = b.byId("site-content");
   assert.ok(content.textContent.includes(copy.headline)); assert.ok(content.textContent.includes(copy.subtitle));
   assert.equal(content.children[1].children[0].textContent, "Meet the agents");
@@ -52,11 +52,12 @@ test("mocked live Home uses data counts and generic profile names with no fossil
   const feed = { agents: [{ id: "custom-agent", name: "A different agent", status: "alive" }] };
   const b = browser("home", "/", { live: true }, { feed, stats: data }); await tick();
   assert.ok(b.calls.some(c => c.url === "/api/society/stats"));
-  assert.match(b.byId("site-content").textContent, /No past lives to explore yet/);
+  assert.ok(all(b.byId("site-content")).some(n => n.href === "/society/agents"));
   assert.match(b.byId("site-content").textContent, /9/);
   assert.match(b.byId("site-content").textContent, /88/);
   assert.match(b.byId("site-content").textContent, /A different agent/);
   assert.doesNotMatch(source, /alder|birch|cedar|hazel/i);
+  assert.ok(!b.calls.some(c => c.url.includes("/api/society/agents/")));
 });
 
 for (const field of [null, "contact", "report", "privacy"]) {
@@ -142,9 +143,9 @@ test("Home shows registered identities and pause status without repeated mode no
   const b = browser("home", "/", { live: true, ai_mode: "mock" }, { feed, stats: { tick: 2, population: { alive: 1, dead: 0 } }, profiles: { first: { description: "An API personality." } } }); await tick();
   assert.doesNotMatch(b.byId("site-content").textContent, /Mock AI mode/);
   assert.match(b.byId("site-content").textContent, /Paused/);
-  assert.match(b.byId("site-content").textContent, /An API personality/);
-  assert.match(b.byId("site-content").textContent, /299 E/);
-  assert.ok(b.calls.some(c => c.url === "/api/society/agents/first"));
+  assert.doesNotMatch(b.byId("site-content").textContent, /An API personality/);
+  assert.doesNotMatch(b.byId("site-content").textContent, /299 E/);
+  assert.ok(!b.calls.some(c => c.url === "/api/society/agents/first"));
 });
 
 test("public Home has no fixture fallback or mock-mode notices", async () => {

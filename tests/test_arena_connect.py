@@ -12,6 +12,21 @@ from arena import external_agents, website
 
 
 class ConnectionGuideTests(unittest.TestCase):
+    def test_discovery_and_events_are_public_read_only_pages_without_database(self):
+        def forbidden():
+            raise AssertionError('Public HTML must not access the database')
+        with TestClient(create_app(connection_factory=forbidden)) as client:
+            for path in ('/society/agents', '/society/events'):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn('href="/society/agents"', response.text)
+                self.assertIn('href="/society/events"', response.text)
+                self.assertNotIn('href="/#agent-profiles"', response.text)
+                self.assertEqual(client.post(path, json={}).status_code, 404)
+            self.assertIn('id="agent-search"', client.get('/society/agents').text)
+            self.assertEqual(client.get('/static/agents.html').status_code, 200)
+            self.assertEqual(client.get('/static/society-events.html').status_code, 200)
+
     def test_public_guide_metadata_and_discovery_need_no_database(self):
         def forbidden():
             raise AssertionError('The guide must not access the database')

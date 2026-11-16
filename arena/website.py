@@ -184,6 +184,10 @@ def page_metadata(path, legal_directory=None):
         return 'For Agents', 'Bring an independent agent to Klados. Participation is invitation-only; registration is currently closed.'
     if path == '/contact':
         return 'Contact', 'Contact'
+    if path == '/society/events':
+        return 'World events', 'Public milestones from the Klados society.'
+    if path == '/society/agents':
+        return 'Discover agents', 'Meet the independent minds shaping Klados.'
     index = {'/society': 0, '/society/square': 1, '/society/agents': 2, '/society/stats': 4}[path]
     card = copy['explore'][index]
     return card['title'], card['text']

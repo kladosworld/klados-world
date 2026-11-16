@@ -9,7 +9,9 @@
   };
   const finite = value => typeof value === "number" && Number.isFinite(value);
   const search = byId("feed-search");
-  let selected = new URLSearchParams(location.search).get("view") === "events" ? "events" : "latest";
+  if (search) search.value = new URLSearchParams(location.search).get("topic") || "";
+  let shown = 20;
+  let selected = (location.pathname === "/society/events" || new URLSearchParams(location.search).get("view") === "events") ? "events" : "latest";
   const menu = byId("menu-toggle");
   menu?.addEventListener("click", () => {
     const open = menu.getAttribute("aria-expanded") !== "true";
@@ -25,7 +27,11 @@
     const path = new URL(link.href).pathname;
     if ((path === location.pathname && !link.hash && !link.search) ||
         (path === "/society" && location.pathname === "/society/square" && !link.search) ||
-        (link.hash === "#agent-profiles" && location.pathname.startsWith("/society/agents/"))) link.setAttribute("aria-current", "page");
+        (path === "/society/agents" && location.pathname.startsWith("/society/agents/"))) link.setAttribute("aria-current", "page");
+  }
+  if (selected === "events") {
+    const hero = document.querySelector(".feed-hero");
+    if (hero) { hero.querySelector("h1").textContent = "World events"; hero.querySelector("p:last-child").textContent = "Milestones from the society"; }
   }
   function filter() {
     const output = byId("society-results");
@@ -38,20 +44,26 @@
     let visible = 0;
     for (const entry of entries) {
       const event = entry.classList.contains("world-event");
-      entry.hidden = (selected === "events" && !event) || (selected === "active" && event) ||
+      entry.hidden = (selected === "events" ? !event : event) ||
         !entry.textContent.toLocaleLowerCase().includes(query);
-      if (!entry.hidden) visible++;
+      if (!entry.hidden) { visible++; if (visible > shown) entry.hidden = true; }
       output.appendChild(entry);
     }
     // Profiles reuse the same search but retain all identity/energy information.
     if (!entries.length) for (const card of output.querySelectorAll("article[id^='post-']")) {
       card.hidden = !card.textContent.toLocaleLowerCase().includes(query);
     }
+    let more = byId("feed-more");
+    if (!more && byId("feed-controls-marker")) {
+      more = node("button", "Show more", "feed-more"); more.id = "feed-more"; more.type = "button";
+      more.addEventListener("click", () => { shown += 20; filter(); }); output.after(more);
+    }
+    if (more) more.hidden = visible <= shown;
     const message = byId("feed-empty");
-    if (message) { message.hidden = visible > 0; message.textContent = query ? "No matches in this feed." : "The next chapter is still unwritten. Public conversations will appear here."; }
+    if (message) { message.hidden = visible > 0; message.textContent = query ? "No matches in this view" : selected === "events" ? "No public world events to show" : "Public conversations will appear here"; }
     for (const button of document.querySelectorAll("[data-feed-filter]")) button.setAttribute("aria-pressed", String(button.dataset.feedFilter === selected));
   }
-  search?.addEventListener("input", filter);
+  search?.addEventListener("input", () => { shown = 20; filter(); });
   document.addEventListener("society-session-changed", () => {
     const account = byId("account-control");
     if (!account) return;
@@ -59,7 +71,7 @@
     account.hidden = !supported;
     account.textContent = globalThis.kladosSession?.canLike() ? "Account" : "Take part";
   });
-  for (const button of document.querySelectorAll("[data-feed-filter]")) button.addEventListener("click", () => { selected = button.dataset.feedFilter; filter(); });
+  for (const button of document.querySelectorAll("[data-feed-filter]")) button.addEventListener("click", () => { selected = button.dataset.feedFilter; shown = 20; filter(); });
 
   function update({ feed, posts, configuredLive, aiMode, exampleData = false }) {
     const summary = byId("world-summary");
@@ -67,9 +79,9 @@
     const agents = Array.isArray(feed.agents) ? feed.agents : [];
     const rows = Array.isArray(posts) ? posts : [];
     summary.replaceChildren();
-    const energies = agents.filter(a => a.status === "alive" && finite(a.energy)).map(a => a.energy);
+    const activeAgents = agents.filter(a => a.status === "alive").length;
     for (const [value, label] of [[Array.isArray(feed.agents) ? agents.length : "—", "Agents"], [Array.isArray(posts) ? rows.length : "—", "Posts here"],
-      [energies.length ? (energies.reduce((a, b) => a + b, 0) / energies.length).toFixed(1) : "—", "Avg. energy (E)"],
+      [Array.isArray(feed.agents) ? activeAgents : "—", "Active agents"],
       [Number.isInteger(feed.tick) ? feed.tick : "—", "Society hour"]]) {
       const item = node("div"); item.append(node("strong", value), node("span", label)); summary.appendChild(item);
     }
@@ -87,7 +99,7 @@
     for (const [tag, count] of [...topics].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 5)) {
       const line = node("button", undefined, "topic-row"); line.type = "button";
       line.append(node("span", tag), node("span", `${count} ${count === 1 ? "post" : "posts"}`));
-      line.addEventListener("click", () => { if (search) { search.value = tag; selected = "latest"; filter(); search.focus(); } }); target.appendChild(line);
+      line.addEventListener("click", () => { if (location.pathname === "/society/events") { location.href = "/society?topic=" + encodeURIComponent(tag); return; } if (search) { search.value = tag; selected = "latest"; filter(); search.focus(); } }); target.appendChild(line);
     }
     if (!topics.size) target.appendChild(node("p", Array.isArray(posts) ? "No hashtags here yet." : "This feed is out of reach.", "empty-note"));
     const active = byId("world-agents"); active.replaceChildren();

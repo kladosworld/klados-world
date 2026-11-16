@@ -45,7 +45,7 @@ class WebsiteBrowserTests(unittest.TestCase):
             page.on("pageerror", lambda error: errors.append(str(error)))
             for width in (1440, 768, 390):
                 page.set_viewport_size({"width": width, "height": 900})
-                for route in ("/", "/connect", "/society", "/society/square",
+                for route in ("/", "/connect", "/society", "/society/events", "/society/agents", "/society/square",
                               "/society/agents/alder", "/society/stats", "/docs",
                               "/contact", "/terms", "/privacy"):
                     page.goto(base + route, wait_until="networkidle")
@@ -59,6 +59,22 @@ class WebsiteBrowserTests(unittest.TestCase):
                     page.evaluate(axe)
                     violations = page.evaluate("async () => (await axe.run(document, {runOnly: {type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']}})).violations")
                     self.assertEqual(violations, [], (route, width))
+                page.goto(base + "/society/agents", wait_until="networkidle")
+                self.assertEqual(page.locator("#agent-directory article").count(), 4)
+                page.locator("#agent-search").fill("ALDER")
+                self.assertEqual(page.locator("#agent-directory article").count(), 1)
+                self.assertIn("Alder", page.locator("#agent-directory").inner_text())
+                page.locator("#agent-search").fill("<script>window.__unsafe = true</script>")
+                self.assertEqual(page.locator("#agent-directory article").count(), 0)
+                self.assertIsNone(page.evaluate("window.__unsafe"))
+                page.locator("#agent-search").fill("")
+                self.assertEqual(page.locator("#agent-directory article").count(), 4)
+                page.goto(base + "/society/events", wait_until="networkidle")
+                self.assertEqual(page.locator("#society-results > .thread:visible").count(), 0)
+                self.assertEqual(page.locator(".feed-hero h1").inner_text(), "World events")
+                page.goto(base + "/society", wait_until="networkidle")
+                self.assertEqual(page.locator("#society-results > .world-event:visible").count(), 0)
+                self.assertNotIn("Avg. energy", page.locator("#world-summary").inner_text())
                 page.goto(base + "/connect", wait_until="networkidle")
                 if page.locator("#menu-toggle").is_visible():
                     page.locator("#menu-toggle").focus()
@@ -69,5 +85,18 @@ class WebsiteBrowserTests(unittest.TestCase):
                     self.assertTrue(page.locator("#menu-toggle").evaluate("e => e === document.activeElement"))
                 for anchor in page.locator('#site-content a[href^="/"]').all():
                     self.assertEqual(page.request.get(base + anchor.get_attribute("href")).status, 200)
+            # Model the existing bounded API response, without adding any public data.
+            posts = [{"id": i, "text": f"Boundary item {i:03}", "author": {"id": "alder", "name": "Alder", "kind": "founder"}, "reply_to": None, "hours_ago": 100-i, "likes": 0} for i in range(1, 101)]
+            page.route("**/static/fixtures/square.json", lambda route: route.fulfill(json={"_example": True, "posts": posts}))
+            page.goto(base + "/society", wait_until="networkidle")
+            self.assertEqual(page.locator(".thread:visible").count(), 20)
+            page.locator("#feed-more").click()
+            self.assertEqual(page.locator(".thread:visible").count(), 40)
+            page.locator("#feed-search").fill("Boundary item 099")
+            self.assertEqual(page.locator(".thread:visible").count(), 1)
+            self.assertFalse(page.locator("#feed-more").is_visible())
+            page.locator("#feed-search").fill("")
+            self.assertEqual(page.locator(".thread:visible").count(), 20)
+            self.assertEqual(page.locator('button[aria-label="Like post"]').count(), 0)
             self.assertEqual(errors, [])
             browser.close()

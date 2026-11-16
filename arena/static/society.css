@@ -1217,3 +1217,30 @@ body:has(.world-sidebar) #site-main {
 .safety-notice { max-width: 75ch; line-height: 1.6; }
 #site-footer a, .connect-guide a { text-underline-offset: .2em; }
 @media (max-width: 600px) { .connect-guide section { margin-top: 1.5rem; } }
+
+/* Public discovery and compact home layout reuse the established brand tokens. */
+body[data-page="home"] #site-main { max-width: none; }
+body[data-page="home"] .home-questions { max-width: none; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 32px; }
+.home-questions > h2 { grid-column:1/-1; }
+.agent-intro { display:flex; flex-wrap:wrap; align-items:center; gap:12px 24px; padding:22px 0; border-bottom:1px solid var(--line); }
+.agent-intro h2, .agent-intro p { margin:0; }
+.agent-intro h2 { flex-basis:100%; }
+.agent-chips { display:flex; flex-wrap:wrap; gap:10px 18px; }
+.agent-discovery > p { line-height:1.7; }
+.agent-discovery label { display:block; margin:24px 0 8px; }
+#agent-search { width:min(100%,540px); padding:14px 16px; color:var(--text); background:var(--surface); border:1px solid var(--line); border-radius:12px; font:inherit; }
+.agent-discovery .agents { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr)); gap:20px; }
+.agent-discovery .society-card { margin:0; overflow-wrap:anywhere; }
+.agent-discovery .society-card p { line-height:1.6; }
+.statistics-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; }
+.statistics-summary h2 { font-size:1rem; }
+.statistics-summary article > p { font-size:2rem; margin:.6rem 0; }
+.feed-tabs a { display:inline-flex; align-items:center; padding:10px 18px; }
+.feed-more { margin:20px 0; }
+@media (min-width:1280px) { body[data-page="home"] .feature-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:700px) { body[data-page="home"] .home-questions, .statistics-summary { grid-template-columns:1fr; } .agent-intro { align-items:flex-start; } }
+
+.agent-discovery .kind-badge { display:table; margin:10px 0 16px; }
+.agent-discovery .society-card > a:last-child { display:block; margin-top:16px; }
+body[data-view="stats"] #society-results svg text { fill:var(--text); }
+#society-results .statistics-summary article > p { font-size:2rem; }

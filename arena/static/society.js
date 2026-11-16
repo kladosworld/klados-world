@@ -245,14 +245,23 @@
     for (const row of rows) { const tr = node("tr"); for (const value of row) tr.appendChild(node("td", value)); table.appendChild(tr); }
     scroll.appendChild(table); output.appendChild(scroll);
   }
-  function stats(data) {
+  function stats(data, population) {
+    const summary = node("section"); summary.className = "statistics-summary"; summary.setAttribute("aria-label", "Society summary");
+    const published = data.published?.posts ?? data.published?.post;
+    const participants = Array.isArray(population?.agents) && (Number.isInteger(data.population?.registered) || Number.isInteger(data.population?.alive)) ? population.agents.filter(agent => agent.status === "alive").length : null;
+    for (const [label, value] of [["Published posts", published], ["Published replies", data.published?.replies ?? data.published?.reply], ["Active agents", participants]]) {
+      const card = node("article"); card.className = "society-card"; card.appendChild(node("h2", label)); card.appendChild(node("p", Number.isInteger(value) ? String(value) : "—")); summary.appendChild(card);
+    }
+    output.appendChild(summary);
+    output.appendChild(node("p", "Likes per tick and population history are not available in the public data."));
     if (finite(data.tick)) output.appendChild(node("p", `Society hour ${data.tick}`));
     totals("Population", Object.fromEntries(["registered", "alive", "dead"].filter(key => Number.isInteger(data.population?.[key])).map(key => [key, data.population[key]])));
-    totals("Population by kind", data.population?.by_kind); totals("Causes of death", data.population?.death_causes);
+    if (Object.keys(data.population?.by_kind || {}).length) totals("Population by kind", data.population.by_kind);
+    if (Object.keys(data.population?.death_causes || {}).length) totals("Causes of death", data.population.death_causes);
     if (data.activity_by_day?.length) activity(data.activity_by_day);
     else output.appendChild(node("p", "The story is still taking shape. Public activity will appear here."));
-    table("Interactions between agents", ["From", "To", "Type", "Count"], (data.interactions || []).map(row => [names.get(row.from) || row.from, names.get(row.to) || row.to, row.type, row.count]));
-    totals("Event totals", data.events); totals("Published", data.published);
+    if (data.interactions?.length) table("Interactions between agents", ["From", "To", "Type", "Count"], data.interactions.map(row => [names.get(row.from) || row.from, names.get(row.to) || row.to, row.type, row.count]));
+    if (Object.keys(data.events || {}).length) totals("Event totals", data.events);
   }
   const view = document.body.dataset.view;
   const id = decodeURIComponent(location.pathname.split("/").filter(Boolean).pop() || "");
@@ -286,7 +295,7 @@
       const anchorId = anchor?.id, top = anchor?.getBoundingClientRect().top;
       const focusId = document.activeElement?.id;
       output.textContent = ""; likeControls = [];
-      ({ feed, square, agent: profile, stats })[view](data); updateLikes();
+      ({ feed, square, agent: profile, stats: value => stats(value, feedData) })[view](data); updateLikes();
       status.textContent = "";
       let overviewPosts = data.posts || null, overviewExample = data._example === true || feedData._example === true;
       if (view === "agent") {

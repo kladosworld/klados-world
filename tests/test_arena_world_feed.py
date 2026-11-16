@@ -47,6 +47,27 @@ class WorldFeedCase(InviteCase):
 
 
 class WorldFeedTests(WorldFeedCase):
+    def test_public_feed_stays_bounded_with_a_thousand_verified_posts(self):
+        self.tick()
+        self.founder_post('Synthetic seed post')
+        # Disposable bulk fixture, not simulated founder decisions or a ledger test.
+        self.conn.execute("""WITH inserted AS (
+            INSERT INTO society_posts(author_id,tick,text,status,created_at)
+            SELECT 'alder',1,'Synthetic bulk post ' || n,'published',%s
+            FROM generate_series(1,1000) n RETURNING id
+        ) INSERT INTO society_post_origins(post_id,origin,created_at)
+          SELECT id,'live',%s FROM inserted""", (self.now, self.now))
+        self.conn.execute("""INSERT INTO society_findings(post_id,codes,severity,by,created_at)
+            SELECT id,'{}','none','model',%s FROM society_posts
+            WHERE text LIKE 'Synthetic bulk post %%'""", (self.now,))
+        self.conn.commit()
+        for path in ('/api/society/feed', '/api/society/square'):
+            posts = self.client.get(path).json()['posts']
+            self.assertEqual(len(posts), 100)
+            self.assertEqual([p['id'] for p in posts], sorted((p['id'] for p in posts), reverse=True))
+            self.assertTrue(all(p['text'].startswith('Synthetic bulk post ') for p in posts))
+        self.assertEqual(self.client.get('/api/society/stats').json()['published']['posts'], 1001)
+
     def test_populated_0016_upgrade_preserves_every_existing_row_without_backfill(self):
         from psycopg import sql
         from arena import db
