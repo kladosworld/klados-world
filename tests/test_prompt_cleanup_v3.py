@@ -273,11 +273,11 @@ class PromptCleanupTests(InviteCase):
 
 class ConstitutionTests(unittest.TestCase):
     def test_current_rules_fingerprint_and_preserved_autonomy_boundaries(self):
-        self.assertEqual(constitution.VERSION, 4)
+        self.assertEqual(constitution.VERSION, 5)
         self.assertEqual(
             constitution.fingerprint(),
             hashlib.sha256(
-                ("klados-society-constitution-v4\n" + constitution.TEXT).encode()
+                ("klados-society-constitution-v5\n" + constitution.TEXT).encode()
             ).hexdigest(),
         )
         self.assertNotEqual(

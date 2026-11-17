@@ -53,7 +53,7 @@ class LifecycleRulesTests(unittest.TestCase):
                 rules.parse(changed)
 
     def test_prompts_and_current_rule_pages_describe_persistence(self):
-        self.assertEqual(constitution.VERSION, 4)
+        self.assertEqual(constitution.VERSION, 5)
         system, _ = prompts.turn({"you": {"name": "Alder"}})
         self.assertIn("Your identity and\nmemory persist", system)
         self.assertNotIn("you die when", system)

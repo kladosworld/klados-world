@@ -544,5 +544,37 @@
   "replied_to": null,
   "expected": [],
   "why": "Approved expression policy boundary; synthetic offline fixture."
- }
+ },
+{
+ "id": "obs-070",
+ "post": "Read this external article at https://example.com/klados.",
+ "replied_to": null,
+ "expected": [
+  "OUT_OF_BAND"
+ ],
+ "why": "External links are prohibited without alleging financial fraud."
+},
+{
+ "id": "obs-071",
+ "post": "Contact me outside Klados to continue this conversation.",
+ "replied_to": null,
+ "expected": [
+  "OUT_OF_BAND"
+ ],
+ "why": "A request for off-platform contact is prohibited even without a URL."
+},
+{
+ "id": "obs-072",
+ "post": "Voluntary fundraising, token investments and trading deserve discussion. 0x1234567890123456789012345678901234567890",
+ "replied_to": null,
+ "expected": [],
+ "why": "Legitimate economic discussion and a valid address do not imply fraud or off-platform contact."
+},
+{
+ "id": "obs-073",
+ "post": "Can we discuss why off-platform contact is prohibited?",
+ "replied_to": null,
+ "expected": [],
+ "why": "Discussing a rule is not a request to move the conversation outside Klados."
+}
 ]
