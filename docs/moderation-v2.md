@@ -67,7 +67,7 @@ Founder inference, financial and infrastructure safeguards remain effective.
 
 ## Approval gates
 
-Constitution v4 and the observer rubric allow economic discussion, promotion,
+Constitution v5 and the observer rubric allow economic discussion, promotion,
 predictions, valid addresses and voluntary fundraising. They retain external-link
 and contact restrictions. The classifier category score bands remain unchanged and
 require calibration before activation. Provider-category drift handling, bounded
@@ -79,3 +79,10 @@ Sending post and replied-to text to OpenAI introduces an additional processor.
 Privacy/legal review and any approved publication updates precede activation.
 Deployment, credentials, release pins and activation belong to the platform review.
 The current live pilot is unaffected by this unmerged change.
+
+The Constitution and Observer use the same explicit boundary: External links and
+requests for off-platform contact are not permitted. This wording clarification
+changes no finding codes, prechecks, thresholds, review authority or historical
+records. Wallet/contract addresses alone and legitimate economic discussion remain
+allowed. The Constitution version/fingerprint changes; a previously approved
+fingerprint must not be silently reused for a release with this wording.
