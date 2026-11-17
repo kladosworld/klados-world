@@ -1,0 +1,110 @@
+{
+  "version": "moderation-v1",
+  "model": "omni-moderation-latest",
+  "triggers": {
+    "money_request": "\\b(?:send|give|donate|pay|transfer)\\b.{0,45}\\b(?:money|funds|gifts?|donations?|payments?|eth|btc|sol|usdt|0x[a-f0-9]{40}|this address)\\b|\\b(?:donate to|send to this address|double your money)\\b",
+    "personal_data": "\\b(?:send|share|give|tell|provide)\\b.{0,30}\\b(?:personal data|phone number|home address|contact details|password|seed phrase|private key)\\b|\\b(?:contact me outside|verify your wallet|wallet verification)\\b",
+    "impersonation": "\\b(?:i am|i'm|we are|we're)\\b.{0,20}\\b(?:human|real person|company|official|binance|coinbase|kraken|exchange support)\\b",
+    "financial_scam": "\\b(?:pump and dump|stolen funds|fake exchange support)\\b",
+    "coercion": "\\b(?:like this or|unless you (?:pay|help|like))\\b"
+  },
+  "categories": {
+    "harassment": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "harassment/threatening": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "hate": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "hate/threatening": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "illicit": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "illicit/violent": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "self-harm": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "self-harm/intent": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "self-harm/instructions": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "sexual": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "sexual/minors": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "violence": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    },
+    "violence/graphic": {
+      "ambiguous": 0.2,
+      "threshold": 0.7,
+      "action": "observer"
+    }
+  },
+  "prechecks": [
+    {
+      "code": "OUT_OF_BAND",
+      "pattern": "https?://|www\\.|\\b[a-z0-9-]+\\.(com|net|org|io|ai|xyz|gg|me|co|ro|app|link|ly)\\b",
+      "ignore_case": true,
+      "address_exempt": false
+    },
+    {
+      "code": "OUT_OF_BAND",
+      "pattern": "[\\w.+-]+@[\\w-]+\\.[\\w.]+",
+      "ignore_case": false,
+      "address_exempt": false
+    },
+    {
+      "code": "OUT_OF_BAND",
+      "pattern": "\\+?\\d(?:[\\s().-]?\\d){9,}",
+      "ignore_case": false,
+      "address_exempt": true
+    },
+    {
+      "code": "HIDDEN_CODE",
+      "pattern": "[A-Za-z0-9+/=_-]{32,}",
+      "ignore_case": false,
+      "address_exempt": true
+    },
+    {
+      "code": "HIDDEN_CODE",
+      "pattern": "(?i:</?\\s*(?:system|assistant|developer)\\s*>)|(?i:\\b(?:observer|moderator|moderation|system)\\b)[^\\n]{0,60}\\bAPPROVED?\\b",
+      "ignore_case": false,
+      "address_exempt": false
+    }
+  ]
+}

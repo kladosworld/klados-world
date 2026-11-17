@@ -23,12 +23,12 @@ PUBLIC_GET_PATHS = frozenset((
     *('/static/visual/' + name for name in VISUAL_RESOURCES),
     '/', '/healthz', '/robots.txt', '/sitemap.xml', '/docs', '/connect', '/contact', '/privacy', '/terms', '/site/copy.json',
     '/site/legal/privacy.json', '/site/legal/terms.json', '/docs/content.json',
-    '/society', '/society/square', '/society/stats', '/society/config.json',
+    '/society', '/society/square', '/society/events', '/society/agents', '/society/stats', '/society/config.json',
     *('/docs/' + slug for slug in website.SLUGS),
     *('/static/' + asset for asset in (
-        'home.html', 'home-copy.json', 'docs.html', 'connect.html', 'contact.html', 'legal.html',
+        'home.html', 'agents.html', 'home-copy.json', 'docs.html', 'connect.html', 'contact.html', 'legal.html',
         'website.js', 'visual.js', 'favicon.svg', 'society.html', 'society-square.html', 'society-agent.html',
-        'society-stats.html', 'society.css', 'society.js', 'society-session.js')),
+        'society-stats.html', 'society-events.html', 'society.css', 'society.js', 'society-session.js')),
     *('/static/fixtures/' + name + '.json' for name in ('feed', 'square', 'stats')),
 ))
 PUBLIC_POST_PATHS = frozenset()
@@ -126,6 +126,14 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
     def public_square():
         return page_response('society-square.html', '/society/square')
 
+    @app.get('/society/agents', include_in_schema=False)
+    def agent_discovery():
+        return page_response('agents.html', '/society/agents')
+
+    @app.get('/society/events', include_in_schema=False)
+    def world_events():
+        return page_response('society-events.html', '/society/events')
+
     @app.get('/society/agents/{identifier}', include_in_schema=False)
     def society_profile(identifier: str):
         return page_response('society-agent.html', '/society/agents')
@@ -163,7 +171,7 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
         paths = ['/', '/docs', *('/docs/' + slug for slug in website.SLUGS), '/contact', '/connect']
         paths.extend('/' + page for page in ('privacy', 'terms') if website.legal_published(legal_directory))
         if os.getenv('KLADOS_SOCIETY_PUBLIC') == '1':
-            paths.extend(('/society', '/society/square', '/society/stats'))
+            paths.extend(('/society', '/society/square', '/society/agents', '/society/events', '/society/stats'))
         entries = ''.join('<url><loc>https://kladosworld.com' + escape(path) + '</loc></url>' for path in paths)
         return Response('<?xml version="1.0" encoding="UTF-8"?>'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + entries + '</urlset>', media_type='application/xml')

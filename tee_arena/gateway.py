@@ -37,7 +37,7 @@ INPUT_OVERHEAD_TOKENS = 512
 DEFAULT_STOP_FILE = Path("/etc/klados-control/KILLED")  # Klados only: `touch` it to refuse every model call.
 
 CATEGORIES = ("invalid_request", "model_not_allowed", "stopped", "cap_exceeded", "duplicate_request",
-              "credential_unavailable", "sdk_unavailable", "provider_failure", "response_incomplete",
+              "credential_unavailable", "accounting_unavailable", "sdk_unavailable", "provider_failure", "response_incomplete",
               "response_too_large", "response_invalid", "provider_rejected")
 # Client errors the providers reject before doing any work and do not bill: bad
 # request, authentication, payment required, permission, not found, conflict, too
@@ -174,6 +174,19 @@ class Gateway:
                 self.providers[name] = {"anthropic": AnthropicProvider, "openai": OpenAIProvider}[name]()
         return self.providers[name]
 
+    def _settle(self, reservation, actual, **kwargs):
+        try:
+            return self.ledger.settle(reservation, actual, **kwargs)
+        except (ledger_module.LedgerError, OSError, ValueError):
+            # The reservation remains held when settlement cannot be recorded.
+            raise GatewayError("accounting_unavailable", sent=True) from None
+
+    def _release(self, reservation, **kwargs):
+        try:
+            return self.ledger.release(reservation, **kwargs)
+        except (ledger_module.LedgerError, OSError, ValueError):
+            raise GatewayError("accounting_unavailable") from None
+
     def estimate(self, model_id, system, messages, max_output_tokens):
         """The amount that would be reserved for this call, in microdollars."""
         if model_id not in self.models:
@@ -203,35 +216,37 @@ class Gateway:
             raise GatewayError("cap_exceeded") from None
         except ledger_module.DuplicateRequest:
             raise GatewayError("duplicate_request") from None
-        except ledger_module.LedgerError:
+        except ledger_module.UnknownAccount:
             raise GatewayError("invalid_request") from None
+        except (ledger_module.LedgerError, OSError, ValueError):
+            raise GatewayError("accounting_unavailable") from None
 
         request = Request(model=model, system=system, messages=messages,
                           max_output_tokens=max_output_tokens, timeout_seconds=self.timeout_seconds)
         try:
             provider = self._provider(provider_name)
         except GatewayError as error:
-            self.ledger.release(reservation, note=f"not sent: {error.category}")
+            self._release(reservation, note=f"not sent: {error.category}")
             raise
         started = time.monotonic()
         try:
             response = provider.complete(request)
         except GatewayError as error:
             if not error.sent:  # The adapter stopped before sending anything.
-                self.ledger.release(reservation, note=f"not sent: {error.category}")
+                self._release(reservation, note=f"not sent: {error.category}")
                 raise
-            charged = self.ledger.settle(reservation, None, note=f"failed after sending: {error.category}")
+            charged = self._settle(reservation, None, note=f"failed after sending: {error.category}")
             raise GatewayError(error.category, sent=True, charged_microusd=charged) from None
         except Exception as error:
             status = getattr(error, "status_code", None)
             status = status if type(status) is int else None
             error_type = type(error).__name__
             if status in UNBILLED_STATUSES:
-                self.ledger.release(reservation, note=f"rejected by provider: HTTP {status}")
+                self._release(reservation, note=f"rejected by provider: HTTP {status}")
                 raise GatewayError("provider_rejected", sent=True, status=status, error_type=error_type) from None
             # The request may have reached the provider and may be billed. Keep the
             # whole reservation and never retry.
-            charged = self.ledger.settle(reservation, None, note=f"failed after sending: {error_type}")
+            charged = self._settle(reservation, None, note=f"failed after sending: {error_type}")
             raise GatewayError("provider_failure", sent=True, charged_microusd=charged,
                                status=status, error_type=error_type) from None
         elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -240,7 +255,7 @@ class Gateway:
                        and type(response.input_tokens) is int and type(response.output_tokens) is int
                        and response.input_tokens >= 0 and response.output_tokens >= 0)
         actual = cost_microusd(price, response.input_tokens, response.output_tokens) if usage_known else None
-        charged = self.ledger.settle(reservation, actual, note=f"{role} {model_id}")
+        charged = self._settle(reservation, actual, note=f"{role} {model_id}")
 
         if not isinstance(response, ProviderResponse) or not isinstance(response.text, str):
             raise GatewayError("response_invalid", sent=True, charged_microusd=charged)

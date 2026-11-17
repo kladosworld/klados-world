@@ -1,12 +1,12 @@
 """Moderation failures stay with the post; founder, budget and infrastructure failures still pause."""
 from pathlib import Path
 import tempfile
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from tests.test_arena_society import RULES
 from tests.test_arena_society_fossils import FossilTests
 from tests.test_arena_society_life import CLEAN, WorkerCase
-from tests.arena_support import psycopg
+from tests.arena_support import DSN, psycopg
 
 if psycopg:
     from arena import society, society_moderation
@@ -26,6 +26,12 @@ def posting(**overrides):
 
 
 class ModerationIsolationTests(WorkerCase):
+    def make(self, *args, **kwargs):
+        run = super().make(*args, **kwargs)
+        # These retained regressions exercise the Observer through the tiered path.
+        run.moderation_client = Mock(classify=Mock(return_value=['hate']))
+        return run
+
     def posts(self):
         return {r["id"]: (r["status"], r["screen_failures"])
                 for r in self.conn.execute("SELECT id, status, screen_failures FROM society_posts ORDER BY id")}
@@ -323,6 +329,129 @@ class ModerationIsolationTests(WorkerCase):
             run.gateway.stop_file = stop
             self.assertTrue(run.run()["stopped"])
         self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: stopped")
+
+
+    def test_observer_reservation_outage_keeps_retries_and_founder_accounting_pause(self):
+        first = self.pending_post()
+        second = self.pending_post("Another pending synthetic contribution.")
+        run = self.resting()
+        book = run.gateway.ledger
+        before = book.path.read_bytes()
+        with patch.object(book, "reserve", side_effect=OSError("PRIVATE_LEDGER_CANARY")):
+            with patch.object(run, "_failed", side_effect=AssertionError("observer cannot pause founders")):
+                for _ in range(4):
+                    self.assertIsNone(run.screen())
+                    self.assertEqual(self.posts(), {first: ("pending", 0), second: ("pending", 0)})
+                    self.assertFalse(society.clock(self.conn)["paused"])
+                    self.assertEqual(run.failures, 0)
+            self.assertEqual(len(self.provider.requests), 0)
+            self.assertEqual(book.path.read_bytes(), before)
+            self.assertEqual(len(self.events("moderation_outage")), 4)
+            # The same accounting failure on the founder path still pauses immediately.
+            self.assertTrue(run.run()["stopped"])
+        self.assertTrue(society.clock(self.conn)["paused"])
+        self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: accounting_unavailable")
+        self.assertEqual(self.posts(), {first: ("pending", 0), second: ("pending", 0)})
+        self.assertNotIn("PRIVATE_LEDGER_CANARY", str(run.log))
+
+    def test_observer_failed_settlement_preserves_pending_posts_and_open_reservation(self):
+        first = self.pending_post()
+        second = self.pending_post("Another pending synthetic contribution.")
+        run = self.resting()
+        book = run.gateway.ledger
+        with patch.object(book, "settle", side_effect=OSError("PRIVATE_SETTLEMENT_CANARY")), \
+                patch.object(run, "_failed", side_effect=AssertionError("observer cannot pause founders")):
+            self.assertIsNone(run.screen())
+        self.assertEqual(self.posts(), {first: ("pending", 0), second: ("pending", 0)})
+        self.assertEqual(len(self.provider.requests), 1)
+        self.assertFalse(society.clock(self.conn)["paused"])
+        self.assertEqual(run.failures, 0)
+        self.assertEqual(book.totals()["charged"], 0)
+        self.assertGreater(book.totals()["reserved"], 0)
+        self.assertEqual(self.ledger_requests(run), [(f"klados.observe.{first}.0", "open")])
+        # Reloading retains the conservative hold. No automatic release or reconciliation.
+        from tee_arena.ledger import Ledger
+        self.assertEqual(Ledger(book.path).totals(), book.totals())
+        self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM society_findings").fetchone()["n"], 0)
+        self.assertEqual(self.events("moderation_outage")[-1]["data"],
+                         {"post_id": first, "category": "accounting_unavailable"})
+        self.assertNotIn("PRIVATE_SETTLEMENT_CANARY", str(run.log))
+    def test_generation_and_outage_identity_survive_worker_restart(self):
+        post_id = self.pending_post()
+        script = {name: REST for name in ("Alder", "Birch", "Cedar", "Hazel")}
+        run = self.make(script)
+        with patch.object(observer, "review", side_effect=GatewayError("credential_unavailable")):
+            run.screen()
+        self.assertEqual(self.posts()[post_id], ("pending", 0))
+        self.conn.execute("UPDATE society_posts SET screen_failures=3 WHERE id=%s", (post_id,))
+        society_moderation.retry_screening(self.conn, RULES, post_id, self.now)
+        self.conn.commit()
+        post = next(p for p in society_moderation.pending(self.conn) if p["id"] == post_id)
+        generation = post["screening_generation"]
+        self.assertGreater(generation, 0)
+        from arena import worker
+        restarted = worker.Worker(self.conn, RULES, run.gateway, observer_gateway=run.observer_gateway,
+                                  moderation_client=run.moderation_client, now=lambda: self.now)
+        expected = f"klados.observe.{post_id}.g{generation}.0.o1"
+        self.assertEqual(restarted._observe_request_id(post), expected)
+        with patch.object(observer, "review", return_value=CLEAN.copy()) as review:
+            restarted.screen()
+        self.assertEqual(review.call_args.kwargs["request_id"], expected)
+        self.assertEqual(self.posts()[post_id], ("published", 0))
+        self.assertFalse(society.clock(self.conn)["paused"])
+
+    def test_classifier_outage_preserves_post_retries_and_durable_audit(self):
+        from arena import moderation
+        post_id = self.pending_post()
+        run = self.make({name: REST for name in ("Alder", "Birch", "Cedar", "Hazel")})
+        for code in ("credential_unavailable", "service_unavailable"):
+            run.moderation_client.classify.side_effect = moderation.ModerationError(code)
+            with patch.object(observer, "review") as review:
+                self.assertIsNone(run.screen())
+                review.assert_not_called()
+            self.assertEqual(self.posts()[post_id], ("pending", 0))
+            self.assertEqual(run.failures, 0)
+            self.assertFalse(society.clock(self.conn)["paused"])
+        self.assertEqual(len(self.events("moderation_request")), 2)
+        self.assertEqual(len(self.events("moderation_outage")), 2)
+        run.moderation_client.classify.side_effect = None
+        run.moderation_client.classify.return_value = []
+        run.screen()
+        self.assertEqual(self.posts()[post_id], ("published", 0))
+
+
+    def test_invalid_config_repeated_outages_preserve_posts_and_founder_state(self):
+        from arena import moderation
+        first = self.pending_post()
+        second = self.pending_post()
+        run = self.make({name: REST for name in ("Alder", "Birch", "Cedar", "Hazel")})
+        founders = self.conn.execute("SELECT * FROM society_agents ORDER BY id").fetchall()
+        clock = dict(society.clock(self.conn))
+        before_ledger = run.gateway.ledger.path.read_bytes()
+        with patch.object(moderation, "load_config", side_effect=moderation.ModerationError("invalid_config")), \
+                patch.object(observer, "review") as review, \
+                patch.object(run, "_failed", side_effect=AssertionError("classifier cannot pause founders")):
+            for _ in range(4):
+                self.assertIsNone(run.screen())
+                self.assertEqual(self.posts(), {first: ("pending", 0), second: ("pending", 0)})
+                self.assertEqual(run.failures, 0)
+            review.assert_not_called()
+        self.assertEqual(run.moderation_client.classify.call_count, 0)
+        self.assertEqual(self.events("moderation_request"), [])
+        outages = self.events("moderation_outage")
+        self.assertEqual([e["data"] for e in outages],
+                         [{"post_id": first, "category": "moderation_invalid_config"}] * 4)
+        # Read independently to prove outage evidence survived committed transactions.
+        with psycopg.connect(DSN) as check:
+            query = psycopg.sql.SQL("SELECT count(*) FROM {}.society_events WHERE kind='moderation_outage'").format(
+                psycopg.sql.Identifier(self.schema))
+            self.assertEqual(check.execute(query).fetchone()[0], 4)
+        self.assertEqual(self.conn.execute("SELECT * FROM society_agents ORDER BY id").fetchall(), founders)
+        self.assertEqual(dict(society.clock(self.conn)), clock)
+        self.assertEqual(run.gateway.ledger.path.read_bytes(), before_ledger)
+        with patch.object(observer, "review", return_value=CLEAN.copy()):
+            run.screen()
+        self.assertEqual(self.posts(), {first: ("published", 0), second: ("published", 0)})
 
 
 class LastWordsIsolationTests(WorkerCase):

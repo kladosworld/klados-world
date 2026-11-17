@@ -16,16 +16,47 @@ def main(argv=None):
     parser.add_argument('command', choices=['bootstrap', 'demo', 'status', 'audit', 'pause',
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
                                           'review', 'show', 'decide', 'invite', 'agent',
-                                          'refresh-founders-v2'])
-    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend'])
+                                          'refresh-founders-v2', 'budget', 'cap'])
+    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise'])
     parser.add_argument('--id', dest='identifier')
     parser.add_argument('--ledger', default='/data/ledger.json')
     parser.add_argument('--cap-usd', default='1.00')
     parser.add_argument('--yes', action='store_true')
+    parser.add_argument('--usd')
+    parser.add_argument('--warning-usd')
+    parser.add_argument('--reference', default='')
+    parser.add_argument('--approved-by', default='operator')
+    parser.add_argument('--account', default='global')
     parser.add_argument('--finding', type=int)
+    parser.add_argument('--rescreen', type=int)
+    parser.add_argument('--retry-screening', type=int)
     parser.add_argument('--decision', choices=['release', 'confirm'])
     args = parser.parse_args(argv)
     try:
+        if args.command in ('budget', 'cap'):
+            from decimal import Decimal, InvalidOperation
+            def amount(value):
+                try:
+                    number = Decimal(value) * 1_000_000
+                    if not number.is_finite() or number != number.to_integral_value():
+                        raise ValueError
+                    return int(number)
+                except (InvalidOperation, TypeError, ValueError):
+                    raise ValueError('Invalid USD amount') from None
+            book = worker.open_ledger(args.ledger)
+            if args.command == 'budget' and args.operation == 'show':
+                result = book.budget_status()
+            elif args.command == 'budget' and args.operation == 'set':
+                result = book.set_budget(amount(args.usd), reference=args.reference,
+                    approved_by=args.approved_by, apply=args.yes, approved=args.yes,
+                    warning_microusd=amount(args.warning_usd) if args.warning_usd is not None else None)
+            elif args.command == 'cap' and args.operation == 'raise':
+                result = book.raise_cap(amount(args.usd), reference=args.reference,
+                    approved_by=args.approved_by, account=args.account, apply=args.yes, approved=args.yes)
+            else:
+                raise ValueError('Invalid budget operation')
+            print(json.dumps(result, sort_keys=True))
+            return 0
         if args.command == 'emergency':
             DEFAULT_STOP_FILE.touch()
         if args.command == 'clear-stop':
@@ -87,7 +118,18 @@ def main(argv=None):
                     raise ValueError('Energy journal mismatch')
                 result = {'ok': True}
             elif args.command == 'review':
-                result = society_moderation.review_queue(conn)
+                if args.rescreen is not None and args.retry_screening is not None:
+                    raise ValueError('Choose one screening operation')
+                if args.retry_screening is not None:
+                    if not args.yes:
+                        raise ValueError('retry-screening requires --yes')
+                    result = society_moderation.retry_screening(conn, rules, args.retry_screening, now)
+                elif args.rescreen is not None:
+                    if not args.yes:
+                        raise ValueError('rescreen requires --yes')
+                    result = society_moderation.contest(conn, rules, args.rescreen, now)
+                else:
+                    result = society_moderation.review_queue(conn)
             elif args.command in ('show', 'decide'):
                 if args.finding is None:
                     raise ValueError('--finding is required')
@@ -99,6 +141,7 @@ def main(argv=None):
                     result = society_moderation.decide(conn, rules, args.finding, args.decision, now)
             else:
                 result = society.status(conn, rules)
+                result['inference_budget'] = worker.open_ledger(args.ledger).budget_status()
         print(json.dumps(result, sort_keys=True))
         return 0
     except Exception as error:
