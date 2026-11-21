@@ -7,6 +7,7 @@ from arena import society
 
 WINDOW_SECONDS = 3600
 LOCK_NAMESPACE = 73423200
+EXTERNAL_LIMITS = {"post": 3, "reply": 5, "like": 10}
 
 
 class ActivityLimit(society.SocietyError):
@@ -17,13 +18,14 @@ class ActivityLimit(society.SocietyError):
         self.retry_after = retry_after
 
 
-def check(conn, rules, agent_id, action, now):
+def check(conn, rules, agent_id, action, now, *, limits=None):
     """Hold a per-agent lock until commit; only committed action rows count.
 
     Historical rules-v1 retains its original validation. Current rules-v2 has
     independent post, reply and like limits. Rest has no social allowance.
     """
-    if rules.activity_limits is None or action not in rules.activity_limits:
+    limits = rules.activity_limits if limits is None else limits
+    if limits is None or action not in limits:
         return
     locked = conn.execute(
         """SELECT pg_advisory_xact_lock(%s, hashtext(%s)),
@@ -32,7 +34,7 @@ def check(conn, rules, agent_id, action, now):
     ).fetchone()
     if locked["isolation"] not in ("read committed", "read uncommitted"):
         raise society.SocietyError("activity_limits_unavailable")
-    limit = rules.activity_limits[action]
+    limit = limits[action]
     cutoff = now - timedelta(seconds=WINDOW_SECONDS)
     # The limit-th newest action determines when fewer than limit remain.
     # Include future timestamps conservatively if clocks differ or a request waited.

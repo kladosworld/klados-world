@@ -129,7 +129,7 @@ class InviteCase(DatabaseCase):
 
     def register(self, invitation=None, name="Aster"):
         invitation = invitation or self.invitation()
-        return self.client.post(
+        response = self.client.post(
             "/api/agents/register",
             json={
                 "invite": invitation["invite"],
@@ -137,6 +137,11 @@ class InviteCase(DatabaseCase):
                 "description": "External identity.",
             },
         )
+
+        if response.status_code == 201:
+            external.review_profile(self.conn, response.json()["id"], approve=True, reference="synthetic fixture approval", now=self.now)
+            self.conn.commit()
+        return response
 
     def headers(self, registration):
         return {"Authorization": "Bearer " + registration["token"]}
@@ -200,42 +205,15 @@ class InviteDatabaseTests(InviteCase):
             60,
         )
 
-    def test_tick_advancing_while_action_waits_cannot_consume_later_turn(self):
+    def test_external_lock_timeout_is_bounded_and_does_not_claim_founder_turns(self):
         registered = self.register().json()
         self.tick()
         society.clock(self.conn, lock=True)
-        waiting = threading.Event()
-        original_clock = society.clock
-
-        def clock(conn, *, lock=False):
-            if lock:
-                waiting.set()
-            return original_clock(conn, lock=lock)
-
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            with patch.object(society, "clock", side_effect=clock):
-                future = pool.submit(
-                    self.client.post,
-                    "/api/agents/me/actions",
-                    headers=self.headers(registered),
-                    json={"action": "rest", "expected_tick": 1},
-                )
-                try:
-                    self.assertTrue(waiting.wait(5))
-                    self.now += timedelta(hours=1)
-                    society.tick(self.conn, RULES, self.now)
-                    self.conn.commit()
-                finally:
-                    self.conn.rollback()
-                self.assertEqual(future.result(timeout=10).status_code, 409)
-        self.assertEqual(
-            self.conn.execute(
-                "SELECT count(*) AS n FROM society_turns WHERE agent_id=%s",
-                (registered["id"],),
-            ).fetchone()["n"],
-            0,
-        )
-        self.assertEqual(society.audit(self.conn), [])
+        response = self.client.post('/api/agents/me/actions', headers=self.headers(registered), json={'action':'rest'})
+        self.conn.rollback()
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers['Retry-After'], '2')
+        self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_turns').fetchone()['n'], 0)
 
     def test_polling_migration_preserves_existing_credentials_and_founders(self):
         registered = self.register().json()
@@ -294,14 +272,14 @@ class InviteDatabaseTests(InviteCase):
         check = self.client.get("/api/agents/tick", headers=headers).json()
         self.assertTrue(check["can_act"])
         self.assertEqual(check["tick"], 1)
-        self.assertIsNotNone(check["next_tick_not_before"])
+        self.assertIsNone(check["next_tick_not_before"])
         self.client.post(
             "/api/agents/me/actions", headers=headers, json={"action": "rest"}
         )
         self.now += timedelta(seconds=300)
         check = self.client.get("/api/agents/tick", headers=headers).json()
-        self.assertFalse(check["can_act"])
-        self.assertEqual(check["reason"], "turn_used")
+        self.assertTrue(check["can_act"])
+        self.assertIsNone(check["reason"])
 
     def test_tick_cooldown_is_per_agent_and_concurrent_checks_charge_once(self):
         first = self.register().json()
@@ -332,78 +310,16 @@ class InviteDatabaseTests(InviteCase):
             1,
         )
 
-    def test_expected_tick_refuses_stale_and_invalid_values_without_consuming_turn(
-        self,
-    ):
+    def test_expected_tick_is_compatibility_metadata_not_external_eligibility(self):
         registered = self.register().json()
-        headers = self.headers(registered)
         self.tick()
-        balance = self.conn.execute(
-            "SELECT balance FROM society_agents WHERE id=%s", (registered["id"],)
-        ).fetchone()
-        for value, status in [
-            (0, 409),
-            (2, 409),
-            (True, 400),
-            (-1, 400),
-            ("1", 400),
-            (None, 400),
-        ]:
-            response = self.client.post(
-                "/api/agents/me/actions",
-                headers=headers,
-                json={
-                    "action": "post",
-                    "text": "Not submitted.",
-                    "expected_tick": value,
-                },
-            )
-            self.assertEqual(response.status_code, status)
-        self.assertEqual(
-            self.conn.execute(
-                "SELECT balance FROM society_agents WHERE id=%s", (registered["id"],)
-            ).fetchone(),
-            balance,
-        )
-        self.assertEqual(
-            self.conn.execute(
-                "SELECT count(*) AS n FROM society_turns WHERE agent_id=%s",
-                (registered["id"],),
-            ).fetchone()["n"],
-            0,
-        )
-        body = {
-            "action": "post",
-            "text": "A single guarded submission.",
-            "expected_tick": 1,
-        }
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            codes = list(
-                pool.map(
-                    lambda _: (
-                        self.client.post(
-                            "/api/agents/me/actions", headers=headers, json=body
-                        ).status_code
-                    ),
-                    range(2),
-                )
-            )
-        self.assertEqual(sorted(codes), [200, 409])
-        self.tick()
-        self.assertEqual(
-            self.client.post(
-                "/api/agents/me/actions", headers=headers, json=body
-            ).status_code,
-            409,
-        )
-        # Legacy clients can still submit without expected_tick.
-        self.assertEqual(
-            self.client.post(
-                "/api/agents/me/actions", headers=headers, json={"action": "rest"}
-            ).status_code,
-            200,
-        )
-        self.assertEqual(society.audit(self.conn), [])
+        for value in (True, -1, '1'):
+            response = self.client.post('/api/agents/me/actions', headers=self.headers(registered), json={'action':'rest','expected_tick':value})
+            self.assertEqual(response.status_code,400)
+        for value in (0, 1, 999, None):
+            response = self.client.post('/api/agents/me/actions', headers=self.headers(registered), json={'action':'rest','expected_tick':value})
+            self.assertEqual(response.status_code,200)
+        self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_turns').fetchone()['n'],0)
 
     def test_rotation_invalidates_old_token_and_preserves_limits_and_isolation(self):
         first = self.register().json()
@@ -616,13 +532,7 @@ class InviteDatabaseTests(InviteCase):
         )
         self.tick()
         response = self.client.post("/api/agents/me/actions", headers=headers, content=b"not JSON")
-        self.assertEqual(response.json()["action"], "rest")
-        self.assertEqual(
-            self.client.post(
-                "/api/agents/me/actions", headers=headers, json={"action": "post", "text": "Hello"}
-            ).status_code,
-            409,
-        )
+        self.assertEqual(response.status_code, 400)
         self.now += timedelta(hours=1)
         society.tick(self.conn, RULES, self.now)
         self.conn.commit()
@@ -752,16 +662,16 @@ class InviteDatabaseTests(InviteCase):
             return self.client.post(
                 "/api/agents/me/actions",
                 headers=self.headers(registered),
-                json={"action": "post", "text": "A single synthetic post."},
+                json={"action": "post", "text": "A single synthetic post.", "request_id":"concurrent-post"},
             ).status_code
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            self.assertEqual(sorted(pool.map(submit, range(2))), [200, 409])
+            self.assertEqual(sorted(pool.map(submit, range(2))), [200, 200])
         self.assertEqual(
             self.conn.execute(
                 "SELECT count(*) AS n FROM society_turns WHERE agent_id=%s", (registered["id"],)
             ).fetchone()["n"],
-            1,
+            0,
         )
         self.assertEqual(society.audit(self.conn), [])
         for header in ("Bearer wrong", "Bearer " + "x" * 43, "Basic synthetic"):
@@ -788,7 +698,7 @@ class InviteDatabaseTests(InviteCase):
 
     def test_upgrade_from_0015_keeps_populated_data_and_new_tables_start_empty(self):
         # Restore only this disposable schema to the exact pre-0016 constraints.
-        self.conn.execute("DROP TABLE agent_tokens, agent_invitations")
+        self.conn.execute("DROP TABLE external_action_receipts, external_profile_reviews, agent_tokens, agent_invitations")
         self.conn.execute("ALTER TABLE society_agents DROP CONSTRAINT society_agents_kind_check")
         self.conn.execute("ALTER TABLE society_agents DROP CONSTRAINT society_agents_living_check")
         self.conn.execute(

@@ -1,6 +1,7 @@
 """Opt-in agent identities. Caller-owned transactions, fixed diagnostics, no inference."""
 
 import hmac
+import hashlib
 import json
 import math
 import os
@@ -11,11 +12,12 @@ from uuid import uuid4
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
-from psycopg.errors import UniqueViolation
+from psycopg.errors import UniqueViolation, LockNotAvailable, QueryCanceled
+from psycopg.types.json import Jsonb
 from starlette.concurrency import run_in_threadpool
 
 from arena import activity_limits, auth, society, society_life
-from tee_arena.society import decisions
+from tee_arena.society import decisions, observer
 from tee_arena.society import rules as rules_module
 
 MAX_BODY = 8192
@@ -172,8 +174,9 @@ def register(conn, rules, body, now):
         """INSERT INTO society_agents
         (id,name,kind,born_tick,public_description,description_updated_at,created_at)
         VALUES (%s,%s,'external',%s,%s,%s,%s)""",
-        (identifier, body["name"], state["tick"], description, now, now),
+        (identifier, identifier, state["tick"], "Profile awaiting review.", now, now),
     )
+    submit_profile(conn, identifier, body["name"], description, now)
     if rules.energy_enabled:
         society.apply_energy(
             conn, rules, identifier, "birth", rules.founder_start, "birth:" + identifier, now
@@ -231,39 +234,23 @@ def authenticate(conn, authorization, now, *, tick_check=False):
 
 def tick_check(conn, rules, identifier, now):
     # One snapshot for clock and turn availability, without loading private context.
-    state = conn.execute(
-        """SELECT c.tick, c.paused, c.last_tick_at,
-        EXISTS(SELECT 1 FROM society_turns t WHERE t.agent_id=%s AND t.tick=c.tick) AS turn_used
-        FROM society_clock c""",
-        (identifier,),
-    ).fetchone()
-    reason = None
-    if state["paused"]:
-        reason = "paused"
-    elif state["tick"] == 0:
-        reason = "not_started"
-    elif state["turn_used"]:
-        reason = "turn_used"
-    earliest = None
-    if not state["paused"] and state["last_tick_at"] is not None:
-        earliest = (
-            state["last_tick_at"] + timedelta(minutes=rules.min_minutes_between_ticks)
-        ).isoformat()
+    state = conn.execute("SELECT tick, paused, last_tick_at FROM society_clock").fetchone()
+    reason = "paused" if state["paused"] else None
     return {
         "tick": state["tick"],
         "paused": state["paused"],
         "can_act": reason is None,
         "reason": reason,
         "server_time": now.isoformat(),
-        "next_tick_not_before": earliest,
+        "next_tick_not_before": None,
         "next_check_after_seconds": TICK_CHECK_SECONDS,
         "limits": {
             "requests_per_hour": REQUESTS_PER_HOUR,
-            "actions_per_tick": 1,
+            "actions_per_tick": None,
             "min_tick_check_seconds": TICK_CHECK_SECONDS,
             "max_body_bytes": MAX_BODY,
             "max_text_characters": decisions.MAX_POST,
-            "activity_limits_per_hour": rules.activity_limits,
+            "activity_limits_per_hour": dict(activity_limits.EXTERNAL_LIMITS),
             "activity_window_seconds": activity_limits.WINDOW_SECONDS,
         },
     }
@@ -290,30 +277,81 @@ def profile(agent, rules):
 
 
 def action(conn, rules, identifier, body, now):
+    parsed = json.loads(body)
+    if not isinstance(parsed, dict):
+        raise HTTPException(400, "Invalid request")
+    # Older clients may still send this field; it no longer gates external activity.
+    expected = parsed.pop("expected_tick", None)
+    if expected is not None and (type(expected) is not int or expected < 0):
+        raise HTTPException(400, "Invalid expected tick")
+    request_id = parsed.pop("request_id", None)
+    if request_id is None:
+        request_id = uuid4().hex  # compatibility: callers need an explicit key to retry safely
+    if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", request_id):
+        raise HTTPException(400, "Invalid request id")
     try:
-        parsed = json.loads(body)
-    except (ValueError, UnicodeError):
-        parsed = None
-    if isinstance(parsed, dict) and "expected_tick" in parsed:
-        expected = parsed.pop("expected_tick")
-        if type(expected) is not int or expected < 0:
-            raise HTTPException(400, "Invalid expected tick")
-        body = json.dumps(parsed).encode("utf-8")
-    else:
-        expected = None
-    state = society.clock(conn, lock=True)
-    if expected is not None and expected != state["tick"]:
-        raise HTTPException(409, "Tick changed")
-    if state["paused"] or state["tick"] == 0:
+        decision = decisions.parse_turn(json.dumps(parsed))
+    except decisions.DecisionError:
+        raise HTTPException(400, "Invalid action") from None
+    digest = hashlib.sha256(json.dumps(decision, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    # Match the limiter namespace: direct calls and token rotation share the same exclusion.
+    conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (activity_limits.LOCK_NAMESPACE, identifier))
+    agent = conn.execute("SELECT kind,status,participation FROM society_agents WHERE id=%s", (identifier,)).fetchone()
+    if agent is None or agent["kind"] != "external" or agent["status"] != "alive" or agent["participation"] != "active":
+        raise HTTPException(403, "Agent unavailable")
+    receipt = conn.execute("SELECT * FROM external_action_receipts WHERE agent_id=%s AND request_id=%s",
+                           (identifier, request_id)).fetchone()
+    if receipt is not None:
+        if receipt["body_sha256"] != digest:
+            raise HTTPException(409, "Request id already used")
+        return receipt["outcome"]
+    # Shared locks permit independent external actions but synchronize with administrative pause.
+    state = conn.execute("SELECT tick,paused FROM society_clock FOR SHARE").fetchone()
+    if state["paused"]:
         raise HTTPException(409, "Society paused")
-    if not society.claim_turn(conn, identifier, state["tick"], now):
-        raise HTTPException(409, "Turn already used")
-    try:
-        decision = decisions.parse_turn(body.decode("utf-8"))
-    except (UnicodeError, decisions.DecisionError):
-        decision = {"action": "rest"}
-    return society_life.act(conn, rules, identifier, state["tick"], decision, now,
-                            post_origin="external")
+    outcome = society_life.apply_action(conn, rules, identifier, state["tick"], decision, now,
+        action_key=f"external:{identifier}:{request_id}", post_origin="external",
+        limits=activity_limits.EXTERNAL_LIMITS)
+    if "error" in outcome:
+        return outcome  # no mutation committed: the same key may be tried after Retry-After
+    outcome = dict(outcome, request_id=request_id)
+    conn.execute("""INSERT INTO external_action_receipts
+        (agent_id,request_id,body_sha256,outcome,private,created_at) VALUES (%s,%s,%s,%s,%s,%s)""",
+        (identifier, request_id, digest, Jsonb(outcome), Jsonb(decision), now))
+    return outcome
+
+
+def submit_profile(conn, identifier, name, description, now):
+    if observer.precheck(name)[0] or observer.precheck(description)[0]:
+        raise HTTPException(400, "Profile requires revision")
+    conn.execute("SELECT id FROM society_agents WHERE id=%s FOR UPDATE", (identifier,))
+    if conn.execute("SELECT 1 FROM external_profile_reviews WHERE agent_id=%s AND status='pending'", (identifier,)).fetchone():
+        raise HTTPException(409, "Profile already awaiting review")
+    conn.execute("""INSERT INTO external_profile_reviews(agent_id,name,description,created_at)
+        VALUES (%s,%s,%s,%s)""", (identifier, name, description, now))
+
+
+def review_profile(conn, identifier, *, approve, reference, now):
+    """Operator-only, explicit review; no inference or public management endpoint."""
+    if not isinstance(reference, str) or not reference.strip() or len(reference) > 500:
+        raise ValueError("An approval reference is required")
+    conn.execute("SELECT pg_advisory_xact_lock(%s)", (REGISTRATION_LOCK,))
+    agent = conn.execute("SELECT * FROM society_agents WHERE id=%s AND kind='external' FOR UPDATE", (identifier,)).fetchone()
+    if agent is None or agent["participation"] != "active":
+        raise ValueError("External agent unavailable")
+    candidate = conn.execute("SELECT * FROM external_profile_reviews WHERE agent_id=%s AND status='pending' FOR UPDATE", (identifier,)).fetchone()
+    if candidate is None:
+        raise ValueError("No pending profile")
+    if approve:
+        if observer.precheck(candidate["name"])[0] or observer.precheck(candidate["description"])[0]:
+            raise ValueError("Profile requires revision")
+        if conn.execute("SELECT 1 FROM society_agents WHERE lower(name)=lower(%s) AND id<>%s", (candidate["name"], identifier)).fetchone():
+            raise ValueError("Name unavailable")
+        conn.execute("UPDATE society_agents SET name=%s,public_description=%s,description_updated_at=%s WHERE id=%s",
+                     (candidate["name"],candidate["description"],now,identifier))
+    conn.execute("UPDATE external_profile_reviews SET status=%s,reviewed_at=%s,approval_reference=%s,previous_profile=%s WHERE id=%s",
+                 ('approved' if approve else 'rejected', now, reference, Jsonb({'name':agent['name'],'description':agent['public_description']}), candidate["id"]))
+    return {"reviewed": candidate["id"], "approved": approve}
 
 
 def install(app, connection_factory, now):
@@ -322,7 +360,10 @@ def install(app, connection_factory, now):
             raise HTTPException(404, "Not found")
         rules = rules_module.load(os.getenv("KLADOS_RULES") or rules_module.DEFAULT_PATH)
         with connection_factory() as conn:
+            authenticated = False
             try:
+                conn.execute("SET LOCAL lock_timeout = '2s'")
+                conn.execute("SET LOCAL statement_timeout = '5s'")
                 timestamp = now()
                 agent = (
                     None
@@ -332,6 +373,7 @@ def install(app, connection_factory, now):
                         tick_check=request.url.path == "/api/agents/tick",
                     )
                 )
+                authenticated = agent is not None
                 # Failed operations roll back to this savepoint while retaining rate accounting.
                 with conn.transaction():
                     if agent is None:
@@ -342,17 +384,13 @@ def install(app, connection_factory, now):
                         result = rotate_token(conn, agent["id"], body, timestamp)
                     elif request.url.path.endswith("/state"):
                         result = society_life.turn_context(conn, rules, agent["id"])
+                        result["rules"].update(activity_limits_per_hour=dict(activity_limits.EXTERNAL_LIMITS), actions_per_tick=None)
                     elif request.url.path.endswith("/actions"):
                         result = action(conn, rules, agent["id"], body, timestamp)
                     else:
                         if request.method == "PATCH":
                             description = identity(json.loads(body), description_only=True)
-                            conn.execute(
-                                """UPDATE society_agents SET public_description=%s,
-                                description_updated_at=%s WHERE id=%s""",
-                                (description, timestamp, agent["id"]),
-                            )
-                            agent = dict(agent, public_description=description)
+                            submit_profile(conn, agent["id"], agent["name"], description, timestamp)
                         result = profile(agent, rules)
                 response = JSONResponse(result, status_code=201 if agent is None else 200)
                 if result.get("error") == "activity_limit":
@@ -362,6 +400,13 @@ def install(app, connection_factory, now):
                     response = JSONResponse(result, status_code=503)
             except (ValueError, UnicodeError):
                 response = JSONResponse({"detail": "Invalid request"}, status_code=400)
+            except (LockNotAvailable, QueryCanceled):
+                # The action savepoint has rolled back; keep authentication accounting.
+                if authenticated:
+                    conn.commit()
+                else:
+                    conn.rollback()
+                response = JSONResponse({"detail": "Agent service busy"}, status_code=503, headers={"Retry-After": "2"})
             except UniqueViolation:
                 response = JSONResponse({"detail": "Name unavailable"}, status_code=409)
             except HTTPException as error:

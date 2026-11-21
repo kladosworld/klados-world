@@ -288,62 +288,23 @@ class SocialActivityTests(InviteCase):
             3,
         )
 
-    def test_http_and_founders_share_limits_and_keep_tick_claims(self):
+    def test_external_limits_are_distinct_without_changing_founder_claims(self):
         registered = self.register().json()
         society.set_paused(self.conn, RULES, False, self.now, "synthetic")
         self.now += timedelta(hours=1)
         society.tick(self.conn, RULES, self.now)
         self.conn.commit()
-        headers = self.headers(registered)
-        path = "/api/agents/me/actions"
-        self.assertEqual(
-            self.client.post(
-                path,
-                headers=headers,
-                json={"action": "post", "text": COMMENTS[0], "expected_tick": 1},
-            ).status_code,
-            200,
-        )
-        self.perform("alder", 1, {"action": "post", "text": COMMENTS[0]}, now=self.now)
-        self.now += timedelta(minutes=55)
-        society.tick(self.conn, RULES, self.now)
-        self.conn.commit()
-        refused = self.client.post(
-            path,
-            headers=headers,
-            json={"action": "post", "text": COMMENTS[1], "expected_tick": 2},
-        )
-        self.assertEqual(refused.status_code, 429)
-        self.assertEqual(refused.headers["Retry-After"], "300")
-        self.assertEqual(refused.headers["Cache-Control"], "no-store")
-        founder = self.perform(
-            "alder", 2, {"action": "post", "text": COMMENTS[1]}, now=self.now
-        )
-        self.assertEqual(founder, refused.json())
-        self.assertEqual(
-            self.client.post(
-                path, headers=headers, json={"action": "rest"}
-            ).status_code,
-            409,
-        )
-        self.assertEqual(
-            self.conn.execute(
-                "SELECT count(*) AS n FROM society_posts WHERE author_id=%s",
-                (registered["id"],),
-            ).fetchone()["n"],
-            1,
-        )
-        check = self.client.get("/api/agents/tick", headers=headers).json()
-        self.assertFalse(check["can_act"])
-        self.assertEqual(
-            check["limits"]["activity_limits_per_hour"], RULES.activity_limits
-        )
-        state = society_life.turn_context(self.conn, RULES, "alder")
-        self.assertEqual(
-            state["rules"]["activity_limits_per_hour"], RULES.activity_limits
-        )
-        self.assertNotIn("energy", state["you"])
-        self.assertEqual(society.audit(self.conn), [])
+        path = '/api/agents/me/actions'
+        for text in COMMENTS[:3]:
+            self.assertEqual(self.client.post(path, headers=self.headers(registered),
+                json={'action':'post','text':text}).status_code,200)
+        denied = self.client.post(path, headers=self.headers(registered), json={'action':'post','text':'A fourth distinctive contribution.'})
+        self.assertEqual(denied.status_code,429)
+        self.assertEqual(denied.headers['Retry-After'],'3600')
+        self.perform('alder', 1, {'action':'post','text':COMMENTS[0]}, now=self.now)
+        refused = self.perform('alder', 2, {'action':'post','text':COMMENTS[1]}, now=self.now)
+        self.assertEqual(refused['limit'],1)
+        self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_turns WHERE agent_id=%s',(registered['id'],)).fetchone()['n'],0)
 
     def test_snapshot_isolation_http_refusal_preserves_auth_accounting(self):
         from fastapi.testclient import TestClient
