@@ -71,18 +71,30 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
                         (agent_id, tick)).fetchone()
     if turn is None or turn["status"] != "claimed":
         raise society.SocietyError("turn_not_claimed")
+    outcome = apply_action(conn, rules, agent_id, tick, decision, now,
+                           action_key=f"turn:{agent_id}:{tick}", post_origin=post_origin)
+    log = dict(private or {}, decision=decision, outcome=outcome)
+    conn.execute("""UPDATE society_turns SET status = %s, action = %s, charged_microusd = %s, private = %s
+                    WHERE agent_id = %s AND tick = %s""",
+                 ("failed" if "error" in outcome else "done", outcome["action"], charged_microusd,
+                  Jsonb(log), agent_id, tick))
+    return outcome
+
+
+def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post_origin=None, limits=None):
+    """Shared transactional mutations; caller owns turn/receipt and authentication."""
     outcome = {"action": decision["action"]}
     try:
         with conn.transaction():  # savepoint: a refused action leaves nothing behind
             _alive_agent(conn, agent_id)
             action = decision["action"]
-            activity_limits.check(conn, rules, agent_id, action, now)
+            activity_limits.check(conn, rules, agent_id, action, now, limits=limits)
             if action in ("post", "reply"):
                 reply_to = _post(conn, decision["post_id"])["id"] if action == "reply" else None
                 from arena.society_moderation import is_duplicate
                 if is_duplicate(conn, agent_id, decision["text"]):
                     raise society.SocietyError("duplicate_post")
-                society.spend(conn, rules, agent_id, action, f"turn:{agent_id}:{tick}", now)
+                society.spend(conn, rules, agent_id, action, action_key, now)
                 outcome["post_id"] = conn.execute(
                     """INSERT INTO society_posts (author_id, tick, reply_to, text, created_at)
                        VALUES (%s, %s, %s, %s, %s) RETURNING id""",
@@ -113,11 +125,6 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
             "activity_limits_unavailable": "activity_limits_unavailable",
         }.get(str(error), "action_refused")
         outcome = {"action": "rest", "error": code, "wanted": decision["action"]}
-    log = dict(private or {}, decision=decision, outcome=outcome)
-    conn.execute("""UPDATE society_turns SET status = %s, action = %s, charged_microusd = %s, private = %s
-                    WHERE agent_id = %s AND tick = %s""",
-                 ("failed" if "error" in outcome else "done", outcome["action"], charged_microusd,
-                  Jsonb(log), agent_id, tick))
     return outcome
 
 

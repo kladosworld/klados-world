@@ -17,7 +17,7 @@ def main(argv=None):
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
                                           'review', 'show', 'decide', 'invite', 'agent',
                                           'refresh-founders-v2', 'budget', 'cap'])
-    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise'])
+    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'profiles', 'approve-profile', 'reject-profile'])
     parser.add_argument('--id', dest='identifier')
     parser.add_argument('--ledger', default='/data/ledger.json')
     parser.add_argument('--cap-usd', default='1.00')
@@ -74,6 +74,14 @@ def main(argv=None):
                     result = external_agents.create_invite(conn, now)
                 elif args.command == 'invite' and args.operation == 'list':
                     result = external_agents.list_invites(conn)
+                elif args.command == 'agent' and args.operation == 'profiles':
+                    result = [dict(row) for row in conn.execute("SELECT id,agent_id,name,description FROM external_profile_reviews WHERE status='pending' ORDER BY id")]
+                elif args.command == 'agent' and args.operation in ('approve-profile', 'reject-profile'):
+                    if not args.yes or not args.identifier or not args.reference.strip() or args.finding is None:
+                        raise ValueError('Profile review requires --id, --finding, --reference and --yes')
+                    result = external_agents.review_profile(conn, args.identifier,
+                        approve=args.operation == 'approve-profile', reference=args.reference, now=now,
+                        review_id=args.finding)
                 elif args.operation in ('revoke', 'suspend') and args.identifier:
                     if args.command == 'invite' and args.operation == 'revoke':
                         result = {'changed': external_agents.revoke_invite(conn, args.identifier, now)}

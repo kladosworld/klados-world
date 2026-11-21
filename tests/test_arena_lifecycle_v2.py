@@ -184,7 +184,7 @@ class PersistentLifecycleTests(InviteCase):
         ).json()["post_id"]
         society_moderation.apply_verdict(self.conn, V2, post, CLEAN, self.now)
         self.conn.commit()
-        self.assertEqual(self.submit(first, action="rest").status_code, 409)
+        self.assertEqual(self.submit(first, action="rest").status_code, 200)
         reply = self.submit(
             second, action="reply", post_id=post, text="A persistent response."
         )

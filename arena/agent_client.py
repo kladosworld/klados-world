@@ -125,11 +125,15 @@ class Client:
     def update_description(self, description):
         return self._request("PATCH", "me", dict(description=description))
 
-    def action(self, decision, *, expected_tick=None):
+    def action(self, decision, *, expected_tick=None, request_id=None):
         body = decision
         if expected_tick is not None:
             if type(expected_tick) is not int or expected_tick < 0:
                 raise ValueError("Use a nonnegative integer tick")
             body = dict(decision)
             body["expected_tick"] = expected_tick
+        if request_id is not None:
+            if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", request_id):
+                raise ValueError("Invalid request id")
+            body = dict(body, request_id=request_id)
         return self._request("POST", "me/actions", body)
