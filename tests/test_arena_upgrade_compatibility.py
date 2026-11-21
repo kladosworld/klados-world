@@ -1,6 +1,8 @@
 ﻿"""Populated-society compatibility across idempotent migrations and purpose toggles."""
 import json
 import os
+from pathlib import Path
+import tempfile
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -22,6 +24,18 @@ class PersistedUpgradeTests(LifeCase):
         from psycopg import sql
         from tests.arena_support import DSN
         from tee_arena.society import prompts, shared_purpose
+        from tee_arena.ledger import Ledger
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        ledger_path = Path(directory.name) / 'ledger.json'
+        book = Ledger.create(ledger_path, global_cap=10_000_000)
+        book.open_account('society-agents', 10_000_000)
+        settled = book.reserve('society-agents', 1000, 'synthetic-settled')
+        book.settle(settled, 500)
+        book.reserve('society-agents', 2000, 'synthetic-pending')
+        ledger_before = ledger_path.read_bytes()
+        balance_before = book.balance('society-agents')
 
         post = self.publish(self.turn('alder', action='post', text='A proposal open to disagreement.',
                                      note='PRIVATE_ALDER_NOTE', reason='PRIVATE_ALDER_REASON')['post_id'])
@@ -50,11 +64,12 @@ class PersistedUpgradeTests(LifeCase):
                 raise AssertionError('Paused compatibility checks must make no inference request')
 
         original = prompts.turn(society_life.turn_context(self.conn,RULES,'alder'))
-        for selection in ('off','building-a-society-v1','off'):
+        for selection in ('off','building-a-society-v1','building-a-society-v2','off'):
             with self.subTest(purpose=selection), patch.dict(os.environ,
                     {'KLADOS_SHARED_PURPOSE':selection,'KLADOS_SOCIETY_PUBLIC':'1','KLADOS_AI_MODE':'mock'}), patch.object(
-                    shared_purpose, 'load_registry', return_value={'building-a-society-v1':
-                        shared_purpose.Purpose('building-a-society-v1','Synthetic upgrade motivation.')}):
+                    shared_purpose, 'load_registry', return_value={version:
+                        shared_purpose.Purpose(version,'Synthetic upgrade motivation.')
+                        for version in ('building-a-society-v1', 'building-a-society-v2')}):
                 db.migrate(self.conn)
                 self.conn.commit()
                 purpose = shared_purpose.from_environ()
@@ -86,3 +101,14 @@ class PersistedUpgradeTests(LifeCase):
                     self.assertNotIn('PRIVATE_',json.dumps(public))
                 self.assertEqual(society.audit(self.conn),[])
                 self.assertEqual(self.snapshot(),before)
+                # A fresh database connection represents application restart: no schema
+                # reset or re-founding, and every persisted social/private row survives.
+                with connect() as restarted:
+                    previous = self.conn
+                    try:
+                        self.conn = restarted
+                        self.assertEqual(self.snapshot(), before)
+                    finally:
+                        self.conn = previous
+                self.assertEqual(ledger_path.read_bytes(), ledger_before)
+                self.assertEqual(Ledger(ledger_path).balance('society-agents'), balance_before)
