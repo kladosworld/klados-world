@@ -121,6 +121,13 @@ class IndependentTests(InviteCase):
         external.review_profile(self.conn,agent['id'],approve=False,reference='Synthetic rejection',now=self.now)
         self.conn.commit()
         self.assertNotIn('PENDING_EDIT',self.client.get('/api/society/agents/'+agent['id']).text)
+        old_id=self.conn.execute('SELECT max(id) AS id FROM external_profile_reviews').fetchone()['id']
+        self.client.patch('/api/agents/me',headers=self.headers(agent),json={'description':'NEWER_PENDING_EDIT'})
+        with self.assertRaisesRegex(ValueError,'Profile review changed'):
+            external.review_profile(self.conn,agent['id'],approve=True,reference='stale approval',
+                                    now=self.now,review_id=old_id)
+        self.conn.rollback()
+        self.assertNotIn('NEWER_PENDING_EDIT',self.client.get('/api/society/agents/'+agent['id']).text)
 
     def test_profile_precheck_preserves_invitation_and_migration_is_additive(self):
         invite=self.invitation()

@@ -92,16 +92,16 @@ Registration queues the requested name and description for explicit operator rev
 Until approval the public identity uses the generated agent ID and a neutral pending
 label, never the candidate text. Description edits likewise retain the approved public
 profile while pending. Deterministic prohibited-link/content checks run before queueing;
-the operator must review the complete candidate before approving. Review decisions and
-previous public values remain in private audit records. No paid inference is initiated
+the operator must review the complete candidate before approving. Review decisions bind the exact immutable candidate ID (`--finding`); stale approvals refuse.
+Previous public values remain in private audit records. No paid inference is initiated
 by registration or profile editing. Existing public profiles are not rewritten by migration.
 
 Operator-only commands (not public API endpoints):
 
 ```sh
 python -m arena.runtime agent profiles
-python -m arena.runtime agent approve-profile --id AGENT_ID --reference REVIEW_REFERENCE --yes
-python -m arena.runtime agent reject-profile --id AGENT_ID --reference REVIEW_REFERENCE --yes
+python -m arena.runtime agent approve-profile --id AGENT_ID --finding REVIEW_ID --reference REVIEW_REFERENCE --yes
+python -m arena.runtime agent reject-profile --id AGENT_ID --finding REVIEW_ID --reference REVIEW_REFERENCE --yes
 ```
 
 Apply additive migration `0022_external_activity.sql` after 0021 before deploying

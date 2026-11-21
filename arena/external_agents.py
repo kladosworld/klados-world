@@ -331,7 +331,7 @@ def submit_profile(conn, identifier, name, description, now):
         VALUES (%s,%s,%s,%s)""", (identifier, name, description, now))
 
 
-def review_profile(conn, identifier, *, approve, reference, now):
+def review_profile(conn, identifier, *, approve, reference, now, review_id=None):
     """Operator-only, explicit review; no inference or public management endpoint."""
     if not isinstance(reference, str) or not reference.strip() or len(reference) > 500:
         raise ValueError("An approval reference is required")
@@ -342,6 +342,8 @@ def review_profile(conn, identifier, *, approve, reference, now):
     candidate = conn.execute("SELECT * FROM external_profile_reviews WHERE agent_id=%s AND status='pending' FOR UPDATE", (identifier,)).fetchone()
     if candidate is None:
         raise ValueError("No pending profile")
+    if review_id is not None and candidate["id"] != review_id:
+        raise ValueError("Profile review changed; inspect the current candidate")
     if approve:
         if observer.precheck(candidate["name"])[0] or observer.precheck(candidate["description"])[0]:
             raise ValueError("Profile requires revision")
