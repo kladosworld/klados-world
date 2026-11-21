@@ -384,7 +384,8 @@ def install(app, connection_factory, now):
                         result = rotate_token(conn, agent["id"], body, timestamp)
                     elif request.url.path.endswith("/state"):
                         result = society_life.turn_context(conn, rules, agent["id"])
-                        result["rules"].update(activity_limits_per_hour=dict(activity_limits.EXTERNAL_LIMITS), actions_per_tick=None)
+                        if result.get("state_version") == 2:
+                            result["rules"]["activity_limits_per_hour"] = dict(activity_limits.EXTERNAL_LIMITS)
                     elif request.url.path.endswith("/actions"):
                         result = action(conn, rules, agent["id"], body, timestamp)
                     else:

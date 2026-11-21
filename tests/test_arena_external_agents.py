@@ -139,8 +139,8 @@ class InviteCase(DatabaseCase):
         )
 
         if response.status_code == 201:
-            external.review_profile(self.conn, response.json()["id"], approve=True, reference="synthetic fixture approval", now=self.now)
-            self.conn.commit()
+            with self.connection() as review:
+                external.review_profile(review, response.json()["id"], approve=True, reference="synthetic fixture approval", now=self.now)
         return response
 
     def headers(self, registration):
@@ -213,6 +213,7 @@ class InviteDatabaseTests(InviteCase):
         self.conn.rollback()
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.headers['Retry-After'], '2')
+        self.assertEqual(self.conn.execute('SELECT request_count FROM agent_tokens WHERE agent_id=%s',(registered['id'],)).fetchone()['request_count'],1)
         self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_turns').fetchone()['n'], 0)
 
     def test_polling_migration_preserves_existing_credentials_and_founders(self):
@@ -504,7 +505,10 @@ class InviteDatabaseTests(InviteCase):
             "/api/agents/me", headers=headers, json={"description": "Updated."}
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["public_description"], "Updated.")
+        self.assertEqual(response.json()["public_description"], "External identity.")
+        external.review_profile(self.conn, registered["id"], approve=True, reference="synthetic edit approval", now=self.now)
+        self.conn.commit()
+        self.assertEqual(self.client.get("/api/agents/me",headers=headers).json()["public_description"],"Updated.")
         self.assertEqual(response.json()["kind"], "external")
         self.assertNotIn("token_digest", response.text)
         external.control_agent(self.conn, registered["id"], "suspend", self.now)
@@ -707,7 +711,7 @@ class InviteDatabaseTests(InviteCase):
         self.conn.execute(
             "ALTER TABLE society_agents ADD CONSTRAINT society_agents_check1 CHECK (kind='founder' OR (balance=0 AND turn_minute IS NULL AND status='alive'))"
         )
-        self.conn.execute("DELETE FROM arena_migrations WHERE name='0016_external_agents.sql'")
+        self.conn.execute("DELETE FROM arena_migrations WHERE name IN ('0016_external_agents.sql','0022_external_activity.sql')")
         self.conn.execute(
             "INSERT INTO society_notes(agent_id,tick,text,created_at) VALUES ('alder',0,'PRIVATE_UPGRADE_CANARY',%s)",
             (self.now,),
