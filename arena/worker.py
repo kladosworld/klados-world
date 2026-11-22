@@ -9,7 +9,7 @@ Safety:
   ledger caps and the stop file. Nothing calls a model any other way.
 - A turn is claimed and committed before the call, so a crash can never give an agent
   a second turn in the same hour. A failed call or an unusable reply is a rest.
-- Stops on errors: a spent cap, a missing key or the stop file pauses the society at
+- Stops on errors: a missing key or the stop file pauses the society at
   once; ``max_failures`` failed founder calls in a row pause it too. Observer (moderation)
   failures never pause it: they stay with the post, or end the pass's screening. A paused society does not
   age, so nobody dies of an outage.
@@ -32,7 +32,7 @@ OBSERVER_MODEL = "openrouter:openai/gpt-6-luna"  # another family than the agent
 ACCOUNT = "society-agents"
 OBSERVER_ACCOUNT = "society-observer"
 MAX_OUTPUT_TOKENS = 1200  # the model may spend part of it reasoning before the JSON
-PAUSE_AT_ONCE = ("cap_exceeded", "credential_unavailable", "accounting_unavailable", "stopped", "model_not_allowed")
+PAUSE_AT_ONCE = ( "credential_unavailable", "accounting_unavailable", "stopped", "model_not_allowed")
 # The provider answered, but the reply cannot be used: a rest, not an outage.
 BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
 # Observer outages: screening stops for the pass and the posts stay unpublished. Moderation
@@ -85,7 +85,7 @@ class Worker:
 
     def _failed(self, error):
         """Count a failed call; pause the society when it is no longer safe to go on."""
-        if error.category in BAD_REPLY:
+        if error.category in BAD_REPLY or error.category == "cap_exceeded":
             return False
         self.failures += 1
         if error.category in PAUSE_AT_ONCE or self.failures >= self.max_failures:
@@ -108,7 +108,7 @@ class Worker:
         try:
             result = self.call(system, messages, f"klados.turn.{agent_id}.{tick}")
         except gateway_module.GatewayError as error:
-            code = ("reply_" if error.category in BAD_REPLY else "call_") + error.category
+            code = "budget_exhausted" if error.category == "cap_exceeded" else ("reply_" if error.category in BAD_REPLY else "call_") + error.category
             society_life.fail_turn(self.conn, agent_id, tick, code, charged_microusd=error.charged_microusd)
             self.conn.commit()
             self.log.append({"agent": agent_id, "tick": tick, "error": code})
@@ -262,7 +262,7 @@ class Worker:
             result = self.call(system, messages, f"klados.reflect.{agent_id}.{day}")
         except gateway_module.GatewayError as error:
             society_life.record_reflection(self.conn, agent_id, day, tick, None, self.now(),
-                                           charged_microusd=error.charged_microusd, error="call_" + error.category)
+                                           charged_microusd=error.charged_microusd, error="budget_exhausted" if error.category == "cap_exceeded" else "call_" + error.category)
             self.conn.commit()
             self.log.append({"agent": agent_id, "day": day, "tick": tick, "error": "reflection call_" + error.category})
             return "stop" if self._failed(error) else "failed"
@@ -278,8 +278,8 @@ class Worker:
             except (decisions.DecisionError, gateway_module.GatewayError) as error:
                 if isinstance(error, gateway_module.GatewayError):
                     charged += error.charged_microusd
-                code = "reply_" + getattr(error, "code", None) if isinstance(error, decisions.DecisionError) \
-                    else "call_" + error.category
+                code = "reply_" + error.code if isinstance(error, decisions.DecisionError) else (
+                    "budget_exhausted" if error.category == "cap_exceeded" else "call_" + error.category)
                 society_life.record_reflection(self.conn, agent_id, day, tick, None, self.now(),
                                                charged_microusd=charged, error=code)
                 self.conn.commit()

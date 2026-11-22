@@ -17,7 +17,7 @@ def main(argv=None):
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
                                           'review', 'show', 'decide', 'invite', 'agent',
                                           'refresh-founders-v2', 'budget', 'cap'])
-    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise'])
+    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open'])
     parser.add_argument('--id', dest='identifier')
     parser.add_argument('--ledger', default='/data/ledger.json')
     parser.add_argument('--cap-usd', default='1.00')
@@ -50,8 +50,12 @@ def main(argv=None):
                 result = book.set_budget(amount(args.usd), reference=args.reference,
                     approved_by=args.approved_by, apply=args.yes, approved=args.yes,
                     warning_microusd=amount(args.warning_usd) if args.warning_usd is not None else None)
-            elif args.command == 'cap' and args.operation == 'raise':
-                result = book.raise_cap(amount(args.usd), reference=args.reference,
+            elif args.command == 'budget' and args.operation == 'open':
+                result = book.approved_open_account(args.account, amount(args.usd),
+                    reference=args.reference, approved_by=args.approved_by, apply=args.yes, approved=args.yes)
+            elif args.command == 'cap' and args.operation in ('raise', 'lower'):
+                change = book.raise_cap if args.operation == 'raise' else book.lower_cap
+                result = change(amount(args.usd), reference=args.reference,
                     approved_by=args.approved_by, account=args.account, apply=args.yes, approved=args.yes)
             else:
                 raise ValueError('Invalid budget operation')
