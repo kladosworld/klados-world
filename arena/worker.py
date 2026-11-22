@@ -345,7 +345,7 @@ class Worker:
 
     def run(self):
         """One pass: every due turn, then every due reflection. Returns a summary."""
-        summary = {"turns": 0, "failed": 0, "financial_rests": 0, "reflections": 0, "stopped": False}
+        summary = {"turns": 0, "failed": 0, "reflections": 0, "stopped": False}
         if society.clock(self.conn)["paused"]:
             return dict(summary, stopped=True)
         if self.screen() == "stop":  # posts left from an earlier pass
@@ -355,8 +355,10 @@ class Worker:
             result = self.turn(agent_id, tick)
             if result == "stop":
                 return dict(summary, stopped=True)
-            if result is not None:
-                summary["financial_rests" if result == "financial_rest" else "turns" if result == "done" else "failed"] += 1
+            if result == "financial_rest":
+                summary["financial_rests"] = summary.get("financial_rests", 0) + 1
+            elif result is not None:
+                summary["turns" if result == "done" else "failed"] += 1
         for agent_id, day in society_life.reflections_due(self.conn):
             result = self.reflect(agent_id, day, tick)
             if result == "stop":
