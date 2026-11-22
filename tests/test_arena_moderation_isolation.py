@@ -1,5 +1,6 @@
 """Moderation failures stay with the post; founder, budget and infrastructure failures still pause."""
 from pathlib import Path
+import os
 import tempfile
 from unittest.mock import Mock, patch
 
@@ -26,6 +27,37 @@ def posting(**overrides):
 
 
 class ModerationIsolationTests(WorkerCase):
+    def test_observer_only_publishes_only_after_valid_review_without_classifier(self):
+        run = self.make(posting())
+        run.moderation_client.classify.side_effect = AssertionError('classifier must not run')
+        with patch.dict(os.environ, KLADOS_MODERATION_MODE='observer-only'), \
+                patch.object(observer, 'review', return_value=CLEAN.copy()) as review:
+            summary = run.run()
+        self.assert_running(summary)
+        self.assertEqual(summary['turns'], 4)
+        self.assertEqual(list(self.posts().values()), [('published', 0), ('published', 0)])
+        self.assertEqual(review.call_count, 2)
+        self.assertEqual(self.events('moderation_request'), [])
+        run.moderation_client.classify.assert_not_called()
+
+    def test_observer_only_outage_preserves_pending_posts_and_recovery(self):
+        run = self.make(posting())
+        run.moderation_client.classify.side_effect = AssertionError('classifier must not run')
+        with patch.dict(os.environ, KLADOS_MODERATION_MODE='observer-only'), \
+                patch.object(run, '_failed', side_effect=AssertionError('observer cannot pause founders')):
+            with patch.object(observer, 'review', side_effect=GatewayError('credential_unavailable')):
+                summary = run.run()
+            self.assert_running(summary)
+            self.assertEqual(list(self.posts().values()), [('pending', 0), ('pending', 0)])
+            with patch.object(observer, 'review', side_effect=observer.ObserverError('invalid_json')):
+                run.screen()
+            self.assertTrue(all(status == 'pending' for status, _ in self.posts().values()))
+            with patch.object(observer, 'review', return_value=CLEAN.copy()):
+                run.screen()
+        self.assertTrue(all(status == 'published' for status, _ in self.posts().values()))
+        self.assertFalse(society.clock(self.conn)['paused'])
+        run.moderation_client.classify.assert_not_called()
+
     def make(self, *args, **kwargs):
         run = super().make(*args, **kwargs)
         # These retained regressions exercise the Observer through the tiered path.
@@ -304,8 +336,8 @@ class ModerationIsolationTests(WorkerCase):
         self.assertTrue(society.clock(self.conn)["paused"])
         self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: provider_failure")
 
-    def test_founder_budget_credential_and_stop_file_still_pause_at_once(self):
-        for category in ("cap_exceeded", "credential_unavailable", "stopped", "model_not_allowed"):
+    def test_founder_credential_and_stop_file_still_pause_at_once(self):
+        for category in ("credential_unavailable", "stopped", "model_not_allowed"):
             with self.subTest(category=category):
                 society.set_paused(self.conn, RULES, False, self.now, "test")
                 self.conn.commit()
@@ -316,10 +348,11 @@ class ModerationIsolationTests(WorkerCase):
                 self.assertTrue(society.clock(self.conn)["paused"])
                 self.assertEqual(self.events("paused")[-1]["data"]["reason"], f"worker: {category}")
 
-    def test_a_spent_global_cap_still_pauses_with_a_real_ledger(self):
+    def test_a_spent_global_cap_is_scoped_financial_rest(self):
         run = self.make({name: REST for name in ("Alder", "Birch", "Cedar", "Hazel")}, cap=10)
-        self.assertTrue(run.run()["stopped"])
-        self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: cap_exceeded")
+        self.assertFalse(run.run()["stopped"])
+        self.assertFalse(society.clock(self.conn)["paused"])
+        self.assertEqual(len(self.provider.requests), 0)
 
     def test_a_real_stop_file_still_pauses(self):
         run = self.make({name: REST for name in ("Alder", "Birch", "Cedar", "Hazel")})

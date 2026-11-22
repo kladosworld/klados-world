@@ -9,7 +9,7 @@ Safety:
   ledger caps and the stop file. Nothing calls a model any other way.
 - A turn is claimed and committed before the call, so a crash can never give an agent
   a second turn in the same hour. A failed call or an unusable reply is a rest.
-- Stops on errors: a spent cap, a missing key or the stop file pauses the society at
+- Stops on errors: a missing key or the stop file pauses the society at
   once; ``max_failures`` failed founder calls in a row pause it too. Observer (moderation)
   failures never pause it: they stay with the post, or end the pass's screening. A paused society does not
   age, so nobody dies of an outage.
@@ -21,7 +21,7 @@ from pathlib import Path
 import sys
 import time
 
-from arena import db, moderation, society, society_death, society_life, society_moderation
+from arena import eras, db, moderation, society, society_death, society_life, society_moderation
 from tee_arena import gateway as gateway_module, ledger as ledger_module
 from tee_arena.society import decisions, observer, prompts, shared_purpose, rules as rules_module
 
@@ -32,7 +32,7 @@ OBSERVER_MODEL = "openrouter:openai/gpt-6-luna"  # another family than the agent
 ACCOUNT = "society-agents"
 OBSERVER_ACCOUNT = "society-observer"
 MAX_OUTPUT_TOKENS = 1200  # the model may spend part of it reasoning before the JSON
-PAUSE_AT_ONCE = ("cap_exceeded", "credential_unavailable", "accounting_unavailable", "stopped", "model_not_allowed")
+PAUSE_AT_ONCE = ( "credential_unavailable", "accounting_unavailable", "stopped", "model_not_allowed")
 # The provider answered, but the reply cannot be used: a rest, not an outage.
 BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
 # Observer outages: screening stops for the pass and the posts stay unpublished. Moderation
@@ -85,7 +85,7 @@ class Worker:
 
     def _failed(self, error):
         """Count a failed call; pause the society when it is no longer safe to go on."""
-        if error.category in BAD_REPLY:
+        if error.category in BAD_REPLY or error.category == "cap_exceeded":
             return False
         self.failures += 1
         if error.category in PAUSE_AT_ONCE or self.failures >= self.max_failures:
@@ -95,6 +95,7 @@ class Worker:
         return False
 
     def turn(self, agent_id, tick):
+        eras.require_purpose(self.conn, self.purpose)
         if not society.claim_turn(self.conn, agent_id, tick, self.now()):
             return None
         self.conn.commit()  # the turn is spent even if everything below fails
@@ -108,10 +109,12 @@ class Worker:
         try:
             result = self.call(system, messages, f"klados.turn.{agent_id}.{tick}")
         except gateway_module.GatewayError as error:
-            code = ("reply_" if error.category in BAD_REPLY else "call_") + error.category
+            code = "budget_exhausted" if error.category == "cap_exceeded" else ("reply_" if error.category in BAD_REPLY else "call_") + error.category
             society_life.fail_turn(self.conn, agent_id, tick, code, charged_microusd=error.charged_microusd)
             self.conn.commit()
             self.log.append({"agent": agent_id, "tick": tick, "error": code})
+            if error.category == "cap_exceeded":
+                return "financial_rest"
             return "stop" if self._failed(error) else "failed"
         self.failures = 0
         try:
@@ -253,6 +256,7 @@ class Worker:
             return False
 
     def reflect(self, agent_id, day, tick):
+        eras.require_purpose(self.conn, self.purpose)
         try:
             context = society_life.reflection_context(self.conn, self.rules, agent_id, day)
         except society.SocietyError:
@@ -262,7 +266,7 @@ class Worker:
             result = self.call(system, messages, f"klados.reflect.{agent_id}.{day}")
         except gateway_module.GatewayError as error:
             society_life.record_reflection(self.conn, agent_id, day, tick, None, self.now(),
-                                           charged_microusd=error.charged_microusd, error="call_" + error.category)
+                                           charged_microusd=error.charged_microusd, error="budget_exhausted" if error.category == "cap_exceeded" else "call_" + error.category)
             self.conn.commit()
             self.log.append({"agent": agent_id, "day": day, "tick": tick, "error": "reflection call_" + error.category})
             return "stop" if self._failed(error) else "failed"
@@ -278,8 +282,8 @@ class Worker:
             except (decisions.DecisionError, gateway_module.GatewayError) as error:
                 if isinstance(error, gateway_module.GatewayError):
                     charged += error.charged_microusd
-                code = "reply_" + getattr(error, "code", None) if isinstance(error, decisions.DecisionError) \
-                    else "call_" + error.category
+                code = "reply_" + error.code if isinstance(error, decisions.DecisionError) else (
+                    "budget_exhausted" if error.category == "cap_exceeded" else "call_" + error.category)
                 society_life.record_reflection(self.conn, agent_id, day, tick, None, self.now(),
                                                charged_microusd=charged, error=code)
                 self.conn.commit()
@@ -353,7 +357,9 @@ class Worker:
             result = self.turn(agent_id, tick)
             if result == "stop":
                 return dict(summary, stopped=True)
-            if result is not None:
+            if result == "financial_rest":
+                summary["financial_rests"] = summary.get("financial_rests", 0) + 1
+            elif result is not None:
                 summary["turns" if result == "done" else "failed"] += 1
         for agent_id, day in society_life.reflections_due(self.conn):
             result = self.reflect(agent_id, day, tick)
@@ -416,6 +422,10 @@ def main(argv=None):
     book = open_ledger(args.ledger, args.create_cap_usd)
     gateway, watcher = build_gateway(book), build_gateway(book, role="observer")
     with db.connect(dsn) as conn:
+        if not conn.execute("SELECT pg_try_advisory_lock(%s) AS ok", (eras.SCHEDULER_LOCK,)).fetchone()["ok"]:
+            raise society.SocietyError("another_worker_is_running")
+        if not society.clock(conn)["paused"]:
+            eras.require_purpose(conn, purpose)
         summary = Worker(conn, rules, gateway, observer_gateway=watcher, purpose=purpose).run()
     print(summary)
     return 0

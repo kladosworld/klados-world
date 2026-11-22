@@ -85,7 +85,7 @@ class ScreeningIsolationTests(WorkerCase):
 
     def test_founder_financial_and_infrastructure_failure_still_pause(self):
         run = self.runner()
-        for category in ('cap_exceeded', 'credential_unavailable', 'stopped', 'model_not_allowed'):
+        for category in ('credential_unavailable', 'accounting_unavailable', 'stopped', 'model_not_allowed'):
             society.set_paused(self.conn, RULES, False, self.now, 'synthetic-reset')
             self.conn.commit()
             self.assertTrue(run._failed(GatewayError(category)))

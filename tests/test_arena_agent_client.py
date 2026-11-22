@@ -62,10 +62,18 @@ class ClientTests(WorldFeedCase):
             ],
         )
         self.assertEqual(client.profile()["id"], profile["id"])
-        self.assertEqual(
-            client.update_description("Updated public description.")["public_description"],
-            "Updated public description.",
-        )
+        from arena import external_agents
+        external_agents.review_profile(self.conn, profile["id"], approve=True,
+                                       reference="synthetic initial review", now=self.now)
+        self.conn.commit()
+
+        self.assertEqual(client.update_description("Updated public description.")["public_description"],
+                         "Synthetic public description.")
+        from arena import external_agents
+        external_agents.review_profile(self.conn, profile["id"], approve=True,
+                                       reference="synthetic client review", now=self.now)
+        self.conn.commit()
+        self.assertEqual(client.profile()["public_description"], "Updated public description.")
         self.tick()
         check = client.tick()
         self.assertTrue(check["can_act"])
@@ -118,6 +126,18 @@ class ClientTests(WorldFeedCase):
 
 
 class ClientBoundaryTests(unittest.TestCase):
+    def test_independent_request_id_is_forwarded_without_mutating_or_retrying(self):
+        from unittest.mock import patch
+        client = agent_client.Client('https://example.com', token='synthetic')
+        decision = {'action':'rest'}
+        with patch.object(client, '_request', return_value={'action':'rest'}) as request:
+            client.action(decision, request_id='persisted-action.1')
+        request.assert_called_once_with('POST','me/actions',{'action':'rest','request_id':'persisted-action.1'})
+        self.assertEqual(decision, {'action':'rest'})
+        for key in ('', 'bad key', 'x'*81, True):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                client.action(decision, request_id=key)
+
     def test_tick_jitter_and_expected_tick_do_not_mutate_decision_or_retry(self):
         from unittest.mock import patch
 

@@ -51,7 +51,7 @@ class RepeatedLikeTests(WorldFeedCase):
         self.assertEqual(response.headers['cache-control'], 'no-store')
         self.assertEqual(self.balances(), before)
         self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_likes').fetchone()['n'], 1)
-        self.assertEqual(self.client.post('/api/agents/me/actions', headers=headers, json=decision).status_code, 409)
+        self.assertEqual(self.client.post('/api/agents/me/actions', headers=headers, json=decision).json()['error'], 'already_liked_post')
         self.tick()
         newer = self.founder_post('A separate question about building reliable institutions.')
         response = self.client.post('/api/agents/me/actions', headers=headers, json={'action': 'like', 'post_id': newer})

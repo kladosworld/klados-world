@@ -110,11 +110,20 @@ def client_for_gateway(gateway):
 def review(gateway, client, post_text, replied_text=None, *, model_id, request_id,
            account='society-observer', contested=False, config=None, on_request=None):
     config = load_config() if config is None else config
+    mode = os.environ.get('KLADOS_MODERATION_MODE', 'tiered')
+    if mode not in ('tiered', 'observer-only'):
+        raise ModerationError('invalid_config')
     codes, evidence = observer.precheck(post_text)
-    base = {'config_version': config['version'], 'moderation_requests': 0,
+    version = config['version'] + ('-observer-only' if mode == 'observer-only' else '')
+    base = {'config_version': version, 'moderation_requests': 0,
             'matches': [], 'charged_microusd': 0}
     if codes:
         return dict(base, codes=codes, severity='grave', evidence=evidence, by='precheck', matches=codes)
+    if mode == 'observer-only':
+        verdict = observer.review(gateway, post_text, replied_text, model_id=model_id,
+                                  request_id=request_id, account=account)
+        return dict(verdict, by='observer', config_version=version,
+                    moderation_requests=0, matches=['observer_only'])
     triggers = sorted(name for name, pattern in config['triggers'].items()
                       if re.search(pattern, post_text, re.IGNORECASE))
     if contested:

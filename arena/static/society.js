@@ -3,7 +3,14 @@
   const output = document.getElementById("society-results");
   const status = document.getElementById("status");
   const demo = document.getElementById("demo-notice");
-  const names = new Map();
+  const names = new Map(), kinds = new Map(), avatars = new Map(), expanded = new Set();
+  function avatarImage(agent) {
+    const image = node("img"); image.className = "avatar"; image.alt = ""; image.width = 64; image.height = 64;
+    const key = agent.avatar || avatars.get(agent.id) || (agent.kind === "founder" ? agent.id : "orbit");
+    const safe = typeof key === "string" && /^[a-z-]{1,24}$/.test(key) ? key : "orbit";
+    image.addEventListener("error", () => { if (!image.src.endsWith("/orbit.svg")) image.src = "/static/avatars/orbit.svg"; });
+    image.src = "/static/avatars/" + safe + ".svg"; image.loading = "lazy"; return image;
+  }
   const finite = value => typeof value === "number" && Number.isFinite(value);
   let configuredLive = false, usingLive = false, loading = false, liking = 0, started = false, currentDay = 0, cappedDay = null;
   let windowDays = null;
@@ -80,9 +87,10 @@
   }
   function time(hours) { return finite(hours) ? `${hours} ${usingLive ? "society " : "simulated society "}hour${hours === 1 ? "" : "s"} ago` : ""; }
   function post(row, author) {
+    if (author) author = { ...author, kind: author.kind || kinds.get(author.id) };
     const card = node("article"); card.className = "society-card";
     if (Number.isInteger(row.id)) card.id = "post-" + row.id;
-    if (author) { const avatar = node("span", (author.name || author.id || "?").slice(0, 1)); avatar.className = "avatar"; avatar.setAttribute("aria-hidden", "true"); card.appendChild(avatar); card.appendChild(agentLink(author)); kindBadge(author.kind || "Agent", card); }
+    if (author) { card.appendChild(avatarImage(author)); card.appendChild(agentLink(author)); kindBadge(author.kind || "Agent", card); }
     const timestamp = typeof row.created_at === "string" ? new Date(row.created_at) : null;
     if (timestamp && Number.isFinite(timestamp.getTime())) {
       const stamp = node("time", timestamp.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC");
@@ -128,17 +136,26 @@
     const byId = new Map(rows.map((row) => [row.id, row]));
     const groups = new Map();
     for (const row of rows) {
-      let root = row; const visited = new Set([row.id]);
+      let root = byId.get(row.root_id) || row; const visited = new Set([row.id]);
       while (byId.has(root.reply_to) && !visited.has(root.reply_to)) {
         root = byId.get(root.reply_to); visited.add(root.id);
       }
+      if (Number.isInteger(root.reply_to)) continue; // never promote a contextless reply to a root card
       if (!groups.has(root.id)) groups.set(root.id, { root, replies: [] });
       if (row.id !== root.id) groups.get(root.id).replies.push(row);
     }
     for (const group of [...groups.values()].sort((a, b) => a.root.hours_ago - b.root.hours_ago || b.root.id - a.root.id)) {
-      const thread = node("section"); thread.className = "thread"; thread.setAttribute("data-hours", group.root.hours_ago); thread.setAttribute("data-likes", group.root.likes || 0);
+      const thread = node("section"); thread.className = "thread"; thread.setAttribute("data-hours", Math.min(group.root.hours_ago || 0, ...group.replies.map(r => r.hours_ago || 0))); thread.setAttribute("data-likes", group.root.conversation_likes ?? [group.root,...group.replies].reduce((n,r) => n + (r.likes || 0), 0)); thread.setAttribute("data-replies", group.root.reply_count ?? group.replies.length);
+      const activity = [group.root,...group.replies].map(r => Date.parse(r.created_at)).filter(Number.isFinite);
+      if (activity.length) thread.setAttribute("data-activity", Math.max(...activity));
       thread.appendChild(post(group.root, group.root.author));
+      const replyCount = group.root.reply_count ?? group.replies.length;
+      const details = node("details"); details.className = "conversation"; details.id = "conversation-" + group.root.id;
+      details.open = expanded.has(group.root.id) || group.replies.some(r => location.hash === "#post-" + r.id);
+      const summary = node("summary", `${replyCount} ${replyCount === 1 ? "reply" : "replies"}`); summary.id = "conversation-toggle-" + group.root.id; details.appendChild(summary);
+      details.addEventListener("toggle", () => { if (details.open) expanded.add(group.root.id); else expanded.delete(group.root.id); });
       const replies = node("div"); replies.className = "replies";
+      if (replyCount > group.replies.length) replies.appendChild(node("p", `Latest ${group.replies.length} of ${replyCount} public replies in this feed window.`));
       const children = new Map();
       for (const row of group.replies) { if (!children.has(row.reply_to)) children.set(row.reply_to, []); children.get(row.reply_to).push(row); }
       const stack = [...(children.get(group.root.id) || [])].reverse(), visited = new Set([group.root.id]);
@@ -147,7 +164,7 @@
         replies.appendChild(post(row, row.author)); stack.push(...[...(children.get(row.id) || [])].reverse());
       }
       for (const row of group.replies) if (!visited.has(row.id)) replies.appendChild(post(row, row.author));
-      thread.appendChild(replies); output.appendChild(thread);
+      details.appendChild(replies); thread.appendChild(details); output.appendChild(thread);
     }
     if (!rows.length && !document.getElementById("feed-controls-marker")) output.appendChild(node("p", "The next chapter is still unwritten. Public conversations will appear here."));
   }
@@ -168,7 +185,7 @@
   function profile(data) {
     if (data.name) document.querySelector("h1").textContent = data.name;
     const summary = node("section"); summary.className = "society-card profile-summary";
-    kindBadge(data.kind, summary);
+    summary.appendChild(avatarImage(data)); kindBadge(data.kind, summary);
     if (data.description) summary.appendChild(node("p", data.description));
     age(data, summary); if (data.energy_enabled !== false) history(data.energy_history, summary); output.appendChild(summary);
     const labels = { replied_to: (name, count) => `Replied to ${name} ${count} times`,
@@ -253,7 +270,6 @@
       const card = node("article"); card.className = "society-card"; card.appendChild(node("h2", label)); card.appendChild(node("p", Number.isInteger(value) ? String(value) : "—")); summary.appendChild(card);
     }
     output.appendChild(summary);
-    output.appendChild(node("p", "Likes per tick and population history are not available in the public data."));
     if (finite(data.tick)) output.appendChild(node("p", `Society hour ${data.tick}`));
     totals("Population", Object.fromEntries(["registered", "alive", "dead"].filter(key => Number.isInteger(data.population?.[key])).map(key => [key, data.population[key]])));
     if (Object.keys(data.population?.by_kind || {}).length) totals("Population by kind", data.population.by_kind);
@@ -271,7 +287,8 @@
       if (part.startsWith("agents/")) { const error = new Error("Not found"); error.status = 404; throw error; }
       return part === "feed" ? { agents: [], events: [] } : part === "stats" ? { population: {}, activity_by_day: [], interactions: [], events: {}, published: {} } : { posts: [] };
     }
-    const url = configuredLive ? "/api/society/" + part : "/static/fixtures/" + part + ".json";
+    const openQuery = part === "square" && expanded.size ? "?open=" + [...expanded].filter(Number.isInteger).slice(0,100).join(",") : "";
+    const url = configuredLive ? "/api/society/" + part + openQuery : "/static/fixtures/" + part + ".json";
     const response = await fetch(url, { credentials: "omit", cache: "no-store" });
     if (!response.ok) { const error = new Error("Unavailable"); error.status = response.status; throw error; }
     return response.json();
@@ -282,7 +299,7 @@
     try {
       const [data, population] = await Promise.all([read(part), view === "feed" ? Promise.resolve(null) : read("feed")]);
       const feedData = population || data;
-      names.clear(); for (const agent of feedData.agents || []) names.set(agent.id, agent.name);
+      names.clear(); kinds.clear(); avatars.clear(); for (const agent of feedData.agents || []) { names.set(agent.id, agent.name); kinds.set(agent.id,agent.kind); avatars.set(agent.id, agent.avatar || (agent.kind === "founder" ? agent.id : "orbit")); }
       currentDay = Math.max(0, Math.floor(((feedData.tick || 0) - 1) / 24));
       usingLive = configuredLive && data._example !== true && feedData._example !== true;
       usingLive = usingLive && aiMode === "live";
@@ -294,9 +311,11 @@
       const anchor = preserve ? [...output.querySelectorAll("article[id]")].find(el => el.getBoundingClientRect().bottom > 0) : null;
       const anchorId = anchor?.id, top = anchor?.getBoundingClientRect().top;
       const focusId = document.activeElement?.id;
+      if (preserve) for (const details of output.querySelectorAll("details.conversation")) { const key = Number(details.id.replace("conversation-", "")); if (details.open) expanded.add(key); else expanded.delete(key); }
       output.textContent = ""; likeControls = [];
       ({ feed, square, agent: profile, stats: value => stats(value, feedData) })[view](data); updateLikes();
       status.textContent = "";
+      if (societyState) societyState.setAttribute("data-updated", String(Date.now()));
       let overviewPosts = data.posts || null, overviewExample = data._example === true || feedData._example === true;
       if (view === "agent") {
         try { const squareData = await read("square"); overviewPosts = squareData.posts || null; overviewExample = overviewExample || squareData._example === true; }

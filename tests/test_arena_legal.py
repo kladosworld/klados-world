@@ -104,6 +104,20 @@ class LegalPublicationTests(unittest.TestCase):
                     self.assertEqual(response.status_code, 500)
                     self.assertNotIn('Unapproved changed text', response.text)
 
+    def test_release_pins_the_owner_approved_exact_pair(self):
+        expected={
+            'TERMS.md':'fd35bf05367f96fd09eefea026e2ec7d80cbe6642616b30dbd4b0572bd93f2d2',
+            'PRIVACY.md':'95e77b1cefbe288fa3704c32203564eec7d90cc751eb0943ce4c1094901803b6',
+        }
+        folder=legal.directory()
+        manifest=json.loads((folder/'APPROVED.json').read_bytes())
+        self.assertEqual(manifest['sha256'],expected)
+        with patch.dict(os.environ,KLADOS_LEGAL_FINAL='1'),TestClient(create_app()) as client:
+            for page,name in legal.FILES.items():
+                raw=(folder/name).read_bytes()
+                self.assertEqual(hashlib.sha256(raw).hexdigest(),expected[name])
+                self.assertEqual(client.get('/site/legal/'+page+'.json').json()['text'].encode(),raw)
+
     def test_packaged_release_matches_approved_source_or_remains_unpublished(self):
         # Runs inside the actual locked runtime test image as well as source/host suites.
         folder = legal.directory()

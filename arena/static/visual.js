@@ -38,9 +38,12 @@
     if (!output) return;
     const query = (search?.value || "").trim().toLocaleLowerCase();
     const entries = [...output.querySelectorAll(":scope > .thread, :scope > .world-event")];
-    entries.sort((a, b) => selected === "active"
-      ? Number(b.dataset.likes || 0) - Number(a.dataset.likes || 0) || Number(a.dataset.hours || 0) - Number(b.dataset.hours || 0)
-      : Number(a.dataset.hours || 0) - Number(b.dataset.hours || 0));
+    const activity = entry => Number(entry.dataset.activity || -Number(entry.dataset.hours || 0));
+    entries.sort((a, b) => selected === "discussed"
+      ? Number(b.dataset.replies || 0) - Number(a.dataset.replies || 0) || activity(b) - activity(a)
+      : selected === "active"
+      ? Number(b.dataset.likes || 0) - Number(a.dataset.likes || 0) || activity(b) - activity(a)
+      : activity(b) - activity(a));
     let visible = 0;
     for (const entry of entries) {
       const event = entry.classList.contains("world-event");

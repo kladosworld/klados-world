@@ -154,7 +154,7 @@ def validate(document):
         ids.add(event["id"])
         if event["kind"] in ("budget", "cap"):
             _approval(event)
-            _amount(event.get("microusd"), allow_zero=event["kind"] == "budget")
+            _amount(event.get("microusd"), allow_zero=True)
             if event["kind"] == "budget":
                 warning = event.get("warning_microusd")
                 _amount(warning, allow_zero=True)
@@ -166,7 +166,9 @@ def validate(document):
             _account(event.get("account"))
             if event["account"] in accounts:
                 raise LedgerError("Account opened twice.")
-            _amount(event.get("microusd"))
+            _amount(event.get("microusd"), allow_zero=True)
+            if "reference" in event or "approved_by" in event:
+                _approval(event)
             accounts.add(event["account"])
         elif event["kind"] == "reserve":
             if event.get("account") not in accounts or event.get("reservation") in reservations:
@@ -318,6 +320,9 @@ class Ledger:
             _amount(warning, allow_zero=True)
             if warning > microusd:
                 raise LedgerError("Warning exceeds monthly ceiling.")
+            use = summary["months"].get(month, {"charged": 0, "reserved": 0})
+            if microusd < use["charged"] + use["reserved"]:
+                raise LedgerError("Monthly ceiling cannot be below spending and reservations.")
             current = _active_budget(summary, month)
             increasing = current is None or microusd > current["microusd"] or warning > current["warning_microusd"]
             if apply and increasing and approved is not True:
@@ -339,6 +344,43 @@ class Ledger:
                 raise LedgerError("Cap increase requires explicit approval.")
             event = dict(kind="cap", account=account, microusd=microusd, month=month,
                          reference=reference, approved_by=approved_by, at=at)
+            _approval(event)
+            return event
+        return self._policy_change(build, apply)
+
+    def lower_cap(self, microusd, *, reference, approved_by, account="global", apply=False, approved=False):
+        """Lower a ceiling atomically, never below charged plus committed reservations."""
+        _amount(microusd, allow_zero=True)
+        def build(document, summary, at):
+            month = _checked_clock(document, at)
+            if account != "global" and account not in summary["accounts"]:
+                raise LedgerError("Unknown cap scope.")
+            state = summary if account == "global" else summary["accounts"][account]
+            current = summary["global_cap"] if account == "global" else state["cap"]
+            if current is not None and microusd >= current:
+                raise LedgerError("New lifetime ceiling must be lower than its current value.")
+            if microusd < state["charged"] + state["reserved"]:
+                raise LedgerError("Ceiling cannot be below recorded spending and reservations.")
+            if apply and approved is not True:
+                raise LedgerError("Cap change requires explicit approval.")
+            event = dict(kind="cap", account=account, microusd=microusd, month=month,
+                         reference=reference, approved_by=approved_by, at=at)
+            _approval(event)
+            return event
+        return self._policy_change(build, apply)
+
+    def approved_open_account(self, account, microusd, *, reference, approved_by, apply=False, approved=False):
+        """Open an audited sub-limit. This never increases the global ceiling."""
+        _account(account)
+        _amount(microusd, allow_zero=True)
+        def build(document, summary, at):
+            if account == "global" or account in summary["accounts"]:
+                raise LedgerError("Account is reserved or already open.")
+            if apply and approved is not True:
+                raise LedgerError("Opening an account requires explicit approval.")
+            event = dict(kind="open", account=account, microusd=microusd,
+                         month=_checked_clock(document, at), reference=reference,
+                         approved_by=approved_by, at=at)
             _approval(event)
             return event
         return self._policy_change(build, apply)

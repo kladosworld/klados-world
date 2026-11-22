@@ -9,7 +9,7 @@ Safety:
 - Restarts are safe: time is the database clock, a turn is claimed before its call,
   a tick never runs twice within the rules' minimum gap, and missed hours are not
   replayed (an outage ages nobody).
-- A paused society does nothing. The worker pauses it on a spent cap, a missing key,
+- A paused society does nothing. The worker treats exhausted budgets as financial rest and pauses on a missing key,
   the stop file, or repeated provider failures.
 - Logs carry counts and fixed error labels only, never agent text, reasons or keys.
 """
@@ -21,7 +21,7 @@ import signal
 import sys
 import time
 
-from arena import db, society, society_report, worker
+from arena import db, society, society_report, worker, eras
 from tee_arena.society import rules as rules_module
 
 LOCK = 73423189
@@ -45,6 +45,7 @@ def step(conn, rules, agents, watcher, now):
     result = {"tick": state["tick"], "paused": state["paused"]}
     if state["paused"]:
         return result
+    eras.require_purpose(conn, purpose)
     if tick_due(state, now):
         ticked = society.tick(conn, rules, now)
         conn.commit()
@@ -106,7 +107,7 @@ def main(argv=None):
             now = datetime.now(timezone.utc)
             try:
                 summary = step(conn, rules, agents, watcher, now)
-                if summary.get("ticked") or summary.get("turns") or summary.get("failed") or summary.get("stopped"):
+                if summary.get("ticked") or summary.get("turns") or summary.get("failed") or summary.get("financial_rests") or summary.get("stopped"):
                     log("step " + " ".join(f"{k}={v}" for k, v in sorted(summary.items())))
                 if now >= next_report:
                     log(f"report written: {write_report(conn, rules, ledger, args.reports, now).name}")

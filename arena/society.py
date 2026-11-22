@@ -162,16 +162,16 @@ def relations(conn, agent_id):
     return {
         "replied_to": counts("""SELECT p.author_id AS other, count(*) AS n FROM society_posts r
                                 JOIN society_posts p ON p.id = r.reply_to
-                                WHERE r.author_id = %s AND p.author_id <> %s AND r.status = 'published'
+                                WHERE r.author_id = %s AND p.author_id <> %s AND r.status = 'published' AND r.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') AND p.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z')
                                 GROUP BY p.author_id"""),
         "replies_from": counts("""SELECT r.author_id AS other, count(*) AS n FROM society_posts r
                                   JOIN society_posts p ON p.id = r.reply_to
-                                  WHERE p.author_id = %s AND r.author_id <> %s AND r.status = 'published'
+                                  WHERE p.author_id = %s AND r.author_id <> %s AND r.status = 'published' AND r.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') AND p.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z')
                                   GROUP BY r.author_id"""),
         "liked": counts("""SELECT target_id AS other, count(*) AS n FROM society_likes
-                           WHERE from_kind = 'agent' AND from_id = %s AND target_id <> %s GROUP BY target_id"""),
+                           WHERE from_kind = 'agent' AND from_id = %s AND target_id <> %s AND created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') GROUP BY target_id"""),
         "liked_by": counts("""SELECT from_id AS other, count(*) AS n FROM society_likes
-                              WHERE from_kind = 'agent' AND target_id = %s AND from_id <> %s GROUP BY from_id"""),
+                              WHERE from_kind = 'agent' AND target_id = %s AND from_id <> %s AND created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') GROUP BY from_id"""),
     }
 
 
@@ -339,9 +339,9 @@ def due_turns(conn, now):
         return []
     return [row["id"] for row in conn.execute("""
         SELECT a.id FROM society_agents a
-        WHERE a.kind = 'founder' AND a.status = 'alive' AND a.participation='active' AND a.turn_minute <= %s
+        WHERE a.kind = 'founder' AND a.status = 'alive' AND a.participation='active' AND a.turn_minute <= %s AND %s > COALESCE((SELECT started_tick FROM society_eras ORDER BY id DESC LIMIT 1), 0)
           AND NOT EXISTS (SELECT 1 FROM society_turns t WHERE t.agent_id = a.id AND t.tick = %s)
-        ORDER BY a.turn_minute, a.id""", (_utc(now).minute, state["tick"]))]
+        ORDER BY a.turn_minute, a.id""", (_utc(now).minute, state["tick"], state["tick"]))]
 
 
 def audit(conn):

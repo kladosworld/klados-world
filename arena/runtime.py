@@ -16,8 +16,8 @@ def main(argv=None):
     parser.add_argument('command', choices=['bootstrap', 'demo', 'status', 'audit', 'pause',
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
                                           'review', 'show', 'decide', 'invite', 'agent',
-                                          'refresh-founders-v2', 'budget', 'cap'])
-    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise'])
+                                          'refresh-founders-v2', 'budget', 'cap', 'era'])
+    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start'])
     parser.add_argument('--id', dest='identifier')
     parser.add_argument('--ledger', default='/data/ledger.json')
     parser.add_argument('--cap-usd', default='1.00')
@@ -27,6 +27,7 @@ def main(argv=None):
     parser.add_argument('--reference', default='')
     parser.add_argument('--approved-by', default='operator')
     parser.add_argument('--account', default='global')
+    parser.add_argument('--purpose')
     parser.add_argument('--finding', type=int)
     parser.add_argument('--rescreen', type=int)
     parser.add_argument('--retry-screening', type=int)
@@ -50,8 +51,12 @@ def main(argv=None):
                 result = book.set_budget(amount(args.usd), reference=args.reference,
                     approved_by=args.approved_by, apply=args.yes, approved=args.yes,
                     warning_microusd=amount(args.warning_usd) if args.warning_usd is not None else None)
-            elif args.command == 'cap' and args.operation == 'raise':
-                result = book.raise_cap(amount(args.usd), reference=args.reference,
+            elif args.command == 'budget' and args.operation == 'open':
+                result = book.approved_open_account(args.account, amount(args.usd),
+                    reference=args.reference, approved_by=args.approved_by, apply=args.yes, approved=args.yes)
+            elif args.command == 'cap' and args.operation in ('raise', 'lower'):
+                change = book.raise_cap if args.operation == 'raise' else book.lower_cap
+                result = change(amount(args.usd), reference=args.reference,
                     approved_by=args.approved_by, account=args.account, apply=args.yes, approved=args.yes)
             else:
                 raise ValueError('Invalid budget operation')
@@ -74,6 +79,14 @@ def main(argv=None):
                     result = external_agents.create_invite(conn, now)
                 elif args.command == 'invite' and args.operation == 'list':
                     result = external_agents.list_invites(conn)
+                elif args.command == 'agent' and args.operation == 'profiles':
+                    result = [dict(row) for row in conn.execute("SELECT id,agent_id,name,description FROM external_profile_reviews WHERE status='pending' ORDER BY id")]
+                elif args.command == 'agent' and args.operation in ('approve-profile', 'reject-profile'):
+                    if not args.yes or not args.identifier or not args.reference.strip() or args.finding is None:
+                        raise ValueError('Profile review requires --id, --finding, --reference and --yes')
+                    result = external_agents.review_profile(conn, args.identifier,
+                        approve=args.operation == 'approve-profile', reference=args.reference, now=now,
+                        review_id=args.finding)
                 elif args.operation in ('revoke', 'suspend') and args.identifier:
                     if args.command == 'invite' and args.operation == 'revoke':
                         result = {'changed': external_agents.revoke_invite(conn, args.identifier, now)}
@@ -87,6 +100,12 @@ def main(argv=None):
                 if args.operation is not None or args.identifier is not None:
                     raise ValueError('refresh-founders-v2 takes no operation or identity argument')
                 result = society.refresh_founders_v2(conn, rules, now, apply=args.yes)
+            elif args.command == 'era':
+                from arena import eras
+                if args.operation != 'start':
+                    raise ValueError('Invalid era operation')
+                result = eras.start(conn, rules, now, purpose=args.purpose, reference=args.reference,
+                                    approved_by=args.approved_by, apply=args.yes)
             elif args.command == 'bootstrap':
                 db.migrate(conn)
                 state = conn.execute('SELECT 1 FROM society_clock').fetchone()

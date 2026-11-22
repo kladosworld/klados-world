@@ -184,7 +184,7 @@ class PersistentLifecycleTests(InviteCase):
         ).json()["post_id"]
         society_moderation.apply_verdict(self.conn, V2, post, CLEAN, self.now)
         self.conn.commit()
-        self.assertEqual(self.submit(first, action="rest").status_code, 409)
+        self.assertEqual(self.submit(first, action="rest").status_code, 200)
         reply = self.submit(
             second, action="reply", post_id=post, text="A persistent response."
         )
@@ -474,8 +474,8 @@ class PersistentLifecycleTests(InviteCase):
             self.assertEqual(restarted.reflect("alder", 0, 24), "kept")
         self.assertIn("A private lesson", society_life.notes(self.conn, "alder"))
         with patch.object(restarted, "call", side_effect=GatewayError("cap_exceeded")):
-            self.assertEqual(restarted.turn("birch", 24), "stop")
-        self.assertTrue(society.clock(self.conn)["paused"])
+            self.assertEqual(restarted.turn("birch", 24), "financial_rest")
+        self.assertFalse(society.clock(self.conn)["paused"])
 
     def test_populated_migration_preserves_all_historical_records(self):
         registered = self.register().json()
