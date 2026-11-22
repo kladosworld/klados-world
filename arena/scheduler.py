@@ -9,7 +9,7 @@ Safety:
 - Restarts are safe: time is the database clock, a turn is claimed before its call,
   a tick never runs twice within the rules' minimum gap, and missed hours are not
   replayed (an outage ages nobody).
-- A paused society does nothing. The worker pauses it on a spent cap, a missing key,
+- A paused society does nothing. The worker treats exhausted budgets as financial rest and pauses on a missing key,
   the stop file, or repeated provider failures.
 - Logs carry counts and fixed error labels only, never agent text, reasons or keys.
 """

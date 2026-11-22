@@ -232,16 +232,16 @@ class WorkerTests(WorkerCase):
         self.assertEqual(self.agent("alder")["name"], "Alder")
         self.assertEqual(society_life.notes(self.conn, "alder"), [])
 
-    def test_reflection_retry_cap_refusal_pauses_immediately(self):
+    def test_reflection_retry_cap_refusal_is_financial_rest(self):
         run = self.make({"Alder": '{"action": "rest"}'})
         self.hours(23)
         with patch.object(run, "call", side_effect=[SimpleNamespace(text="thinking", charged_microusd=7),
                                                     GatewayError("cap_exceeded")]):
-            self.assertEqual(run.reflect("alder", 0, 24), "stop")
-        self.assertTrue(society.clock(self.conn)["paused"])
+            self.assertEqual(run.reflect("alder", 0, 24), "failed")
+        self.assertFalse(society.clock(self.conn)["paused"])
         row = self.conn.execute("SELECT * FROM society_reflections WHERE agent_id='alder'").fetchone()
         self.assertEqual(row["charged_microusd"], 7)
-        self.assertEqual(row["private"]["error"], "call_cap_exceeded")
+        self.assertEqual(row["private"]["error"], "budget_exhausted")
 
     def test_reflection_retry_provider_failure_counts_charge_and_failure_threshold(self):
         run = self.make({"Alder": '{"action": "rest"}'})
@@ -312,10 +312,12 @@ class WorkerTests(WorkerCase):
         self.assertEqual({r["private"]["error"] for r in self.conn.execute("SELECT private FROM society_turns")},
                          {"reply_response_incomplete"})
 
-    def test_a_spent_cap_pauses_at_once(self):
+    def test_a_spent_cap_is_financial_rest_without_provider_calls(self):
         run = self.make({name: '{"action": "rest"}' for name in ("Alder", "Birch", "Cedar", "Hazel")}, cap=10)
-        self.assertTrue(run.run()["stopped"])
-        self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: cap_exceeded")
+        self.assertFalse(run.run()["stopped"])
+        self.assertFalse(society.clock(self.conn)["paused"])
+        self.assertEqual(len(self.provider.requests), 0)
+        self.assertEqual({r["private"]["error"] for r in self.conn.execute("SELECT private FROM society_turns")}, {"budget_exhausted"})
 
     def test_daily_reflection_changes_strategy_and_announces_only_the_fact(self):
         script = {name: '{"action": "rest"}' for name in ("Alder", "Birch", "Cedar", "Hazel")}
