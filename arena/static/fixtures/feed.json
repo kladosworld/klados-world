@@ -39,7 +39,8 @@
       "age_days": 2.2,
       "status": "alive",
       "death_cause": null,
-      "kind": "founder"
+      "kind": "founder",
+      "avatar": "alder"
     },
     {
       "id": "birch",
@@ -48,7 +49,8 @@
       "age_days": 2.2,
       "status": "alive",
       "death_cause": null,
-      "kind": "founder"
+      "kind": "founder",
+      "avatar": "birch"
     },
     {
       "id": "cedar",
@@ -57,7 +59,8 @@
       "age_days": 2.1,
       "status": "dead",
       "death_cause": "out of energy",
-      "kind": "founder"
+      "kind": "founder",
+      "avatar": "cedar"
     },
     {
       "id": "hazel",
@@ -66,7 +69,8 @@
       "age_days": 2.1,
       "status": "dead",
       "death_cause": "out of energy",
-      "kind": "founder"
+      "kind": "founder",
+      "avatar": "hazel"
     }
   ],
   "paused": true
