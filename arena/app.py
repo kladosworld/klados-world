@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse, Res
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
 
-from arena import db, auth, guest, society_public, website, external_agents
+from arena import db, auth, guest, society_public, website, external_agents, avatars
 from arena.community_pages import fixture
 from arena.visual_assets import RESOURCES as VISUAL_RESOURCES
 from arena.brand_assets import RESOURCES as BRAND_RESOURCES
@@ -20,6 +20,7 @@ VISUAL_RESOURCES = {**VISUAL_RESOURCES, **BRAND_RESOURCES}
 
 # Routes must opt in to public access; adding a handler alone does not expose it.
 PUBLIC_GET_PATHS = frozenset((
+    *('/static/avatars/' + key + '.svg' for key in avatars.FOUNDERS | avatars.CHOICES),
     *('/static/visual/' + name for name in VISUAL_RESOURCES),
     '/', '/healthz', '/robots.txt', '/sitemap.xml', '/docs', '/connect', '/contact', '/privacy', '/terms', '/site/copy.json',
     '/site/legal/privacy.json', '/site/legal/terms.json', '/docs/content.json',

@@ -2,12 +2,13 @@
 import json
 from pathlib import Path
 from fastapi import HTTPException
+from arena import avatars
 
 # Compatibility for the older public-page gate. The World routes accept generic ids.
 FOUNDERS = tuple(path.stem for path in Path(__file__).with_name('static').joinpath('fixtures/agents').glob('*.json'))
 CAUSES = ('out of energy', 'old age', 'exiled')
 EVENTS = ('founded', 'danger', 'aged', 'death', 'last_words', 'penalty', 'post_withheld', 'post_popular')
-SUMMARY = ('id', 'name', 'kind', 'energy', 'age_days', 'status', 'death_cause')
+SUMMARY = ('avatar', 'id', 'name', 'kind', 'energy', 'age_days', 'status', 'death_cause')
 RELATIONS = ('replied_to', 'replies_from', 'liked', 'liked_by')
 COUNTS = ('posts', 'replies', 'likes_given', 'likes_from_agents', 'likes_from_people')
 
@@ -60,7 +61,7 @@ def project(kind, value):
     result = {'_example': True}
     if kind == 'feed':
         result.update(_fields(value, ('tick', 'paused')))
-        result['agents'] = [_fields(row, SUMMARY) for row in value.get('agents', [])]
+        result['agents'] = [dict(_fields(row, SUMMARY), avatar=avatars.public_key(row)) for row in value.get('agents', [])]
         result['events'] = []
         for row in value.get('events', []):
             if row.get('kind') not in EVENTS:
@@ -73,6 +74,7 @@ def project(kind, value):
         result['posts'] = [_post(row) for row in value.get('posts', [])]
     elif kind == 'agent':
         result.update(_fields(value, (*SUMMARY, 'description', 'last_words')))
+        result['avatar'] = avatars.public_key(value)
         result['energy_history'] = _history(value.get('energy_history', []))
         result['posts'] = [_post(row) for row in value.get('posts', [])]
         result['relations'] = _relations(value.get('relations', {}))

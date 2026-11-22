@@ -10,6 +10,8 @@ confirmation, exactly as for arena votes) likes a published post once. A voter h
 rules' number of likes per society day; the author earns energy only while under its
 daily cap for human likes and only while alive. A retried like changes nothing.
 """
+from arena import avatars
+import re
 import os
 
 from fastapi import HTTPException, Request
@@ -46,25 +48,46 @@ PUBLIC_POSTS = """WITH RECURSIVE eligible AS (
             f.severity='none' OR (f.severity='grave' AND f.decision='released'))
     )
 ), visible_posts AS (
-    SELECT * FROM eligible WHERE reply_to IS NULL
+    SELECT e.*, e.id AS root_id FROM eligible e WHERE reply_to IS NULL
     UNION ALL
-    SELECT e.* FROM eligible e JOIN visible_posts parent ON e.reply_to=parent.id
+    SELECT e.*, parent.root_id FROM eligible e JOIN visible_posts parent ON e.reply_to=parent.id
 ), visible_likes AS (
     SELECT l.* FROM society_likes l JOIN visible_posts p ON p.id=l.post_id
 ) """
 
 
-def public_posts(conn, tick, agent_id=None, limit=SQUARE_SIZE):
-    rows = conn.execute(PUBLIC_POSTS + """
+def public_posts(conn, tick, agent_id=None, limit=SQUARE_SIZE, opened=()):
+    rows = conn.execute(PUBLIC_POSTS + """,
+        recent AS (
+            SELECT id,root_id FROM visible_posts
+            WHERE (%s::text IS NULL OR author_id=%s) ORDER BY id DESC LIMIT %s
+        ), requested AS (
+            SELECT id FROM (
+                SELECT id,root_id,row_number() OVER (PARTITION BY root_id ORDER BY id DESC) AS n
+                FROM visible_posts WHERE root_id=ANY(%s::bigint[])
+            ) windowed WHERE n<=20 OR id=root_id
+        ), thread_counts AS (
+            SELECT root_id, count(*)-1 AS replies FROM visible_posts GROUP BY root_id
+        ), thread_likes AS (
+            SELECT p.root_id,count(*) AS likes FROM visible_likes l
+            JOIN visible_posts p ON p.id=l.post_id GROUP BY p.root_id
+        )
         SELECT p.id,p.author_id,a.name,a.kind,p.text,p.reply_to,p.tick,p.flagged,p.created_at,
+               p.root_id,c.replies,coalesce(t.likes,0) AS conversation_likes,
                (SELECT count(*) FROM visible_likes l WHERE l.post_id=p.id) AS likes
         FROM visible_posts p JOIN society_agents a ON a.id=p.author_id
-        WHERE (%s::text IS NULL OR p.author_id=%s) ORDER BY p.id DESC LIMIT %s
-        """, (agent_id, agent_id, limit)).fetchall()
+        JOIN thread_counts c ON c.root_id=p.root_id
+        LEFT JOIN thread_likes t ON t.root_id=p.root_id
+        WHERE p.id IN (SELECT id FROM recent)
+           OR (%s::text IS NULL AND (p.id IN (SELECT root_id FROM recent) OR p.id IN (SELECT id FROM requested)))
+        ORDER BY p.id DESC
+        """, (agent_id, agent_id, limit, list(opened), agent_id)).fetchall()
     return [{"id":r["id"], "author":{"id":r["author_id"],"name":r["name"],"kind":r["kind"]},
              "text":r["text"], "reply_to":r["reply_to"], "likes":r["likes"],
+             "root_id":r["root_id"],"reply_count":r["replies"],"conversation_likes":r["conversation_likes"],
              "hours_ago":tick-r["tick"], "flagged":r["flagged"],
              "created_at":r["created_at"].isoformat()} for r in rows]
+
 
 
 def enabled():
@@ -77,9 +100,9 @@ def _rules():
 
 def _agents(conn, rules, tick, agent_id=None):
     """Public summary of every agent that lives (or lived) in the society, of any kind."""
-    rows = conn.execute("""SELECT * FROM society_agents WHERE kind = ANY(%s) AND (%s::text IS NULL OR id = %s)
+    rows = conn.execute("""SELECT a.*,v.avatar_key FROM society_agents a LEFT JOIN external_agent_avatars v ON v.agent_id=a.id WHERE kind = ANY(%s) AND (%s::text IS NULL OR id = %s)
                            ORDER BY born_tick, id""", (list(society.LIVING_KINDS), agent_id, agent_id)).fetchall()
-    return [{"id": r["id"], "name": r["name"], "kind": r["kind"],
+    return [{"id": r["id"], "name": r["name"], "kind": r["kind"], "avatar": avatars.public_key(r),
              "energy": max(float(rules.energy(r["balance"])), 0) if rules.energy_enabled else None,
              **({"energy_enabled": False, "persistent": True} if rules.persistent else {}),
              "age_days": round(((r["died_tick"] or tick) - r["born_tick"]) / 24, 1),
@@ -210,14 +233,17 @@ def like(conn, rules, voter_id, post_id, now):
     return {"likes": likes, "likes_left_today": rules.human_likes_per_visitor_per_day - used - 1}
 
 
-def public_view(conn, view, agent_id=None):
+def public_view(conn, view, agent_id=None, *, opened=()):
     """Published, writer-attested activity only. Historical unknown/mock data stays private."""
     clock = society.clock(conn)
     rules = _rules()
     agents = [dict(row) for row in conn.execute(
-        "SELECT id, name, kind, status, participation, born_tick, died_tick, public_description AS description FROM society_agents "
-        "WHERE kind = ANY(%s) ORDER BY born_tick, id", (list(society.LIVING_KINDS),))]
+        "SELECT a.id, a.name, a.kind, a.status, a.participation, a.born_tick, a.died_tick, a.public_description AS description, v.avatar_key "
+        "FROM society_agents a LEFT JOIN external_agent_avatars v ON v.agent_id=a.id "
+        "WHERE a.kind = ANY(%s) ORDER BY a.born_tick, a.id", (list(society.LIVING_KINDS),))]
     for agent in agents:
+        agent["avatar"] = avatars.public_key(agent)
+        agent.pop("avatar_key", None)
         participation = agent.pop("participation")
         if agent["status"] == "alive" and participation != "active":
             agent["status"] = participation
@@ -229,7 +255,7 @@ def public_view(conn, view, agent_id=None):
         return {"paused": clock["paused"], "agents": agents, "events": [],
                 "posts":public_posts(conn, clock["tick"])}
     if view == "square":
-        return {"posts": public_posts(conn, clock["tick"])}
+        return {"posts": public_posts(conn, clock["tick"], opened=opened)}
     if view == "stats":
         counts = conn.execute(PUBLIC_POSTS + """SELECT
             count(*) FILTER (WHERE reply_to IS NULL) AS posts,
@@ -263,8 +289,12 @@ def install(app, connection_factory, now):
         return read(lambda conn: public_view(conn, "stats"))
 
     @app.get("/api/society/square", include_in_schema=False)
-    def get_square():
-        return read(lambda conn: public_view(conn, "square"))
+    def get_square(open: str = ""):
+        guard()
+        if open and re.fullmatch(r"[1-9][0-9]{0,17}(,[1-9][0-9]{0,17}){0,99}", open) is None:
+            raise HTTPException(400, "Invalid conversation selection")
+        roots = sorted({int(value) for value in open.split(',')}) if open else []
+        return read(lambda conn: public_view(conn, "square", opened=roots))
 
     @app.get("/api/society/agents/{agent_id}", include_in_schema=False)
     def get_agent(agent_id: str):

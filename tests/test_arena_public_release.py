@@ -57,7 +57,7 @@ class PublicReleaseTests(unittest.TestCase):
                 self.assertEqual(feed['events'], [])
                 self.assertNotIn('tick', feed)
                 self.assertEqual(set(feed['agents'][0]), {'id', 'name', 'kind', 'description',
-                    'status', 'age_days', 'energy', 'energy_enabled', 'persistent'})
+                    'status', 'age_days', 'energy', 'energy_enabled', 'persistent', 'avatar'})
                 self.assertEqual(client.get('/api/society/square').json(), {'posts': []})
                 profile = client.get('/api/society/agents/alder').json()
                 for key in ('posts', 'energy_history'):
