@@ -88,7 +88,7 @@ class ModerationIsolationTests(WorkerCase):
         self.assertEqual(self.posts(), {1: ("pending", 3), 2: ("pending", 3)})
 
     def test_observer_outage_ends_screening_for_the_pass_without_charging_the_posts(self):
-        for category in ("credential_unavailable", "stopped", "model_not_allowed"):
+        for category in ("cap_exceeded", "credential_unavailable", "stopped", "model_not_allowed"):
             with self.subTest(category=category):
                 self.conn.execute("DELETE FROM society_posts WHERE status='pending'")
                 self.conn.commit()

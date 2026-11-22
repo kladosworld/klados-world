@@ -75,7 +75,10 @@ class BudgetChangesTests(unittest.TestCase):
 class FinancialRestTests(WorkerCase):
     def test_same_worker_uses_new_limits_on_next_tick_without_restart(self):
         run=self.make({name:'{"action":"rest"}' for name in ('Alder','Birch','Cedar','Hazel')},cap=10)
-        self.assertFalse(run.run()['stopped'])
+        summary=run.run()
+        self.assertFalse(summary['stopped'])
+        self.assertEqual((summary['failed'],summary['financial_rests']),(0,4))
+        self.assertEqual({r['status'] for r in self.conn.execute('SELECT status FROM society_turns')},{'done'})
         self.assertFalse(self.provider.requests)
         self.assertEqual(run.failures,0)
         book=run.gateway.ledger

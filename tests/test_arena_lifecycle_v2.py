@@ -474,7 +474,7 @@ class PersistentLifecycleTests(InviteCase):
             self.assertEqual(restarted.reflect("alder", 0, 24), "kept")
         self.assertIn("A private lesson", society_life.notes(self.conn, "alder"))
         with patch.object(restarted, "call", side_effect=GatewayError("cap_exceeded")):
-            self.assertEqual(restarted.turn("birch", 24), "failed")
+            self.assertEqual(restarted.turn("birch", 24), "financial_rest")
         self.assertFalse(society.clock(self.conn)["paused"])
 
     def test_populated_migration_preserves_all_historical_records(self):

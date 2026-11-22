@@ -113,6 +113,8 @@ class Worker:
             society_life.fail_turn(self.conn, agent_id, tick, code, charged_microusd=error.charged_microusd)
             self.conn.commit()
             self.log.append({"agent": agent_id, "tick": tick, "error": code})
+            if error.category == "cap_exceeded":
+                return "financial_rest"
             return "stop" if self._failed(error) else "failed"
         self.failures = 0
         try:
@@ -345,7 +347,7 @@ class Worker:
 
     def run(self):
         """One pass: every due turn, then every due reflection. Returns a summary."""
-        summary = {"turns": 0, "failed": 0, "reflections": 0, "stopped": False}
+        summary = {"turns": 0, "failed": 0, "financial_rests": 0, "reflections": 0, "stopped": False}
         if society.clock(self.conn)["paused"]:
             return dict(summary, stopped=True)
         if self.screen() == "stop":  # posts left from an earlier pass
@@ -356,7 +358,7 @@ class Worker:
             if result == "stop":
                 return dict(summary, stopped=True)
             if result is not None:
-                summary["turns" if result == "done" else "failed"] += 1
+                summary["financial_rests" if result == "financial_rest" else "turns" if result == "done" else "failed"] += 1
         for agent_id, day in society_life.reflections_due(self.conn):
             result = self.reflect(agent_id, day, tick)
             if result == "stop":
