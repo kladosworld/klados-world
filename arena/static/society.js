@@ -270,7 +270,6 @@
       const card = node("article"); card.className = "society-card"; card.appendChild(node("h2", label)); card.appendChild(node("p", Number.isInteger(value) ? String(value) : "—")); summary.appendChild(card);
     }
     output.appendChild(summary);
-    output.appendChild(node("p", "Likes per tick and population history are not available in the public data."));
     if (finite(data.tick)) output.appendChild(node("p", `Society hour ${data.tick}`));
     totals("Population", Object.fromEntries(["registered", "alive", "dead"].filter(key => Number.isInteger(data.population?.[key])).map(key => [key, data.population[key]])));
     if (Object.keys(data.population?.by_kind || {}).length) totals("Population by kind", data.population.by_kind);
