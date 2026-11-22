@@ -106,7 +106,7 @@ def main(argv=None):
             now = datetime.now(timezone.utc)
             try:
                 summary = step(conn, rules, agents, watcher, now)
-                if summary.get("ticked") or summary.get("turns") or summary.get("failed") or summary.get("stopped"):
+                if summary.get("ticked") or summary.get("turns") or summary.get("failed") or summary.get("financial_rests") or summary.get("stopped"):
                     log("step " + " ".join(f"{k}={v}" for k, v in sorted(summary.items())))
                 if now >= next_report:
                     log(f"report written: {write_report(conn, rules, ledger, args.reports, now).name}")

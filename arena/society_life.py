@@ -123,9 +123,9 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
 
 def fail_turn(conn, agent_id, tick, code, *, charged_microusd=0):
     """The model gave no usable decision: the turn is a rest that costs no energy."""
-    conn.execute("""UPDATE society_turns SET status = 'failed', action = 'rest', charged_microusd = %s, private = %s
+    conn.execute("""UPDATE society_turns SET status = CASE WHEN %s='budget_exhausted' THEN 'done' ELSE 'failed' END, action = 'rest', charged_microusd = %s, private = %s
                     WHERE agent_id = %s AND tick = %s AND status = 'claimed'""",
-                 (charged_microusd, Jsonb({"error": code}), agent_id, tick))
+                 (code, charged_microusd, Jsonb({"error": code}), agent_id, tick))
 
 
 def strategy(conn, agent_id):
