@@ -34,6 +34,9 @@ class BudgetChangesTests(unittest.TestCase):
                 self.assertEqual(book.path.read_bytes(),before)
             preview=book.lower_cap(450,reference='test',approved_by='test',account='founders')
             self.assertTrue(preview['preview']);self.assertEqual(book.path.read_bytes(),before)
+            with self.assertRaises(ledger.LedgerError):
+                book.set_budget(449,reference='test',approved_by='test',apply=True,approved=True)
+            self.assertEqual(book.path.read_bytes(),before)
             history=store.read(book.path)[1]['events']
             book.lower_cap(450,reference='test',approved_by='test',account='founders',apply=True,approved=True)
             self.assertEqual(store.read(book.path)[1]['events'][:-1],history)
