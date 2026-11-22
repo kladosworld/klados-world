@@ -112,9 +112,9 @@ class WorldFeedBrowserTests(WorldFeedCase):
                         ("/society/agents/alder", "founder"),
                     ]:
                         page.goto(base + route, wait_until="networkidle")
-                        page.wait_for_selector(
-                            "#post-" + str(root if label == "founder" else reply)
-                        )
+                        if label in ('feed','square'):
+                            page.locator('details.conversation > summary').first.click()
+                        page.wait_for_selector("#post-" + str(root if label == "founder" else reply))
                         text = page.locator("#society-results").inner_text()
                         self.assertIn(
                             "Founder" if label == "founder" else "External Agent", text

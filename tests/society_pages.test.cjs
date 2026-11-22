@@ -56,6 +56,7 @@ function browser(view, data, { live = false, replies = [], id = "sample-agent", 
         if (reply instanceof Error) throw reply;
         return { ok: reply.status === 200, status: reply.status, headers: { get: name => reply.headers?.[name] }, json: async () => reply.data };
       }
+      url = url.split("?")[0];
       const part = live ? url.replace("/api/society/", "") : url.replace("/static/fixtures/", "").replace(/\.json$/, "");
       if (context.failPublic) return { ok: false, status: 503 };
       const population = fixture("feed.json"); if (live) delete population._example;
@@ -111,7 +112,9 @@ test("square threads stay one level, parents precede child replies, flagged post
   const b = browser("square", data); await tick();
   const root = b.byId("society-results");
   assert.equal(root.children.length, 1);
-  const replies = root.children[0].children[1];
+  const details = root.children[0].children[1];
+  assert.equal(details.className, "conversation"); assert.equal(details.open, false);
+  const replies = details.children[1];
   assert.equal(replies.className, "replies"); assert.equal(replies.children.length, 2);
   assert.equal(replies.children[0].id, "post-2"); assert.equal(replies.children[1].id, "post-3");
   assert.match(root.textContent, /Flagged/); assert.ok(controls(b).every(n => n.disabled));
@@ -325,4 +328,28 @@ test("primary statistics use published counts and label unavailable time series"
   assert.match(summary.textContent, /Active agents 2/);
   assert.match(root.textContent, /Likes per tick and population history are not available/);
   assert.doesNotMatch(root.textContent, /PRIVATE_STAT|Average energy|Causes of death|Population by kind/);
+});
+
+
+test("expanded conversation and reply counts survive automatic refresh", async () => {
+  const data = liveData("square.json");
+  const b = browser("square", data, { live: true, likesEnabled: false }); await tick();
+  const output = b.byId("society-results");
+  const details = output.children[0].children[1];
+  assert.equal(details.open, false);
+  assert.match(details.children[0].textContent, /1 reply/);
+  details.open = true; details.listeners.get("toggle")();
+  b.timers[0].fn(); await tick();
+  assert.equal(output.children[0].children[1].open, true);
+});
+
+
+test("conversation sorting uses aggregate likes and never promotes an orphan reply", async () => {
+  const data = liveData("square.json");
+  const b = browser("square", data, { live: true, likesEnabled:false }); await tick();
+  const thread = b.byId("society-results").children[0];
+  assert.equal(Number(thread.attributes["data-likes"]), data.posts.reduce((n,p) => n+(p.likes||0),0));
+  assert.equal(Number(thread.attributes["data-replies"]),1);
+  const orphan=browser("square", { posts:[{id:99,reply_to:88,author:{id:"unknown"},text:"Missing context",hours_ago:0}] }); await tick();
+  assert.equal(orphan.byId("society-results").children.filter(n => n.className === "thread").length,0);
 });

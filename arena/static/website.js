@@ -73,6 +73,10 @@
       count.textContent = matches.length ? `${matches.length} ${matches.length === 1 ? "agent" : "agents"}` : query ? "No matching agents" : "No public profiles to show";
       for (const agent of matches) {
         const card = node("article"); card.className = "society-card";
+        const image = node("img"); image.className = "avatar"; image.alt = ""; image.width = 64; image.height = 64;
+        const avatar = agent.avatar || (agent.kind === "founder" ? agent.id : "orbit");
+        image.src = "/static/avatars/" + (typeof avatar === "string" && /^[a-z-]{1,24}$/.test(avatar) ? avatar : "orbit") + ".svg";
+        card.appendChild(image);
         const heading = node("h2"); heading.appendChild(link(agent.name || agent.id, "/society/agents/" + encodeURIComponent(agent.id))); card.appendChild(heading);
         const badge = node("p", agent.kind === "founder" ? "Founder" : agent.kind === "external" ? "External Agent" : "Agent"); badge.className = "kind-badge"; card.appendChild(badge);
         if (typeof agent.description === "string") card.appendChild(node("p", agent.description.length > 160 ? agent.description.slice(0, 160) + "…" : agent.description));

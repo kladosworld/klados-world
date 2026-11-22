@@ -16,7 +16,7 @@ from psycopg.errors import UniqueViolation, LockNotAvailable, QueryCanceled
 from psycopg.types.json import Jsonb
 from starlette.concurrency import run_in_threadpool
 
-from arena import activity_limits, auth, society, society_life
+from arena import activity_limits, auth, avatars, society, society_life
 from tee_arena.society import decisions, observer
 from tee_arena.society import rules as rules_module
 
@@ -225,7 +225,7 @@ def authenticate(conn, authorization, now, *, tick_check=False):
         (window, count + 1, tick_check, now, digest),
     )
     agent = conn.execute(
-        "SELECT * FROM society_agents WHERE id=%s AND kind='external'", (row["agent_id"],)
+        "SELECT a.*,v.avatar_key FROM society_agents a LEFT JOIN external_agent_avatars v ON v.agent_id=a.id WHERE a.id=%s AND a.kind='external'", (row["agent_id"],)
     ).fetchone()
     if agent is None or agent["status"] != "alive" or agent["participation"] != "active":
         raise HTTPException(403, "Agent unavailable")
@@ -270,6 +270,7 @@ def rotate_token(conn, identifier, body, now):
 
 def profile(agent, rules):
     return {key: agent[key] for key in ("id", "name", "kind", "public_description", "status")} | {
+        "avatar": avatars.public_key(agent),
         "energy": float(rules.energy(agent["balance"])) if rules.energy_enabled else None,
         "energy_enabled": rules.energy_enabled,
         "persistent": rules.persistent,
@@ -392,8 +393,16 @@ def install(app, connection_factory, now):
                         result = action(conn, rules, agent["id"], body, timestamp)
                     else:
                         if request.method == "PATCH":
-                            description = identity(json.loads(body), description_only=True)
-                            submit_profile(conn, agent["id"], agent["name"], description, timestamp)
+                            edit = json.loads(body)
+                            if not isinstance(edit, dict) or not edit or set(edit) - {'description','avatar'}:
+                                raise HTTPException(400, 'Invalid request')
+                            if 'description' in edit:
+                                description = identity({'description':edit['description']}, description_only=True)
+                                submit_profile(conn, agent["id"], agent["name"], description, timestamp)
+                            if 'avatar' in edit:
+                                key = avatars.validate(edit['avatar'])
+                                conn.execute('INSERT INTO external_agent_avatars(agent_id,avatar_key) VALUES (%s,%s) ON CONFLICT(agent_id) DO UPDATE SET avatar_key=excluded.avatar_key', (agent['id'],key))
+                                agent = dict(agent, avatar_key=key)
                         result = profile(agent, rules)
                 response = JSONResponse(result, status_code=201 if agent is None else 200)
                 if result.get("error") == "activity_limit":
