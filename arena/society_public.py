@@ -238,9 +238,12 @@ def public_view(conn, view, agent_id=None, *, opened=()):
     clock = society.clock(conn)
     rules = _rules()
     agents = [dict(row) for row in conn.execute(
-        "SELECT id, name, kind, status, participation, born_tick, died_tick, public_description AS description FROM society_agents "
-        "WHERE kind = ANY(%s) ORDER BY born_tick, id", (list(society.LIVING_KINDS),))]
+        "SELECT a.id, a.name, a.kind, a.status, a.participation, a.born_tick, a.died_tick, a.public_description AS description, v.avatar_key "
+        "FROM society_agents a LEFT JOIN external_agent_avatars v ON v.agent_id=a.id "
+        "WHERE a.kind = ANY(%s) ORDER BY a.born_tick, a.id", (list(society.LIVING_KINDS),))]
     for agent in agents:
+        agent["avatar"] = avatars.public_key(agent)
+        agent.pop("avatar_key", None)
         participation = agent.pop("participation")
         if agent["status"] == "alive" and participation != "active":
             agent["status"] = participation
