@@ -16,8 +16,8 @@ def main(argv=None):
     parser.add_argument('command', choices=['bootstrap', 'demo', 'status', 'audit', 'pause',
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
                                           'review', 'show', 'decide', 'invite', 'agent',
-                                          'refresh-founders-v2', 'budget', 'cap'])
-    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile'])
+                                          'refresh-founders-v2', 'budget', 'cap', 'era'])
+    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start'])
     parser.add_argument('--id', dest='identifier')
     parser.add_argument('--ledger', default='/data/ledger.json')
     parser.add_argument('--cap-usd', default='1.00')
@@ -27,6 +27,7 @@ def main(argv=None):
     parser.add_argument('--reference', default='')
     parser.add_argument('--approved-by', default='operator')
     parser.add_argument('--account', default='global')
+    parser.add_argument('--purpose')
     parser.add_argument('--finding', type=int)
     parser.add_argument('--rescreen', type=int)
     parser.add_argument('--retry-screening', type=int)
@@ -99,6 +100,12 @@ def main(argv=None):
                 if args.operation is not None or args.identifier is not None:
                     raise ValueError('refresh-founders-v2 takes no operation or identity argument')
                 result = society.refresh_founders_v2(conn, rules, now, apply=args.yes)
+            elif args.command == 'era':
+                from arena import eras
+                if args.operation != 'start':
+                    raise ValueError('Invalid era operation')
+                result = eras.start(conn, rules, now, purpose=args.purpose, reference=args.reference,
+                                    approved_by=args.approved_by, apply=args.yes)
             elif args.command == 'bootstrap':
                 db.migrate(conn)
                 state = conn.execute('SELECT 1 FROM society_clock').fetchone()

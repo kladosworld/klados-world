@@ -9,7 +9,7 @@ module publishes them; public pages must read only posts, likes, energy and even
 """
 from psycopg.types.json import Jsonb
 
-from arena import activity_limits, society
+from arena import activity_limits, society, eras
 from tee_arena.society import economy
 
 SQUARE_SIZE = 20
@@ -30,7 +30,7 @@ def _alive_agent(conn, agent_id):
 
 
 def _post(conn, post_id):
-    row = conn.execute("SELECT * FROM society_posts WHERE id = %s AND status = 'published'", (post_id,)).fetchone()
+    row = conn.execute("SELECT * FROM society_posts WHERE id = %s AND status = 'published' AND created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1)", (post_id,)).fetchone()
     if row is None:
         raise society.SocietyError("no_such_post")
     return row
@@ -136,12 +136,12 @@ def fail_turn(conn, agent_id, tick, code, *, charged_microusd=0):
 
 
 def strategy(conn, agent_id):
-    return conn.execute("""SELECT * FROM society_strategies WHERE agent_id = %s
+    return conn.execute("""SELECT * FROM society_strategies WHERE agent_id = %s AND created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1)
                            ORDER BY version DESC LIMIT 1""", (agent_id,)).fetchone()
 
 
 def notes(conn, agent_id, limit=NOTES_SHOWN):
-    rows = conn.execute("""SELECT text FROM society_notes WHERE agent_id = %s
+    rows = conn.execute("""SELECT text FROM society_notes WHERE agent_id = %s AND created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1)
                            ORDER BY id DESC LIMIT %s""", (agent_id, limit)).fetchall()
     return [row["text"] for row in reversed(rows)]
 
@@ -150,7 +150,7 @@ def _square(conn, now_tick, names):
     rows = conn.execute("""
         SELECT p.id, p.author_id, p.text, p.reply_to, p.tick,
                (SELECT count(*) FROM society_likes l WHERE l.post_id = p.id) AS likes
-        FROM society_posts p WHERE p.status = 'published' ORDER BY p.id DESC LIMIT %s""", (SQUARE_SIZE,)).fetchall()
+        FROM society_posts p WHERE p.status = 'published' AND p.created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1) ORDER BY p.id DESC LIMIT %s""", (SQUARE_SIZE,)).fetchall()
     return [{"post_id": r["id"], "author": names[r["author_id"]], "text": r["text"],
              "reply_to": r["reply_to"], "likes": r["likes"], "hours_ago": now_tick - r["tick"]}
             for r in reversed(rows)]
@@ -166,7 +166,7 @@ def _likes_by_source(conn, post_id):
 def _own_posts(conn, agent_id, tick, limit=5):
     """The agent's latest posts, even when they have left the square window."""
     rows = conn.execute("""SELECT id, text, reply_to, tick, status, flagged FROM society_posts
-                           WHERE author_id = %s ORDER BY id DESC LIMIT %s""", (agent_id, limit)).fetchall()
+                           WHERE author_id = %s AND created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1) ORDER BY id DESC LIMIT %s""", (agent_id, limit)).fetchall()
     status = {"pending": "waiting for moderation", "withheld": "withheld by moderation"}
     return [dict(post_id=r["id"], text=r["text"], reply_to=r["reply_to"], hours_ago=tick - r["tick"],
                  likes=_likes_by_source(conn, r["id"]),
@@ -177,7 +177,7 @@ def _own_posts(conn, agent_id, tick, limit=5):
 def _replies_to(conn, agent_id, tick, names, limit=5):
     rows = conn.execute("""SELECT r.id, r.author_id, r.text, r.reply_to, r.tick FROM society_posts r
                            JOIN society_posts p ON p.id = r.reply_to
-                           WHERE p.author_id = %s AND r.author_id <> %s AND r.status = 'published'
+                           WHERE p.author_id = %s AND r.author_id <> %s AND r.status = 'published' AND r.created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1) AND p.created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1)
                            ORDER BY r.id DESC LIMIT %s""", (agent_id, agent_id, limit)).fetchall()
     return [dict(post_id=r["id"], author=names[r["author_id"]], text=r["text"], reply_to=r["reply_to"],
                  hours_ago=tick - r["tick"]) for r in reversed(rows)]
@@ -221,11 +221,11 @@ def turn_context(conn, rules, agent_id):
     names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM society_agents")}
     lived = tick - agent["born_tick"]
     day = society_day(tick)
-    received = conn.execute("""SELECT from_kind, count(*) AS n FROM society_likes WHERE target_id = %s AND day = %s
+    received = conn.execute("""SELECT from_kind, count(*) AS n FROM society_likes WHERE target_id = %s AND day = %s AND created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1)
                                GROUP BY from_kind""", (agent_id, day)).fetchall()
     received = {r["from_kind"]: r["n"] for r in received}
     liked_today = {r["target_id"] for r in conn.execute(
-        "SELECT target_id FROM society_likes WHERE from_kind = 'agent' AND from_id = %s AND day = %s",
+        "SELECT target_id FROM society_likes WHERE from_kind = 'agent' AND from_id = %s AND day = %s AND created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1)",
         (agent_id, day))}
     others = [r for r in conn.execute("""SELECT id, name, status, participation FROM society_agents
                                          WHERE kind = ANY(%s) AND id <> %s ORDER BY id""",
@@ -234,7 +234,7 @@ def turn_context(conn, rules, agent_id):
     recent = conn.execute("""SELECT tick, action,
                                     coalesce(private->'outcome'->>'error', private->>'error') AS error
                              FROM society_turns
-                             WHERE agent_id = %s AND status <> 'claimed' ORDER BY tick DESC LIMIT 5""",
+                             WHERE agent_id = %s AND status <> 'claimed' AND tick > (SELECT started_tick FROM society_eras ORDER BY id DESC LIMIT 1) ORDER BY tick DESC LIMIT 5""",
                           (agent_id,)).fetchall()
     square = _square(conn, tick, names)
     liked_posts = {row["post_id"] for row in conn.execute(
@@ -296,7 +296,7 @@ def reflections_due(conn):
                                  WHERE kind = 'founder' AND status = 'alive' AND participation='active' ORDER BY id""",
                                  ()):
         lived = tick - agent["born_tick"]
-        if lived >= 24:
+        if lived >= 24 and agent["born_tick"] + 24 * (lived // 24) > eras.current(conn)["started_tick"]:
             day = lived // 24 - 1
             if not conn.execute("SELECT 1 FROM society_reflections WHERE agent_id = %s AND day = %s",
                                 (agent["id"], day)).fetchone():
@@ -315,19 +315,19 @@ def reflection_context(conn, rules, agent_id, day):
                           ORDER BY id DESC LIMIT 1""", (agent_id, last)).fetchone()
     posts = conn.execute("""SELECT p.id, p.text, p.reply_to,
                                    (SELECT count(*) FROM society_posts r WHERE r.reply_to = p.id) AS replies
-                            FROM society_posts p WHERE p.author_id = %s AND p.tick BETWEEN %s AND %s
+                            FROM society_posts p WHERE p.author_id = %s AND p.tick BETWEEN %s AND %s AND p.created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1)
                             ORDER BY p.id""", (agent_id, first, last)).fetchall()
     replies = conn.execute("""SELECT r.author_id, r.text FROM society_posts r JOIN society_posts p ON p.id = r.reply_to
-                              WHERE p.author_id = %s AND r.author_id <> %s AND r.status = 'published'
-                                AND r.tick BETWEEN %s AND %s
+                              WHERE p.author_id = %s AND r.author_id <> %s AND r.status = 'published' AND r.created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1) AND p.created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1)
+                                AND r.tick BETWEEN %s AND %s AND r.created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1)
                               ORDER BY r.id LIMIT 10""", (agent_id, agent_id, first, last)).fetchall()
     actions = {r["action"]: r["n"] for r in conn.execute(
-        """SELECT action, count(*) AS n FROM society_turns WHERE agent_id = %s AND tick BETWEEN %s AND %s
+        """SELECT action, count(*) AS n FROM society_turns WHERE agent_id = %s AND tick BETWEEN %s AND %s AND tick > (SELECT started_tick FROM society_eras ORDER BY id DESC LIMIT 1)
            GROUP BY action""", (agent_id, first, last))}
     current = strategy(conn, agent_id)
     received = {r["from_kind"]: r["n"] for r in conn.execute(
         """SELECT from_kind, count(*) AS n FROM society_likes
-           WHERE target_id = %s AND tick BETWEEN %s AND %s GROUP BY from_kind""",
+           WHERE target_id = %s AND tick BETWEEN %s AND %s AND created_at >= (SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1) GROUP BY from_kind""",
         (agent_id, first, last))}
     context = {
         "you": {"name": agent["name"], "day_of_life_ended": day, "max_days": rules.max_days,

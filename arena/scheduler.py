@@ -21,7 +21,7 @@ import signal
 import sys
 import time
 
-from arena import db, society, society_report, worker
+from arena import db, society, society_report, worker, eras
 from tee_arena.society import rules as rules_module
 
 LOCK = 73423189
@@ -45,6 +45,7 @@ def step(conn, rules, agents, watcher, now):
     result = {"tick": state["tick"], "paused": state["paused"]}
     if state["paused"]:
         return result
+    eras.require_purpose(conn, purpose)
     if tick_due(state, now):
         ticked = society.tick(conn, rules, now)
         conn.commit()

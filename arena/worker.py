@@ -21,7 +21,7 @@ from pathlib import Path
 import sys
 import time
 
-from arena import db, moderation, society, society_death, society_life, society_moderation
+from arena import eras, db, moderation, society, society_death, society_life, society_moderation
 from tee_arena import gateway as gateway_module, ledger as ledger_module
 from tee_arena.society import decisions, observer, prompts, shared_purpose, rules as rules_module
 
@@ -95,6 +95,7 @@ class Worker:
         return False
 
     def turn(self, agent_id, tick):
+        eras.require_purpose(self.conn, self.purpose)
         if not society.claim_turn(self.conn, agent_id, tick, self.now()):
             return None
         self.conn.commit()  # the turn is spent even if everything below fails
@@ -253,6 +254,7 @@ class Worker:
             return False
 
     def reflect(self, agent_id, day, tick):
+        eras.require_purpose(self.conn, self.purpose)
         try:
             context = society_life.reflection_context(self.conn, self.rules, agent_id, day)
         except society.SocietyError:
@@ -416,6 +418,10 @@ def main(argv=None):
     book = open_ledger(args.ledger, args.create_cap_usd)
     gateway, watcher = build_gateway(book), build_gateway(book, role="observer")
     with db.connect(dsn) as conn:
+        if not conn.execute("SELECT pg_try_advisory_lock(%s) AS ok", (eras.SCHEDULER_LOCK,)).fetchone()["ok"]:
+            raise society.SocietyError("another_worker_is_running")
+        if not society.clock(conn)["paused"]:
+            eras.require_purpose(conn, purpose)
         summary = Worker(conn, rules, gateway, observer_gateway=watcher, purpose=purpose).run()
     print(summary)
     return 0
