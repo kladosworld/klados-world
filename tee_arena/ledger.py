@@ -320,6 +320,9 @@ class Ledger:
             _amount(warning, allow_zero=True)
             if warning > microusd:
                 raise LedgerError("Warning exceeds monthly ceiling.")
+            use = summary["months"].get(month, {"charged": 0, "reserved": 0})
+            if microusd < use["charged"] + use["reserved"]:
+                raise LedgerError("Monthly ceiling cannot be below spending and reservations.")
             current = _active_budget(summary, month)
             increasing = current is None or microusd > current["microusd"] or warning > current["warning_microusd"]
             if apply and increasing and approved is not True:
