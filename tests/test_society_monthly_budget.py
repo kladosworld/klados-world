@@ -1,4 +1,5 @@
 """Monthly inference accounting using synthetic ledger files and mocked clocks/providers."""
+from multiprocessing import get_context
 import copy
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from contextlib import redirect_stdout, redirect_stderr
@@ -325,7 +326,7 @@ class MonthlyTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'posix', 'native process locks require Linux')
     def test_process_reservations_share_atomic_ceiling(self):
         self.policy()
-        with ProcessPoolExecutor(max_workers=4) as pool:
+        with ProcessPoolExecutor(max_workers=4, mp_context=get_context('spawn')) as pool:
             granted = list(pool.map(reserve_process, [str(self.path)] * 12, range(12)))
         self.assertEqual(sum(granted), 3)
         self.assertEqual(self.book.budget_status()['reserved_microusd'], 900)

@@ -1,4 +1,5 @@
 """Dynamic ceilings use the existing atomic ledger; synthetic files only."""
+from multiprocessing import get_context
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 import tempfile
@@ -65,7 +66,7 @@ class BudgetChangesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             book=ledger.Ledger.create(Path(directory)/'ledger.json',global_cap=10_000_000)
             book.open_account('founders',2000)
-            with ProcessPoolExecutor(max_workers=3) as pool:
+            with ProcessPoolExecutor(max_workers=3, mp_context=get_context('spawn')) as pool:
                 list(pool.map(race,[str(book.path)]*3,['lower','one','two']))
             state=book.balance('founders')
             self.assertLessEqual(state['charged']+state['reserved'],state['cap'])
