@@ -61,7 +61,23 @@ class EraTests(InviteCase):
         # Additive migrations are idempotent; Era 2 cannot be reset by an upgrade.
         db.migrate(self.conn);db.migrate(self.conn)
         self.assertEqual(eras.current(self.conn)['id'],2)
-        self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_eras').fetchone()['n'],2)
+        self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_eras').fetchone()['n'],1)
+
+    def test_migration_addition_is_empty_and_implicit_era1_preserves_existing_data(self):
+        self.conn.execute("INSERT INTO society_notes(agent_id,tick,text,created_at) VALUES ('alder',0,'ERA1_NOTE',%s)",(self.now,))
+        self.conn.execute("INSERT INTO society_strategies(agent_id,version,text,reason,tick,created_at) VALUES ('alder',1,'ERA1_STRATEGY','old',0,%s)",(self.now,))
+        before=list(self.conn.execute('SELECT to_jsonb(a) AS row FROM society_agents a ORDER BY id'))
+        self.conn.execute('DROP TABLE society_eras')
+        self.conn.execute("DELETE FROM arena_migrations WHERE name='0024_society_eras.sql'")
+        db.migrate(self.conn);db.migrate(self.conn)
+        self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_eras').fetchone()['n'],0)
+        self.assertEqual(eras.current(self.conn)['id'],1)
+        eras.require_purpose(self.conn,None)
+        context=society_life.turn_context(self.conn,V2,'alder')
+        self.assertEqual(context['you']['private_notes'],['ERA1_NOTE'])
+        self.assertEqual(context['you']['private_strategy'],'ERA1_STRATEGY')
+        self.assertEqual(list(self.conn.execute('SELECT to_jsonb(a) AS row FROM society_agents a ORDER BY id')),before)
+        self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_eras').fetchone()['n'],0)
 
     def test_refusals_and_runtime_purpose_guard(self):
         selected=self.prepare()

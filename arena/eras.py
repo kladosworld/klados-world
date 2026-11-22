@@ -1,19 +1,21 @@
 """One explicit, non-destructive chapter boundary. No ledger or clock mutation."""
+from datetime import datetime, timezone
 import os
 
 from arena import society
 from tee_arena.society import prompts, shared_purpose
 
-SINCE = '(SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1)'
-START_TICK = '(SELECT started_tick FROM society_eras ORDER BY id DESC LIMIT 1)'
+SINCE = "COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z')"
+START_TICK = 'COALESCE((SELECT started_tick FROM society_eras ORDER BY id DESC LIMIT 1), 0)'
 SCHEDULER_LOCK = 73423189
 
 
 def current(conn):
     row=conn.execute('SELECT * FROM society_eras ORDER BY id DESC LIMIT 1').fetchone()
-    if row is None:
-        raise society.SocietyError('era_state_unavailable')
-    return row
+    # Empty new table is the existing era, never a reason to seed or rewrite data.
+    return row if row is not None else {
+        'id':1, 'started_at':datetime.min.replace(tzinfo=timezone.utc), 'started_tick':0,
+        'purpose':None, 'purpose_sha256':None, 'reference':None, 'approved_by':None}
 
 
 def require_purpose(conn, purpose):

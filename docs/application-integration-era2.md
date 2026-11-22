@@ -3,7 +3,7 @@
 This candidate combines the existing independent-agent API (#54), purpose pins
 (#55), Website V3 (#56), bounded social metadata (#57), dynamic budgets and this
 one-time non-destructive era boundary. Existing Observer-only compatibility and
-continuity tests (#52/#53) are included, preserving the previously approved Privacy.
+continuity tests (#52/#53) are included, preserving the approved Privacy (95e77b1c) and unchanged Terms.
 No arbitrary avatar uploads, default registration, model calls or financial changes.
 
 ## Dependencies and conflict resolution
@@ -12,7 +12,7 @@ No arbitrary avatar uploads, default registration, model calls or financial chan
 - #55 before Era 2, with the private reviewed v3 resource packaged and pinned by ops.
 - #57 is inactive and independent; its existing checkpoint continues over retained IDs.
 - Dynamic-budget application commands precede ops #76 use of `cap lower` / `budget open`.
-- Migration 0024 appends an Era 1 boundary only. No existing society row is rewritten.
+- Migration 0024 creates an empty era table. No row means Era 1; no existing society row is rewritten.
 - The only source conflict while assembling existing heads was `arena.runtime`
   operation choices: preserve both profile-review commands and budget lower/open.
 - Never replay stacked commits after squash. Land the aggregate candidate once, or

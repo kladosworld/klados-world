@@ -9,6 +9,4 @@ CREATE TABLE society_eras (
     CHECK (id=1 OR (purpose='building-a-society-v3' AND length(purpose_sha256)=64
                    AND length(reference)>0 AND length(approved_by)>0))
 );
--- Era 1 includes all existing history without rewriting a single historical row.
-INSERT INTO society_eras(id,started_at,started_tick) VALUES (1,'0001-01-01T00:00:00Z',0);
-
+-- No seed rows: absence of an era record means Era 1.
