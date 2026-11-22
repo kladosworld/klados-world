@@ -341,7 +341,11 @@ class MonthlyTests(unittest.TestCase):
         hold = self.book.reserve('society-agents', 600, 'before-policy')
         self.book.settle(hold, 500)
         original = copy.deepcopy(store.read(self.path)[1]['events'])
-        self.policy(400)
+        before = self.path.read_bytes()
+        with self.assertRaises(ledger.LedgerError):
+            self.policy(400)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.policy(500)  # exact committed-use floor preserves all prior charges
         status = self.book.budget_status()
         self.assertEqual(status['charged_microusd'], 500)
         self.assertEqual(status['available_microusd'], 0)
