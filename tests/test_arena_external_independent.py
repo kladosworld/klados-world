@@ -70,7 +70,7 @@ class IndependentTests(InviteCase):
         self.assertEqual(self.submit(agent, action='rest', request_id='pause-test').json(),first.json())
         self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM external_action_receipts').fetchone()['n'],1)
 
-    def test_reply_and_like_allowances_are_independent_and_keep_pair_restriction(self):
+    def test_reply_and_like_allowances_are_independent_and_keep_post_uniqueness(self):
         agent = self.register().json()
         targets = ['alder','birch','cedar','hazel']
         for i in range(7):
@@ -91,7 +91,7 @@ class IndependentTests(InviteCase):
         self.assertEqual(self.submit(agent,action='post',text='A separate proposal about shared spaces.').status_code,200)
         self.now += timedelta(hours=1)
         pair=self.submit(agent,action='like',post_id=posts[0])
-        self.assertEqual(pair.json()['error'],'already_liked_today')
+        self.assertEqual(pair.json()['error'],'already_liked_post')
         self.assertEqual(self.submit(agent,action='like',post_id=posts[10]).json()['action'],'like')
 
     def test_receipts_are_isolated_and_failures_preserve_allowance(self):

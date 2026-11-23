@@ -16,8 +16,10 @@ def main(argv=None):
     parser.add_argument('command', choices=['bootstrap', 'demo', 'status', 'audit', 'pause',
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
                                           'review', 'show', 'decide', 'invite', 'agent',
-                                          'refresh-founders-v2', 'budget', 'cap', 'era'])
-    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start'])
+                                          'refresh-founders-v2', 'budget', 'cap', 'era', 'limits'])
+    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start', 'history', 'revert'])
+    for name in ('post', 'reply', 'like', 'max-actions', 'expected-version', 'version'):
+        parser.add_argument('--' + name, type=int)
     parser.add_argument('--id', dest='identifier')
     parser.add_argument('--ledger', default='/data/ledger.json')
     parser.add_argument('--cap-usd', default='1.00')
@@ -73,7 +75,25 @@ def main(argv=None):
         rules = rules_module.load(os.environ.get('KLADOS_RULES') or rules_module.DEFAULT_PATH)
         with db.connect(os.environ['ARENA_DATABASE_URL']) as conn:
             now = datetime.now(timezone.utc)
-            if args.command in ('invite', 'agent'):
+            if args.command == 'limits':
+                from arena import activity_settings
+                if args.operation == 'show':
+                    result = dict(activity_settings.effective(conn, society.clock(conn)['tick']),
+                                  history=activity_settings.history(conn))
+                elif args.operation == 'history':
+                    result = activity_settings.history(conn)
+                elif args.operation in ('set', 'revert'):
+                    options = dict(expected_version=args.expected_version, reference=args.reference,
+                                   approved_by=args.approved_by, apply=args.yes)
+                    if args.operation == 'revert':
+                        result = activity_settings.revert(conn, args.version, now, **options)
+                    else:
+                        result = activity_settings.change(conn,
+                            dict(post=args.post, reply=args.reply, like=args.like, max_actions=args.max_actions),
+                            now, **options)
+                else:
+                    raise ValueError('Invalid limits operation')
+            elif args.command in ('invite', 'agent'):
                 from arena import external_agents
                 if args.command == 'invite' and args.operation == 'create':
                     result = external_agents.create_invite(conn, now)

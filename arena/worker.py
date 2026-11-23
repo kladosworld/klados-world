@@ -21,7 +21,7 @@ from pathlib import Path
 import sys
 import time
 
-from arena import eras, db, moderation, society, society_death, society_life, society_moderation
+from arena import activity_settings, founder_batch, eras, db, moderation, society, society_death, society_life, society_moderation
 from tee_arena import gateway as gateway_module, ledger as ledger_module
 from tee_arena.society import decisions, observer, prompts, shared_purpose, rules as rules_module
 
@@ -32,6 +32,7 @@ OBSERVER_MODEL = "openrouter:openai/gpt-6-luna"  # another family than the agent
 ACCOUNT = "society-agents"
 OBSERVER_ACCOUNT = "society-observer"
 MAX_OUTPUT_TOKENS = 1200  # the model may spend part of it reasoning before the JSON
+BATCH_OUTPUT_TOKENS = 2400  # Four bounded public texts plus a compact list; reserved before sending.
 PAUSE_AT_ONCE = ( "credential_unavailable", "accounting_unavailable", "stopped", "model_not_allowed")
 # The provider answered, but the reply cannot be used: a rest, not an outage.
 BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
@@ -70,12 +71,12 @@ class Worker:
         self.failures = 0
         self.log = []
 
-    def call(self, system, messages, request_id):
+    def call(self, system, messages, request_id, *, max_output_tokens=MAX_OUTPUT_TOKENS):
         """One model call with retries on HTTP 429, under new request ids."""
         for attempt in range(len(self.delays) + 1):
             try:
                 return self.gateway.call(account=self.account, role="agent", model_id=self.model_id, system=system,
-                                         messages=messages, max_output_tokens=MAX_OUTPUT_TOKENS,
+                                         messages=messages, max_output_tokens=max_output_tokens,
                                          request_id=request_id + (f":a{attempt}" if attempt else ""))
             except gateway_module.GatewayError as error:
                 if error.category == "provider_rejected" and error.status == 429 and attempt < len(self.delays):
@@ -101,13 +102,20 @@ class Worker:
         self.conn.commit()  # the turn is spent even if everything below fails
         try:
             context = society_life.turn_context(self.conn, self.rules, agent_id)
+            settings = activity_settings.effective(self.conn, tick) if self.rules.persistent else None
+            if settings is not None:
+                context['activity_settings'] = settings
+                context['rules']['activity_limits_per_hour'] = {
+                    key: settings['values'][key] for key in ('post', 'reply', 'like')}
+                context['rules'].pop('likes_you_may_give_per_agent_per_day', None)
         except society.SocietyError:
             society_life.fail_turn(self.conn, agent_id, tick, "participation_unavailable")
             self.conn.commit()
             return "failed"
         system, messages = prompts.turn(context, purpose=self.purpose)
         try:
-            result = self.call(system, messages, f"klados.turn.{agent_id}.{tick}")
+            options = {'max_output_tokens': BATCH_OUTPUT_TOKENS} if settings is not None else {}
+            result = self.call(system, messages, f"klados.turn.{agent_id}.{tick}", **options)
         except gateway_module.GatewayError as error:
             code = "budget_exhausted" if error.category == "cap_exceeded" else ("reply_" if error.category in BAD_REPLY else "call_") + error.category
             society_life.fail_turn(self.conn, agent_id, tick, code, charged_microusd=error.charged_microusd)
@@ -118,7 +126,8 @@ class Worker:
             return "stop" if self._failed(error) else "failed"
         self.failures = 0
         try:
-            decision = decisions.parse_turn(result.text)
+            decision = (decisions.parse_batch(result.text, settings['values']['max_actions'])
+                        if settings is not None else decisions.parse_turn(result.text))
         except decisions.DecisionError as error:
             society_life.fail_turn(self.conn, agent_id, tick, "reply_" + error.code,
                                    charged_microusd=result.charged_microusd)
@@ -129,6 +138,12 @@ class Worker:
         provider = self.gateway.providers.get(self.model_id.split(":", 1)[0])
         origin = ("live" if isinstance(provider, gateway_module.OpenRouterProvider) else
                   "mock" if isinstance(provider, MockProvider) else None)
+        if settings is not None:
+            founder_batch.save(self.conn, agent_id, tick, decision, settings, result.charged_microusd, origin)
+            self.conn.commit()  # Durable decision; a restart never needs to ask the model again.
+            outcome = founder_batch.execute(self.conn, self.rules, agent_id, tick, self.now())
+            self.conn.commit()
+            return outcome
         outcome = society_life.act(self.conn, self.rules, agent_id, tick, decision, self.now(),
                                    charged_microusd=result.charged_microusd, post_origin=origin)
         self.conn.commit()
@@ -152,7 +167,7 @@ class Worker:
         if self.observer_gateway is None:
             return None
         failures = 0
-        for post in society_moderation.pending(self.conn):
+        for post in society_moderation.pending(self.conn, self.now()):
             def record_request(version):
                 society.event(self.conn, self.rules, society.clock(self.conn)["tick"],
                               "moderation_request", self.now(), post["author_id"],
@@ -236,6 +251,11 @@ class Worker:
             with self.conn.transaction():
                 society.event(self.conn, self.rules, society.clock(self.conn)["tick"], "moderation_outage",
                               self.now(), post_id=post["id"], category=category)
+                if society_moderation.risk_review(self.conn, post['id']):
+                    count = self.conn.execute("""SELECT count(*) AS n FROM society_events
+                        WHERE kind='moderation_outage' AND data->>'post_id'=%s""", (str(post['id']),)).fetchone()['n']
+                    if count >= society_moderation.MAX_SCREEN_FAILURES:
+                        society_moderation.escalate(self.conn, self.rules, post['id'], self.now())
             self.conn.commit()
             return True
         except Exception:
@@ -248,6 +268,10 @@ class Worker:
         try:
             with self.conn.transaction():
                 society_moderation.screen_failed(self.conn, post_id)
+                row = self.conn.execute('SELECT screen_failures FROM society_posts WHERE id=%s', (post_id,)).fetchone()
+                if (row and row['screen_failures'] >= society_moderation.MAX_SCREEN_FAILURES
+                        and society_moderation.risk_review(self.conn, post_id)):
+                    society_moderation.escalate(self.conn, self.rules, post_id, self.now())
             self.conn.commit()
             return True
         except Exception:
@@ -353,6 +377,12 @@ class Worker:
         if self.screen() == "stop":  # posts left from an earlier pass
             return dict(summary, stopped=True)
         tick = society.clock(self.conn)["tick"]
+        if self.rules.persistent:
+            for agent_id, previous_tick in founder_batch.recoverable(self.conn):
+                recovered = founder_batch.execute(self.conn, self.rules, agent_id, previous_tick, self.now())
+                self.conn.commit()
+                if recovered is not None:
+                    summary['turns' if recovered == 'done' else 'failed'] += 1
         for agent_id in society.due_turns(self.conn, self.now()):
             result = self.turn(agent_id, tick)
             if result == "stop":

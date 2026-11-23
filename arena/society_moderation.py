@@ -11,6 +11,7 @@ evidence and withheld text are visible to the operator only.
 """
 import difflib
 import re
+from datetime import datetime, timedelta, timezone
 
 from psycopg.types.json import Jsonb
 
@@ -33,7 +34,7 @@ def is_duplicate(conn, agent_id, text):
     return any(difflib.SequenceMatcher(None, new, _normal(r["text"])).ratio() >= DUPLICATE_RATIO for r in rows)
 
 
-def pending(conn):
+def pending(conn, now=None):
     """Posts waiting for the observer, oldest first, with the text they answer."""
     return conn.execute("""SELECT p.id, p.author_id, p.text, p.screen_failures, r.text AS replied_text,
                            coalesce((SELECT max(e.id) FROM society_events e
@@ -41,8 +42,19 @@ def pending(conn):
                                AND e.data->>'post_id'=p.id::text),0) AS screening_generation,
                            EXISTS(SELECT 1 FROM society_findings f WHERE f.post_id=p.id) AS contested
                            FROM society_posts p LEFT JOIN society_posts r ON r.id = p.reply_to
-                           WHERE p.status = 'pending' AND p.screen_failures < %s ORDER BY p.id""",
-                        (MAX_SCREEN_FAILURES,)).fetchall()
+                           WHERE (p.status = 'pending' OR (p.status='published' AND EXISTS (
+                             SELECT 1 FROM society_findings gate WHERE gate.post_id=p.id
+                             AND gate.metadata->>'async_pending'='true'
+                             AND gate.id=(SELECT max(latest.id) FROM society_findings latest WHERE latest.post_id=p.id))))
+                           AND p.screen_failures < %s AND NOT EXISTS (
+                             SELECT 1 FROM society_events e WHERE e.kind='moderation_outage'
+                             AND e.data->>'post_id'=p.id::text AND e.created_at > %s
+                             AND (EXISTS (SELECT 1 FROM society_events h WHERE h.kind='risk_hold'
+                                  AND h.data->>'post_id'=p.id::text)
+                                  OR EXISTS (SELECT 1 FROM society_findings f WHERE f.post_id=p.id
+                                  AND f.metadata->>'config_version'='risk-gate-v1')))
+                           ORDER BY p.id LIMIT 32""",
+                        (MAX_SCREEN_FAILURES, (now or datetime.now(timezone.utc))-timedelta(minutes=5))).fetchall()
 
 
 def screen_failed(conn, post_id):
@@ -65,7 +77,10 @@ def _penalize(conn, rules, agent_id, amount, key, now, codes):
 def apply_verdict(conn, rules, post_id, verdict, now):
     """Record the observer's verdict once and publish, flag or withhold the post."""
     post = conn.execute("SELECT * FROM society_posts WHERE id = %s FOR UPDATE", (post_id,)).fetchone()
-    if post is None or post["status"] != "pending":
+    async_review = post is not None and post['status'] == 'published' and conn.execute(
+        """SELECT 1 FROM society_findings WHERE post_id=%s AND metadata->>'async_pending'='true'
+        AND id=(SELECT max(id) FROM society_findings WHERE post_id=%s)""", (post_id, post_id)).fetchone()
+    if post is None or (post["status"] != "pending" and not async_review):
         return None
     if "screening_generation" in verdict:
         generation = conn.execute("""SELECT coalesce(max(id),0) AS generation FROM society_events
@@ -166,3 +181,43 @@ def retry_screening(conn, rules, post_id, now):
     society.event(conn, rules, society.clock(conn)["tick"], "moderation_retry", now,
                   post["author_id"], post_id=post_id)
     return {"retry_screening": post_id}
+
+
+def initial_gate(conn, rules, post_id, text, now):
+    """Founder-only publication policy; identity/provenance still use trusted callers."""
+    from arena import risk_gate
+    gate = risk_gate.classify(text)
+    # Serialize bounded queue admission; safe, non-selected posts never wait on a provider.
+    followup = gate['followup']
+    if followup or gate['state'] == 'hold':
+        conn.execute('SELECT pg_advisory_xact_lock(%s)', (73423205,))
+        queued = conn.execute("""SELECT count(*) AS n FROM society_posts p WHERE p.status='pending'
+            OR EXISTS (SELECT 1 FROM society_findings f WHERE f.post_id=p.id
+                AND f.metadata->>'async_pending'='true' AND f.id=(SELECT max(id)
+                FROM society_findings WHERE post_id=p.id))""").fetchone()['n']
+        if queued >= 1000:
+            gate = dict(gate, state='block', codes=['HARMFUL_CONTENT'], evidence='Review capacity exhausted')
+            followup = False
+    if gate['state'] == 'hold':
+        society.event(conn, rules, society.clock(conn)['tick'], 'risk_hold', now, post_id=post_id)
+        return
+    verdict = dict(codes=gate['codes'], severity='none' if gate['state']=='allow' else 'grave',
+                   evidence=gate['evidence'], by='precheck', config_version=risk_gate.VERSION)
+    apply_verdict(conn, rules, post_id, verdict, now)
+    if followup:
+        conn.execute("""UPDATE society_findings SET metadata=metadata || '{"async_pending":true}'::jsonb
+            WHERE id=(SELECT max(id) FROM society_findings WHERE post_id=%s)""", (post_id,))
+
+
+def escalate(conn, rules, post_id, now):
+    """Exhausted review stays withheld for the existing human release/confirm queue."""
+    return apply_verdict(conn, rules, post_id,
+        dict(codes=['HARMFUL_CONTENT'], severity='grave', evidence='Unresolved risk; human review required',
+             by='precheck', config_version='risk-gate-v1'), now)
+
+
+def risk_review(conn, post_id):
+    return bool(conn.execute("""SELECT 1 WHERE EXISTS (SELECT 1 FROM society_events
+        WHERE kind='risk_hold' AND data->>'post_id'=%s) OR EXISTS (
+        SELECT 1 FROM society_findings WHERE post_id=%s AND metadata->>'config_version'='risk-gate-v1')""",
+        (str(post_id), post_id)).fetchone())

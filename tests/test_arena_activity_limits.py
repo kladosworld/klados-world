@@ -225,7 +225,7 @@ class SocialActivityTests(InviteCase):
         )
         self.assertEqual(
             self.perform("cedar", 2, {"action": "like", "post_id": root})["error"],
-            "already_liked_today",
+            "already_liked_post",
         )
         self.assertEqual(
             self.conn.execute(

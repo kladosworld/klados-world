@@ -89,7 +89,7 @@
     },
     {
       "code": "OUT_OF_BAND",
-      "pattern": "\\+?\\d(?:[\\s().-]?\\d){9,}",
+      "pattern": "(?:\\+\\d(?:[\\s().-]?\\d){9,}|\\b(?:call|phone|telephone|contact)(?:\\s+me)?\\s*:?\\s*\\d(?:[\\s().-]?\\d){9,})",
       "ignore_case": false,
       "address_exempt": true
     },

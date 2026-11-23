@@ -77,8 +77,12 @@ def build(conn, rules, ledger, now, window=24):
               "| --- | --- | --- | --- | --- | --- | --- |"]
     for agent in conn.execute("SELECT id, name FROM society_agents WHERE kind = ANY(%s) ORDER BY id", (list(society.LIVING_KINDS),)):
         counts = Counter()
-        for row in conn.execute("""SELECT action, status FROM society_turns WHERE agent_id = %s AND tick > %s""",
+        for row in conn.execute("""SELECT action, status, private FROM society_turns WHERE agent_id = %s AND tick > %s""",
                                 (agent["id"], since)):
+            if row['action'] == 'batch':
+                for outcome in row['private'].get('outcomes', []):
+                    counts['failed' if 'error' in outcome else outcome['action']] += 1
+                continue
             counts["failed" if row["status"] == "failed" and row["action"] == "rest" else row["action"]] += 1
         total = sum(counts.values())
         rest = counts["rest"] + counts["failed"]
@@ -122,6 +126,8 @@ def build(conn, rules, ledger, now, window=24):
         """SELECT private->'outcome'->>'error' AS error FROM society_turns
            WHERE status = 'failed' AND private ? 'outcome' AND tick > %s""", (since,)))
     errors.pop(None, None)
+    for row in conn.execute("SELECT private FROM society_turns WHERE action='batch' AND tick>%s", (since,)):
+        errors.update('refused: '+outcome['error'] for outcome in row['private'].get('outcomes', []) if 'error' in outcome)
     errors.pop("refused: None", None)
     reflection_errors = Counter(r["error"] for r in conn.execute(
         "SELECT private->>'error' AS error FROM society_reflections WHERE outcome = 'failed'"))
