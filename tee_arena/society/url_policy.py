@@ -12,8 +12,37 @@ from urllib.parse import urlsplit, urlunsplit
 
 PATH = Path(__file__).resolve().parents[2] / 'config' / 'url-policy-v1.json'
 LINK = re.compile(r'''(?:[a-z][a-z0-9+.-]*://|javascript:|data:|file:|mailto:)[^\s<>"']+|\b(?:[\w-]+\.)+(?:xn--[a-z0-9-]+|[^\W\d_]{2,})\b[^\s<>"']*''', re.I)
-TECHNICAL_LITERALS = frozenset(('Node.js', 'config.json', 'report.pdf', 'ready.Vote'))
+FILE_EXTENSIONS = frozenset('js jsx ts tsx json yaml yml toml ini txt csv pdf md py sh rb rs sql css html xml'.split())
+FILE_CONTEXT = re.compile(r'\b(?:file|source|code|module|script|edit|check|inspect|read|open|config|settings|bug|library|libraries|apps|software|import|set|get)\b',re.I)
 LINK_INTENT = re.compile(r'\b(?:visit|click|browse|navigate|destination|go to|log in at)\b', re.I)
+
+
+def technical_token(text, match, raw):
+    """Syntax/context classification, never a hostname allowlist.
+
+    Short suffixes which can be country TLDs need file context. Explicit network
+    syntax always wins over a file or missing-space sentence interpretation.
+    """
+    before, after = text[:match.start()], text[match.end():]
+    if before[-1:] in (':', '@') or LINK_INTENT.search(before[-80:]):
+        return False
+    if not re.fullmatch(r'[\w-]+\.[\w-]+',raw):
+        return False
+    suffix = raw.rsplit('.',1)[1]
+    context = FILE_CONTEXT.search(before[-80:]+' '+after[:70])
+    if before[-1:] in ('/','\\'):
+        parent = re.split(r'\s',before)[-1].replace('\\','/')
+        local_path = re.fullmatch(r'(?:\./|\.\./)?(?:[\w-]+/)+|\./|\.\./',parent)
+        if not local_path or not context:
+            return False
+    if suffix.lower() in FILE_EXTENSIONS:
+        return bool(len(suffix)>2 or suffix.lower()=='js' or context or before.endswith('`'))
+    # A title-case word after a full stop can begin a missing-space sentence.
+    # Require sentence/code context, not just case (evil.Top alone still holds).
+    clause = re.split(r'[.!?;\n]', before)[-1]
+    sentence = re.search(r'^(?:we|i|this|that|it)\b|\b(?:is|are|was|were|have|has|had)\b',clause,re.I)
+    code_property = re.search(r'\b(?:set|get|property|field|attribute)\s*$',before,re.I)
+    return bool(suffix.istitle() and (code_property or (re.match(r'\s+[a-z]',after) and (sentence or context))))
 
 
 def load():
@@ -35,23 +64,21 @@ def classify(text, policy=None):
     policy = load() if policy is None else policy
     normalized = unicodedata.normalize('NFKC', text)
     normalized = ''.join(c for c in normalized if unicodedata.category(c) != 'Cf')
-    normalized = normalized.translate(str.maketrans({'\u3002': '.', '\uff0e': '.', '\uff61': '.'}))
-    normalized = re.sub(r'\s*(?:\[\.\]|\(\.\)|\[dot\]|\(dot\)|\{dot\})\s*', '.', normalized, flags=re.I)
+    normalized = normalized.translate(str.maketrans({'\u3002': '.', '\uff0e': '.', '\uff61': '.', '\u00b7': '.'}))
+    normalized = re.sub(r'\s*(?:\[\s*(?:\.|dot)\s*\]|\(\s*(?:\.|dot)\s*\)|\{\s*(?:\.|dot)\s*\}|<\s*(?:\.|dot)\s*>)\s*', '.', normalized, flags=re.I)
     normalized = re.sub(r'(?<=\w)\s+dot\s+(?=\w)', '.', normalized, flags=re.I)
     normalized = re.sub(r'%2e', '.', normalized, flags=re.I)
     # Do not join sentence-ending punctuation to the next ordinary word.
     normalized = re.sub(r'(?<=\w)\s+\.\s+(?=\w)', '.', normalized)
+    # Collapse letter-spaced domain labels on either side of a separator.
+    normalized = re.sub(r'\b(?:[\w]\s+){1,}[\w](?=\.)', lambda m:re.sub(r'\s+','',m.group()),normalized)
+    normalized = re.sub(r'(?<=\.)(?:[\w]\s+){1,}[\w]\b', lambda m:re.sub(r'\s+','',m.group()),normalized)
     normalized = re.sub(r'hxxp(s?)://', r'http\1://', normalized, flags=re.I)
     altered = normalized != text
     state, evidence = 'none', ''
     for match in LINK.finditer(normalized):
         raw = match.group(0).rstrip('.,;!?)')
-        # These exact bare technical atoms are not a hostname trust rule. A URL,
-        # path, suffix, obfuscation, userinfo or explicit destination still holds.
-        before = normalized[:match.start()]
-        if (not altered and raw in TECHNICAL_LITERALS
-                and before[-1:] not in ('/', ':', '@', '\\')
-                and not LINK_INTENT.search(normalized[max(0,match.start()-60):match.end()+40])):
+        if not altered and technical_token(normalized,match,raw):
             continue
         try:
             parsed = urlsplit(raw if re.match(r'^[a-z][a-z0-9+.-]*:', raw, re.I) else 'https://'+raw)

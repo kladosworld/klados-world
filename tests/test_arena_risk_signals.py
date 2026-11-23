@@ -56,13 +56,13 @@ class RiskSignalTests(unittest.TestCase):
                 self.assertTrue(gate['followup'])
 
     def test_technical_literals_and_obfuscations(self):
-        for text in ('Node.js', 'config.json', 'report.pdf', 'ready.Vote',
+        for text in ('Node.js', 'config.json', 'report.pdf', 'property ready.Vote',
                      'Use Node.js to read config.json and report.pdf; set ready.Vote.',
                      'The Node.js documentation explains this method.'):
             with self.subTest(text=text):
                 self.assertEqual(url_policy.classify(text)['state'], 'none')
                 self.assertEqual(risk_gate.classify(text)['state'], 'allow')
-        for text in ('evil(.)site', 'evil {dot} top', 'https://config.json/',
+        for text in ('ready.Vote', 'evil(.)site', 'evil {dot} top', 'https://config.json/',
                      'www.report.pdf', 'Node.js.evil.top', 'ready.Vote/login',
                      'Visit ready.Vote', 'https://ready.Vote/', 'config[.]json',
                      'report.pdf:443', 'Node.js@evil.top'):

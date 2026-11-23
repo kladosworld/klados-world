@@ -130,6 +130,16 @@ class MockModeration:
         return []
 
 
+def contextual_outcome(verdict):
+    """Only the model branch of Observer.review follows a gateway invocation."""
+    effective = verdict.get('by') == 'model'
+    if not effective and verdict['severity']!='grave':
+        raise ModerationError('invalid_response')
+    return dict(review_performed='contextual' if effective else 'none',
+                review_status=('withheld' if verdict['severity']=='grave' else 'cleared') if effective else
+                              ('pending' if verdict['severity']=='grave' else 'skipped'))
+
+
 def client_for_gateway(gateway):
     """Synthetic injected gateways stay offline; a live provider needs its own credential."""
     from arena.mock_provider import MockProvider
@@ -139,7 +149,7 @@ def client_for_gateway(gateway):
 
 def review(gateway, client, post_text, replied_text=None, *, model_id, request_id,
            account='society-observer', contested=False, config=None, on_request=None,
-           review_kind=None, on_risk=None):
+           review_kind=None, on_risk=None, review_requirement=None):
     config = load_config() if config is None else config
     if review_kind not in (None,'mandatory','optional'):
         raise ModerationError('invalid_config')
@@ -150,29 +160,43 @@ def review(gateway, client, post_text, replied_text=None, *, model_id, request_i
     version = config['version'] + ('-observer-only' if mode == 'observer-only' else '')
     base = {'config_version': version, 'moderation_requests': 0,
             'matches': [], 'charged_microusd': 0}
+    from arena.content_risk import Review, ReviewState, assess
+    try:
+        persisted = Review(review_requirement) if review_requirement is not None else Review.NONE
+    except ValueError:
+        raise ModerationError('invalid_config') from None
+    context_text = post_text if replied_text is None else post_text + '\n\n' + replied_text
+    detected = assess(post_text).review
+    combined_requirement = assess(context_text).review
+    contextual = (review_kind=='mandatory' or contested or Review.CONTEXTUAL in (persisted,detected)
+                  or combined_requirement in (Review.CONTEXTUAL,Review.HUMAN))
+    requirement = Review.CONTEXTUAL if contextual else Review.CLASSIFIER
+    base.update(review_requirement=requirement.value,review_performed='none',review_status=ReviewState.PENDING.value)
+    if (persisted==Review.HUMAN or (detected==Review.HUMAN and review_kind is not None)) and not contested:
+        return dict(base,codes=['REVIEW_REQUIRED'],severity='grave',evidence='Human review required',
+                    by='precheck',matches=['persisted_human_review'],review_requirement=Review.HUMAN.value)
     links = url_policy.classify(post_text)
     if links['state'] == 'unverified':
         return dict(base, codes=['REVIEW_REQUIRED'], severity='grave', evidence=links['evidence'],
-                    by='precheck', matches=['unverified_url'])
+                    by='precheck', matches=['unverified_url'],review_requirement=Review.HUMAN.value)
     if codes:
-        return dict(base, codes=codes, severity='grave', evidence=evidence, by='precheck', matches=codes)
-    from arena import risk_gate
-    context_text = post_text if replied_text is None else post_text + '\n\n' + replied_text
-    local_context = review_kind == 'optional' and risk_gate.selective_context(context_text)
+        return dict(base, codes=codes, severity='grave', evidence=evidence, by='precheck', matches=codes,
+                    review_requirement=Review.HUMAN.value)
     if mode == 'observer-only':
-        if review_kind == 'optional' and not contested and not local_context:
+        if review_kind == 'optional' and not contextual:
             return dict(base, codes=[], severity='none', evidence='', by='precheck',
-                        matches=['optional_review_not_available'])
-        if local_context and on_risk is not None:
+                        matches=['optional_review_not_available'],review_status=ReviewState.SKIPPED.value)
+        if review_kind=='optional' and on_risk is not None:
             promoted = on_risk()
             if promoted is False:
-                return dict(base,codes=[],severity='none',evidence='',by='precheck',matches=['stale_review'])
+                return dict(base,codes=[],severity='none',evidence='',by='precheck',matches=['stale_review'],review_status=ReviewState.SKIPPED.value)
             if isinstance(promoted,str):
                 request_id = promoted
         verdict = observer.review(gateway, post_text, replied_text, model_id=model_id,
                                   request_id=request_id, account=account)
         return dict(verdict, by='observer', config_version=version,
-                    moderation_requests=0, matches=['observer_only','selective_local_context'] if local_context else ['observer_only'])
+                    moderation_requests=0, matches=['observer_only'],review_requirement=requirement.value,
+                    **contextual_outcome(verdict))
     triggers = sorted(name for name, pattern in config['triggers'].items()
                       if re.search(pattern, post_text, re.IGNORECASE))
     if contested:
@@ -191,24 +215,27 @@ def review(gateway, client, post_text, replied_text=None, *, model_id, request_i
         sexual_context, sexual_signal = sexual_risk(triggers, post_text, config)
         if sexual_signal is not None:
             base['sexual_signal'] = sexual_signal
-        if review_kind == 'optional' and not contested and not local_context and not sexual_context and not (set(triggers) & CONTEXTUAL_RISK):
-            return dict(base, codes=[], severity='none', evidence='', by='moderation')
-        if not triggers and review_kind != 'mandatory' and not local_context:
-            return dict(base, codes=[], severity='none', evidence='', by='moderation')
-        if local_context:
-            triggers = list(triggers) + ['selective_local_context']
+        if review_kind == 'optional' and not contextual and not sexual_context and not (set(triggers) & CONTEXTUAL_RISK):
+            return dict(base, codes=[], severity='none', evidence='', by='moderation',
+                        review_performed='classifier',review_status=ReviewState.CLEARED.value)
+        if not triggers and not contextual:
+            return dict(base, codes=[], severity='none', evidence='', by='moderation',
+                        review_performed='classifier',review_status=ReviewState.CLEARED.value)
+        if contextual:
+            triggers = list(triggers) + ['contextual_requirement']
     if review_kind == 'mandatory' and not triggers:
         triggers = ['unresolved_local_risk']
     if review_kind == 'optional' and on_risk is not None:
         promoted = on_risk()
         if promoted is False:
-            return dict(base,codes=[],severity='none',evidence='',by='precheck',matches=['stale_review'])
+            return dict(base,codes=[],severity='none',evidence='',by='precheck',matches=['stale_review'],review_status=ReviewState.SKIPPED.value)
         if isinstance(promoted,str):
             request_id = promoted
     verdict = observer.review(gateway, post_text, replied_text, model_id=model_id,
                               request_id=request_id, account=account)
     result = dict(verdict, by='observer', config_version=config['version'],
-                  moderation_requests=base['moderation_requests'], matches=list(triggers))
+                  moderation_requests=base['moderation_requests'], matches=list(triggers),review_requirement=Review.CONTEXTUAL.value,
+                  **contextual_outcome(verdict))
     if 'sexual_signal' in base:
         result['sexual_signal'] = base['sexual_signal']
     return result

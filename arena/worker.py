@@ -15,6 +15,7 @@ Safety:
   age, so nobody dies of an outage.
 """
 import argparse
+from psycopg.types.json import Jsonb
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -207,7 +208,8 @@ class Worker:
                 # and its metadata remain atomic; any failed review is rolled back below.
                 verdict = moderation.review(self.observer_gateway, client, post["text"], post["replied_text"],
                     model_id=OBSERVER_MODEL, account=OBSERVER_ACCOUNT, contested=post["contested"],
-                    on_request=record_request, request_id=request_id, review_kind=kind, on_risk=hold_signal)
+                    on_request=record_request, request_id=request_id, review_kind=kind, on_risk=hold_signal,
+                    review_requirement=post.get('review_requirement'))
                 verdict["screening_generation"] = post["screening_generation"]
                 with self.conn.transaction():
                     outcome = society_moderation.apply_verdict(self.conn, self.rules, post["id"], verdict, self.now())
@@ -291,7 +293,11 @@ class Worker:
             with self.conn.transaction():
                 society.event(self.conn, self.rules, society.clock(self.conn)["tick"], "moderation_outage",
                               self.now(), post_id=post["id"], category=category)
-                if society_moderation.risk_review(self.conn, post['id']):
+                changed=self.conn.execute('''UPDATE society_findings SET metadata=metadata || %s
+                    WHERE id=(SELECT max(id) FROM society_findings WHERE post_id=%s)
+                    AND (metadata->>'async_pending'='true' OR EXISTS(SELECT 1 FROM society_posts p WHERE p.id=post_id AND p.status='pending')) RETURNING id''',
+                    (Jsonb(dict(review_status='skipped',review_performed='none',review_skip_reason=category)),post['id'])).fetchone()
+                if changed and society_moderation.risk_review(self.conn, post['id']):
                     count = self.conn.execute("""SELECT count(*) AS n FROM society_events
                         WHERE kind='moderation_outage' AND data->>'post_id'=%s AND id>%s""",
                         (str(post['id']),post.get('screening_generation',0))).fetchone()['n']
@@ -308,6 +314,10 @@ class Worker:
         """Record one failed screening. False when the database cannot record it."""
         try:
             with self.conn.transaction():
+                self.conn.execute('''UPDATE society_findings SET metadata=metadata || %s
+                    WHERE id=(SELECT max(id) FROM society_findings WHERE post_id=%s)
+                    AND (metadata->>'async_pending'='true' OR EXISTS(SELECT 1 FROM society_posts p WHERE p.id=post_id AND p.status='pending'))''',
+                    (Jsonb(dict(review_status='skipped',review_performed='none',review_skip_reason='review_failed')),post_id))
                 society_moderation.screen_failed(self.conn, post_id)
                 row = self.conn.execute('SELECT screen_failures FROM society_posts WHERE id=%s', (post_id,)).fetchone()
                 if (row and row['screen_failures'] >= society_moderation.MAX_SCREEN_FAILURES

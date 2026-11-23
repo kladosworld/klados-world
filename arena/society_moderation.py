@@ -20,6 +20,8 @@ DUPLICATE_WINDOW = 5
 MAX_SCREEN_FAILURES = 3
 OPTIONAL_QUEUE_LIMIT = 1000
 MANDATORY_QUEUE_LIMIT = 1000
+REVIEW_FIELDS = ('risk_version','risk_signals','risk_categories','review_requirement',
+                 'review_status','review_performed','review_skip_reason')
 
 
 def _normal(text):
@@ -45,6 +47,8 @@ def pending(conn, now=None):
                            coalesce((SELECT max(e.id) FROM society_events e
                              WHERE e.kind IN ('moderation_contested','moderation_retry')
                                AND e.data->>'post_id'=p.id::text),0) AS screening_generation,
+                           (SELECT metadata->>'review_requirement' FROM society_findings
+                            WHERE post_id=p.id ORDER BY id DESC LIMIT 1) AS review_requirement,
                            EXISTS(SELECT 1 FROM society_events e WHERE e.kind='moderation_contested'
                                AND e.data->>'post_id'=p.id::text) AS contested
                            FROM review_ids selected JOIN society_posts p ON p.id=selected.id
@@ -91,24 +95,34 @@ def apply_verdict(conn, rules, post_id, verdict, now):
             (str(post_id),)).fetchone()["generation"]
         if generation != verdict["screening_generation"]:
             return None
+    previous = conn.execute('SELECT metadata FROM society_findings WHERE post_id=%s ORDER BY id DESC LIMIT 1',(post_id,)).fetchone()
+    previous_meta = previous['metadata'] if previous else {}
+    skipped = verdict.get('review_status')=='skipped'
+    if (previous_meta.get('review_requirement')=='contextual' and verdict['severity']!='grave'
+            and not skipped and verdict.get('review_performed') not in ('contextual','human')):
+        raise society.SocietyError('contextual_review_missing')
     # Only queue state is mutable. Findings/codes/evidence stay intact, and selection
     # plus completion remain in the append-only event log.
     closed = conn.execute("""UPDATE society_findings SET metadata=metadata || '{"async_pending":false}'::jsonb
         WHERE post_id=%s AND metadata->>'async_pending'='true' RETURNING id""",(post_id,)).fetchall()
     if closed:
-        society.event(conn,rules,society.clock(conn)['tick'],'moderation_optional_completed',now,
+        society.event(conn,rules,society.clock(conn)['tick'],
+                      'moderation_review_skipped' if skipped else 'moderation_optional_completed',now,
                       post_id=post_id,finding_ids=[row['id'] for row in closed])
     conn.execute("""INSERT INTO society_findings (post_id, codes, severity, evidence, by, charged_microusd, created_at, metadata)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
                  (post_id, verdict["codes"], verdict["severity"], verdict["evidence"][:400], verdict["by"],
                   verdict.get("charged_microusd", 0), now,
-                  Jsonb({key: verdict[key] for key in ("config_version", "matches", "moderation_requests", "screening_generation", "sexual_signal")
-                         if key in verdict})))
+                  Jsonb(dict({key:previous_meta[key] for key in REVIEW_FIELDS if key in previous_meta},
+                       **{key: verdict[key] for key in ("config_version", "matches", "moderation_requests", "screening_generation", "sexual_signal")+REVIEW_FIELDS
+                         if key in verdict}))))
     tick = society.clock(conn)["tick"]
     if verdict["severity"] == "grave":
         conn.execute("UPDATE society_posts SET status = 'withheld' WHERE id = %s", (post_id,))
         society.event(conn, rules, tick, "post_withheld", now, post["author_id"])
         return "withheld"
+    if skipped and post['status']=='pending' and previous is not None:
+        return 'pending'  # A skipped review can never publish a mandatory/private hold.
     flagged = verdict["severity"] == "light"
     conn.execute("UPDATE society_posts SET status = 'published', flagged = %s WHERE id = %s", (flagged, post_id))
     if flagged:
@@ -125,6 +139,28 @@ def review_queue(conn):
         WHERE f.severity = 'grave' AND f.decision IS NULL AND p.status='withheld'
           AND f.id=(SELECT max(latest.id) FROM society_findings latest WHERE latest.post_id=f.post_id)
         ORDER BY f.id""")]
+
+
+def review_state(conn, post_id):
+    """Operator-only state projection. Legacy unannotated findings stay unknown.
+
+    Human decisions override queue metadata without rewriting historical evidence.
+    No text, evidence or identity data leaves this projection.
+    """
+    row = conn.execute('''SELECT p.status,f.metadata,f.decision FROM society_posts p
+        LEFT JOIN LATERAL (SELECT metadata,decision FROM society_findings WHERE post_id=p.id ORDER BY id DESC LIMIT 1) f ON true
+        WHERE p.id=%s''',(post_id,)).fetchone()
+    if row is None:
+        return None
+    metadata=row['metadata'] or {}
+    state,performed=metadata.get('review_status','unknown'),metadata.get('review_performed','none')
+    if row['status']=='pending':
+        state=state if state=='skipped' else 'pending'
+        performed='none'
+    elif row['decision'] in ('released','confirmed'):
+        state,performed=('cleared' if row['decision']=='released' else 'withheld'),'human'
+    return dict(publication=row['status'],review_status=state,review_performed=performed,
+                review_requirement=metadata.get('review_requirement'),skip_reason=metadata.get('review_skip_reason'))
 
 
 def show(conn, finding_id):
@@ -155,7 +191,9 @@ def decide(conn, rules, finding_id, decision, now):
     if post["status"] != "withheld":
         raise society.SocietyError("post is awaiting rescreen")
     conn.execute("UPDATE society_findings SET decision = %s, decided_at = %s WHERE id = %s",
-                 ("released" if decision == "release" else "confirmed", now, finding_id))
+                 ("released" if decision == "release" else "confirmed", now,finding_id))
+    society.event(conn,rules,society.clock(conn)['tick'],'moderation_human_reviewed',now,
+                  post_id=post['id'],finding_id=finding_id,review_status='cleared' if decision=='release' else 'withheld',review_performed='human')
     if decision == "release":
         conn.execute("UPDATE society_posts SET status = 'published', flagged=false WHERE id = %s", (post["id"],))
         return {"released": post["id"]}
@@ -197,6 +235,10 @@ def initial_gate(conn, rules, post_id, text, now):
     """Founder-only publication policy; identity/provenance still use trusted callers."""
     from arena import risk_gate
     gate = risk_gate.classify(text)
+    metadata = dict(gate['assessment'], review_status='pending' if gate['assessment']['review_requirement']!='none' else 'not_required',review_performed='none')
+    if gate['state']=='hold':
+        conn.execute('''INSERT INTO society_findings(post_id,codes,severity,evidence,by,charged_microusd,created_at,metadata)
+            VALUES (%s,%s,'none','','precheck',0,%s,%s)''',(post_id,[],now,Jsonb(dict(metadata,config_version=risk_gate.VERSION))))
     # Serialize bounded queue admission; safe, non-selected posts never wait on a provider.
     followup = gate['followup']
     if followup or gate['state'] == 'hold':
@@ -210,6 +252,7 @@ def initial_gate(conn, rules, post_id, text, now):
         queued = dict(mandatory=mandatory,optional=optional)
         if followup and queued['optional'] >= OPTIONAL_QUEUE_LIMIT:
             followup = False
+            metadata.update(review_status='skipped',review_skip_reason='queue_capacity')
             society.event(conn,rules,society.clock(conn)['tick'],'moderation_optional_dropped',now,
                           post_id=post_id,reason='queue_capacity')
         if gate['state']=='hold' and queued['mandatory'] >= MANDATORY_QUEUE_LIMIT:
@@ -221,7 +264,7 @@ def initial_gate(conn, rules, post_id, text, now):
         society.event(conn, rules, society.clock(conn)['tick'], 'risk_hold', now, post_id=post_id)
         return
     verdict = dict(codes=gate['codes'], severity='none' if gate['state']=='allow' else 'grave',
-                   evidence=gate['evidence'], by='precheck', config_version=risk_gate.VERSION)
+                   evidence=gate['evidence'], by='precheck', config_version=risk_gate.VERSION,**metadata)
     apply_verdict(conn, rules, post_id, verdict, now)
     if followup:
         conn.execute("""UPDATE society_findings SET metadata=metadata || %s
@@ -234,15 +277,18 @@ def escalate(conn, rules, post_id, now):
     """Exhausted review stays withheld for the existing human release/confirm queue."""
     post = conn.execute('SELECT status FROM society_posts WHERE id=%s FOR UPDATE',(post_id,)).fetchone()
     if post and post['status']=='published':
+        active=conn.execute("SELECT 1 FROM society_findings WHERE id=(SELECT max(id) FROM society_findings WHERE post_id=%s) AND metadata->>'async_pending'='true'",(post_id,)).fetchone()
+        if not active:
+            return None
         result = apply_verdict(conn,rules,post_id,
             dict(codes=[],severity='none',evidence='',by='precheck',config_version='risk-gate-v2',
-                 matches=['optional_review_dropped']),now)
+                 matches=['optional_review_dropped'],review_status='skipped',review_performed='none',review_skip_reason='review_unavailable'),now)
         society.event(conn,rules,society.clock(conn)['tick'],'moderation_optional_dropped',now,
                       post_id=post_id,reason='review_unavailable')
         return result
     result = apply_verdict(conn, rules, post_id,
         dict(codes=['REVIEW_REQUIRED'], severity='grave', evidence='Unresolved risk; human review required',
-             by='precheck', config_version='risk-gate-v2'), now)
+             by='precheck', config_version='risk-gate-v2',review_requirement='human',review_status='pending',review_performed='none'), now)
     if result:
         society.event(conn,rules,society.clock(conn)['tick'],'moderation_human_required',now,post_id=post_id)
     return result

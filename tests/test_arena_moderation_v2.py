@@ -75,14 +75,22 @@ class TierTests(unittest.TestCase):
             self.assertIn('REVIEW_REQUIRED', observer.precheck('https://' + address + '.com')[0])
 
     def test_risk_triggers_escalate_without_automatic_withholding(self):
-        for text in ('I am Binance support.', 'Share your seed phrase.',
-                     'Give me your private key.', 'Verify your wallet.', 'Like this or lose your place.',
+        for text in ('I am Binance support.', 'Share your seed phrase.', 'Give me your private key.',
+                     'Verify your wallet.', 'Like this or lose your place.',
                      'Please send personal data.'):
             verdict = self.verdict(text)
             self.assertEqual(verdict['by'], 'observer', text)
             self.assertEqual(verdict['severity'], 'none')
             self.assertTrue(verdict['matches'])
         self.client.classify.assert_not_called()
+
+    def test_recognized_credential_solicitation_requires_human_review_before_publish(self):
+        for text in ('Share your seed phrase.','Give me your private key.'):
+            verdict=self.verdict(text,review_kind='mandatory')
+            self.assertEqual((verdict['by'],verdict['severity']),('precheck','grave'))
+            self.assertEqual((verdict['review_requirement'],verdict['review_status'],verdict['review_performed']),('human','pending','none'))
+        self.client.classify.assert_not_called()
+        self.observed.assert_not_called()
 
     def test_categories_ambiguous_serious_and_context(self):
         config = moderation.load_config()
