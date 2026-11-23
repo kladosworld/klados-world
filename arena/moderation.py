@@ -156,14 +156,23 @@ def review(gateway, client, post_text, replied_text=None, *, model_id, request_i
                     by='precheck', matches=['unverified_url'])
     if codes:
         return dict(base, codes=codes, severity='grave', evidence=evidence, by='precheck', matches=codes)
+    from arena import risk_gate
+    context_text = post_text if replied_text is None else post_text + '\n\n' + replied_text
+    local_context = review_kind == 'optional' and risk_gate.selective_context(context_text)
     if mode == 'observer-only':
-        if review_kind == 'optional' and not contested:
+        if review_kind == 'optional' and not contested and not local_context:
             return dict(base, codes=[], severity='none', evidence='', by='precheck',
                         matches=['optional_review_not_available'])
+        if local_context and on_risk is not None:
+            promoted = on_risk()
+            if promoted is False:
+                return dict(base,codes=[],severity='none',evidence='',by='precheck',matches=['stale_review'])
+            if isinstance(promoted,str):
+                request_id = promoted
         verdict = observer.review(gateway, post_text, replied_text, model_id=model_id,
                                   request_id=request_id, account=account)
         return dict(verdict, by='observer', config_version=version,
-                    moderation_requests=0, matches=['observer_only'])
+                    moderation_requests=0, matches=['observer_only','selective_local_context'] if local_context else ['observer_only'])
     triggers = sorted(name for name, pattern in config['triggers'].items()
                       if re.search(pattern, post_text, re.IGNORECASE))
     if contested:
@@ -182,10 +191,12 @@ def review(gateway, client, post_text, replied_text=None, *, model_id, request_i
         sexual_context, sexual_signal = sexual_risk(triggers, post_text, config)
         if sexual_signal is not None:
             base['sexual_signal'] = sexual_signal
-        if review_kind == 'optional' and not contested and not sexual_context and not (set(triggers) & CONTEXTUAL_RISK):
+        if review_kind == 'optional' and not contested and not local_context and not sexual_context and not (set(triggers) & CONTEXTUAL_RISK):
             return dict(base, codes=[], severity='none', evidence='', by='moderation')
-        if not triggers and review_kind != 'mandatory':
+        if not triggers and review_kind != 'mandatory' and not local_context:
             return dict(base, codes=[], severity='none', evidence='', by='moderation')
+        if local_context:
+            triggers = list(triggers) + ['selective_local_context']
     if review_kind == 'mandatory' and not triggers:
         triggers = ['unresolved_local_risk']
     if review_kind == 'optional' and on_risk is not None:

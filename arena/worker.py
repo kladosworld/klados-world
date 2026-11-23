@@ -176,7 +176,7 @@ class Worker:
                 self.conn.commit()
 
             def hold_signal():
-                # A serious classifier signal changes the review priority before an
+                # A classifier or selected contextual signal changes priority before an
                 # Observer call; an exhausted account must not leave that risk public.
                 current = self.conn.execute('SELECT status FROM society_posts WHERE id=%s FOR UPDATE',
                                             (post['id'],)).fetchone()
@@ -189,11 +189,11 @@ class Worker:
                     return False
                 self.conn.execute("UPDATE society_posts SET status='pending',flagged=true WHERE id=%s",(post['id'],))
                 society.event(self.conn,self.rules,society.clock(self.conn)['tick'],'moderation_contested',self.now(),
-                              post_id=post['id'],source='classifier_signal')
+                              post_id=post['id'],source='contextual_review_signal')
                 post['screening_generation'] = self.conn.execute("""SELECT max(id) AS generation FROM society_events
                     WHERE kind='moderation_contested' AND data->>'post_id'=%s""",(str(post['id']),)).fetchone()['generation']
                 society.event(self.conn,self.rules,society.clock(self.conn)['tick'],'risk_hold',self.now(),
-                              post_id=post['id'],source='classifier_signal')
+                              post_id=post['id'],source='contextual_review_signal')
                 self.conn.commit()
                 return self._observe_request_id(post)
 

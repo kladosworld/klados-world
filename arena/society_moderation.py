@@ -224,8 +224,9 @@ def initial_gate(conn, rules, post_id, text, now):
                    evidence=gate['evidence'], by='precheck', config_version=risk_gate.VERSION)
     apply_verdict(conn, rules, post_id, verdict, now)
     if followup:
-        conn.execute("""UPDATE society_findings SET metadata=metadata || '{"async_pending":true}'::jsonb
-            WHERE id=(SELECT max(id) FROM society_findings WHERE post_id=%s)""", (post_id,))
+        conn.execute("""UPDATE society_findings SET metadata=metadata || %s
+            WHERE id=(SELECT max(id) FROM society_findings WHERE post_id=%s)""",
+            (Jsonb(dict(async_pending=True, selection_signals=risk_gate.review_signals(text))), post_id))
         society.event(conn,rules,society.clock(conn)['tick'],'moderation_optional_selected',now,post_id=post_id)
 
 

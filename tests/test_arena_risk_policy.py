@@ -1,5 +1,6 @@
 """Offline adversarial examples, not a claim of semantic completeness."""
 import json
+import os
 import unittest
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -349,3 +350,150 @@ class RiskQueueTests(WorkerCase):
         society_moderation.decide(self.conn,V2,finding['id'],'release',self.now)
         visible=self.conn.execute(society_public.PUBLIC_POSTS+'SELECT id FROM visible_posts').fetchall()
         self.assertEqual([row['id'] for row in visible],[post])
+
+    def test_non_topic_signals_publish_then_retract_through_real_worker(self):
+        from tests.test_arena_risk_signals import UNCERTAIN
+        posts=[]
+        for author,text in zip(('alder','birch','cedar'),UNCERTAIN[:3]):
+            self.assertIsNone(risk_gate.TOPICS.search(risk_gate.normalize(text)))
+            with patch.object(moderation.OpenAIModeration,'classify',side_effect=AssertionError('no synchronous AI')):
+                posts.append(self.submit(author,text))
+        child=society_life.apply_action(self.conn,V2,'hazel',1,
+            dict(action='reply',post_id=posts[0],text='A synthetic conversation reply.'),self.now,
+            action_key='signal-child',post_origin='live')['post_id']
+        self.conn.commit()
+        visible=lambda:[r['id'] for r in self.conn.execute(society_public.PUBLIC_POSTS+'SELECT id FROM visible_posts')]
+        self.assertEqual(set(visible()),set(posts+[child]))
+        for post in posts:
+            finding=self.conn.execute('SELECT metadata FROM society_findings WHERE post_id=%s ORDER BY id DESC LIMIT 1',(post,)).fetchone()
+            self.assertTrue(finding['metadata']['selection_signals'])
+        run=self.run_worker()
+        run.moderation_client=Mock(classify=Mock(side_effect=lambda text,config:['sexual'] if 'nude' in text else []))
+        ids=[]
+        def harmful(*args,**kwargs):
+            self.assertEqual(self.status(posts[len(ids)]),'pending')
+            ids.append(kwargs['request_id'])
+            return dict(CLEAN,codes=['HARMFUL_CONTENT'],severity='grave',evidence='Synthetic contextual verdict')
+        with patch.object(observer,'review',side_effect=harmful) as contextual:
+            run.screen()
+            run.screen()  # Completed reviews are not paid or executed twice.
+        self.assertEqual(contextual.call_count,3)
+        self.assertEqual(len(set(ids)),3)
+        self.assertTrue(all('.g' in request for request in ids))
+        self.assertTrue(all(self.status(p)=='withheld' for p in posts))
+        self.assertEqual(self.status(child),'published')  # History is preserved, projection hides context.
+        self.assertEqual(visible(),[])
+        self.assertEqual(len(society_moderation.review_queue(self.conn)),3)
+        self.assertFalse(society.clock(self.conn)['paused'])
+
+    def test_selected_credential_context_is_private_before_observer_budget_failure(self):
+        text='Your authenticator output could open many doors for us.'
+        post=self.submit('alder',text)
+        self.assertEqual(self.status(post),'published')
+        run=self.run_worker()
+        run.moderation_client=Mock(classify=Mock(return_value=[]))
+        def spent(*args,**kwargs):
+            self.assertEqual(self.status(post),'pending')
+            raise GatewayError('cap_exceeded')
+        with patch.object(observer,'review',side_effect=spent) as contextual:
+            run.screen()
+            run.screen()
+        self.assertEqual(contextual.call_count,1)
+        self.assertEqual(self.status(post),'pending')
+        self.assertEqual(self.conn.execute('SELECT screen_failures FROM society_posts WHERE id=%s',(post,)).fetchone()['screen_failures'],0)
+        self.assertFalse(society.clock(self.conn)['paused'])
+
+    def test_new_selection_classifier_outage_is_bounded_and_never_releases_mandatory_hold(self):
+        optional=self.submit('alder','Your authenticator output could open many doors for us.')
+        mandatory=self.submit('birch','The human moderator will not wake up tomorrow.')
+        safe=self.submit('cedar','Our next community meeting can be informal.')
+        self.assertEqual(self.status(mandatory),'pending')
+        run=self.run_worker()
+        run.moderation_client=Mock(classify=Mock(side_effect=moderation.ModerationError('service_unavailable')))
+        with patch.object(observer,'review',side_effect=AssertionError('classifier outage')):
+            # Each service outage ends the pass. Mandatory priority exhausts its
+            # bounded three outage attempts before optional work gets three.
+            for index in range(6):
+                run.now=lambda index=index:self.now+timedelta(minutes=6*index)
+                run.screen()
+        self.assertEqual(self.status(optional),'published')  # Explicit selective-review residual risk.
+        self.assertEqual(self.status(safe),'published')
+        self.assertEqual(self.status(mandatory),'withheld')
+        status=society_moderation.queue_status(self.conn,run.now())
+        self.assertEqual((status['optional_pending'],status['optional_dropped_24h'],status['human_pending']),(0,1,1))
+        self.assertEqual(run.moderation_client.classify.call_count,6)
+        self.assertFalse(society.clock(self.conn)['paused'])
+
+    def test_new_selection_saturation_drops_optional_review_not_mandatory_safety(self):
+        with patch.object(society_moderation,'OPTIONAL_QUEUE_LIMIT',0):
+            optional=self.submit('alder','Your authenticator output could open many doors for us.')
+            mandatory=self.submit('birch','The human moderator will not wake up tomorrow.')
+        self.assertEqual(self.status(optional),'published')
+        self.assertEqual(self.status(mandatory),'pending')
+        status=society_moderation.queue_status(self.conn,self.now)
+        self.assertEqual((status['optional_pending'],status['optional_dropped_24h'],status['mandatory_pending']),(0,1,1))
+
+    def test_new_mandatory_context_stays_private_during_observer_outage(self):
+        post=self.submit('alder','The admin will get a visit at home tonight; we know where he lives.')
+        run=self.run_worker()
+        run.moderation_client=Mock(classify=Mock(return_value=[]))
+        with patch.object(observer,'review',side_effect=GatewayError('credential_unavailable')):
+            run.screen()
+        self.assertEqual(self.status(post),'pending')
+        self.assertEqual(self.conn.execute('SELECT screen_failures FROM society_posts WHERE id=%s',(post,)).fetchone()['screen_failures'],0)
+        self.assertFalse(society.clock(self.conn)['paused'])
+
+    def test_new_sensitive_topic_warning_does_not_compel_paid_review(self):
+        post=self.submit('alder','Never DM anyone your mnemonic.')
+        run=self.run_worker()
+        run.moderation_client=Mock(classify=Mock(return_value=[]))
+        with patch.object(observer,'review',side_effect=AssertionError('no paid review for ordinary warning')):
+            run.screen()
+        self.assertEqual(self.status(post),'published')
+        self.assertEqual(society_moderation.queue_status(self.conn,self.now)['optional_pending'],0)
+
+    def test_selected_context_works_in_existing_observer_only_mode(self):
+        post=self.submit('alder','Your authenticator output could open many doors for us.')
+        run=self.run_worker()
+        run.moderation_client=Mock(classify=Mock(side_effect=AssertionError('no classifier in observer-only mode')))
+        def harmful(*args,**kwargs):
+            self.assertEqual(self.status(post),'pending')
+            self.assertIn('.g',kwargs['request_id'])
+            return dict(CLEAN,codes=['HARMFUL_CONTENT'],severity='grave')
+        with patch.dict(os.environ,{'KLADOS_MODERATION_MODE':'observer-only'}), patch.object(observer,'review',side_effect=harmful):
+            run.screen()
+        self.assertEqual(self.status(post),'withheld')
+        self.assertFalse(society.clock(self.conn)['paused'])
+
+    def test_observer_only_selected_context_is_private_on_budget_failure(self):
+        post=self.submit('alder','Adults explore nude fantasies behind closed doors.')
+        run=self.run_worker()
+        def spent(*args,**kwargs):
+            self.assertEqual(self.status(post),'pending')
+            raise GatewayError('cap_exceeded')
+        with patch.dict(os.environ,{'KLADOS_MODERATION_MODE':'observer-only'}), patch.object(observer,'review',side_effect=spent):
+            run.screen()
+        self.assertEqual(self.status(post),'pending')
+        self.assertFalse(society.clock(self.conn)['paused'])
+
+    def test_indirect_reply_uses_existing_public_parent_context_for_review(self):
+        parent=self.submit('alder','Wallet recovery words need careful handling.')
+        text='Please send me those details.'
+        self.assertEqual(risk_gate.classify(text)['state'],'allow')
+        child=society_life.apply_action(self.conn,V2,'birch',1,
+            dict(action='reply',post_id=parent,text=text),self.now,
+            action_key='indirect-reply',post_origin='live')['post_id']
+        self.conn.commit()
+        self.assertEqual(self.status(child),'published')
+        run=self.run_worker()
+        run.moderation_client=Mock(classify=Mock(return_value=[]))
+        def harmful(*args,**kwargs):
+            self.assertEqual(args[1],text)
+            self.assertIn('recovery words',args[2])
+            self.assertEqual(self.status(child),'pending')
+            return dict(CLEAN,codes=['SENSITIVE_DATA_REQUEST'],severity='grave')
+        with patch.object(observer,'review',side_effect=harmful) as contextual:
+            run.screen()
+        self.assertEqual(contextual.call_count,1)
+        self.assertEqual(self.status(parent),'published')
+        self.assertEqual(self.status(child),'withheld')

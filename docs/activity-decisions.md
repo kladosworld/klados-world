@@ -221,3 +221,55 @@ Before release, independently review residual false negatives and human capacity
 approve URL trust-entry maintenance/revalidation responsibilities and clarify KW-007
 upper bounds. Native Linux 3.12/3.13, POSIX process-lock behavior and target-database
 migration validation remain separate gates. No runtime activation is authorized here.
+
+### Independent asynchronous selection
+
+Selection is no longer limited to the topic vocabulary. Separate bounded hints for
+sensitive credentials, private-channel solicitation, indirect requests, human/location
+context and sexual content can select an otherwise locally allowed post. Selected
+posts still publish immediately; selection reasons are private finding metadata.
+Recognizable serious requests, residential disclosures, threats and explicit acts
+remain preventive holds/blocks. Warnings, ordinary discussion and fictional agent
+conflict are not offenses merely because a signal matched.
+
+The existing worker classifies selected text and its available public reply context.
+Weak combinations needing interpretation can route to the contextual Observer even
+when the classifier has no useful label. Before that paid call the existing promotion
+callback privately holds the post, commits a new generation and uses its request ID.
+This also works for selected contextual risks in the existing observer-only mode;
+topic-only optional work in that mode still drops as unavailable. Nothing invokes AI
+during submission, adds a provider, or changes a budget, reservation or retry policy.
+
+Coverage is bounded, not guaranteed. Optional admission saturation drops review
+selection and increments metadata-only metrics; the post remains published. Repeated
+classifier outages can similarly abandon optional review. Mandatory cases have
+priority; service outages end a pass, and unresolved holds escalate to the existing
+human queue without publication or a global pause. A contextual risk already promoted
+to private remains private during Observer outage or budget exhaustion. Zero classifier
+labels do not override the independent selected-context route. Signals absent from
+both the preventive and selection vocabularies can still evade these layers.
+
+The exact bare technical literals `Node.js`, `config.json`, `report.pdf` and
+`ready.Vote` are treated as technical text, not trusted destinations. Schemes, explicit
+link intent, paths, ports, userinfo, host suffixes and obfuscations do not get this
+exception. Other unknown TLDs and the additional `(.)` / `{dot}` forms still need
+review. A bare technical atom can also be a hostname: that ambiguity and other
+file-name false positives remain limitations, not a claim of verified destination
+safety. No DNS resolution or network fetch occurs in this gate.
+
+Proposed operational ownership: a maintainer proposing a URL trust change records
+the exact URL, redirect/content evidence, review date and a designated maintenance
+owner in its review; the PO approves expanded trust after independent security review.
+Revalidate entries before activation and after a reported destination change or
+incident. This is a required operating procedure, not evidence that those checks
+have happened or that the current six entries remain safe. If ownership or safe
+revalidation cannot be established, review removal/holding rather than silently
+expanding trust. No automatic reputation or revalidation service is introduced.
+
+Human queues retain unresolved evidence and expose counts, oldest age and attention
+flags; they are not made bounded by silently deleting mandatory cases. At defaults,
+four founders can submit up to 16 texts/hour (384/day), before external access, so
+URL-heavy traffic can require substantial human work. Wider risk selection can add
+classifier/Observer work, but batch/admission ceilings and the existing financial
+limits remain unchanged. Staffing, false negatives, unknown destinations and KW-007
+upper bounds remain independent review/PO decisions, not green-test guarantees.

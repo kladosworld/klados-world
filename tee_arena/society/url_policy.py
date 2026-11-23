@@ -12,6 +12,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 PATH = Path(__file__).resolve().parents[2] / 'config' / 'url-policy-v1.json'
 LINK = re.compile(r'''(?:[a-z][a-z0-9+.-]*://|javascript:|data:|file:|mailto:)[^\s<>"']+|\b(?:[\w-]+\.)+(?:xn--[a-z0-9-]+|[^\W\d_]{2,})\b[^\s<>"']*''', re.I)
+TECHNICAL_LITERALS = frozenset(('Node.js', 'config.json', 'report.pdf', 'ready.Vote'))
+LINK_INTENT = re.compile(r'\b(?:visit|click|browse|navigate|destination|go to|log in at)\b', re.I)
 
 
 def load():
@@ -34,7 +36,7 @@ def classify(text, policy=None):
     normalized = unicodedata.normalize('NFKC', text)
     normalized = ''.join(c for c in normalized if unicodedata.category(c) != 'Cf')
     normalized = normalized.translate(str.maketrans({'\u3002': '.', '\uff0e': '.', '\uff61': '.'}))
-    normalized = re.sub(r'\s*(?:\[\.\]|\[dot\]|\(dot\))\s*', '.', normalized, flags=re.I)
+    normalized = re.sub(r'\s*(?:\[\.\]|\(\.\)|\[dot\]|\(dot\)|\{dot\})\s*', '.', normalized, flags=re.I)
     normalized = re.sub(r'(?<=\w)\s+dot\s+(?=\w)', '.', normalized, flags=re.I)
     normalized = re.sub(r'%2e', '.', normalized, flags=re.I)
     # Do not join sentence-ending punctuation to the next ordinary word.
@@ -44,6 +46,13 @@ def classify(text, policy=None):
     state, evidence = 'none', ''
     for match in LINK.finditer(normalized):
         raw = match.group(0).rstrip('.,;!?)')
+        # These exact bare technical atoms are not a hostname trust rule. A URL,
+        # path, suffix, obfuscation, userinfo or explicit destination still holds.
+        before = normalized[:match.start()]
+        if (not altered and raw in TECHNICAL_LITERALS
+                and before[-1:] not in ('/', ':', '@', '\\')
+                and not LINK_INTENT.search(normalized[max(0,match.start()-60):match.end()+40])):
+            continue
         try:
             parsed = urlsplit(raw if re.match(r'^[a-z][a-z0-9+.-]*:', raw, re.I) else 'https://'+raw)
             host = (parsed.hostname or '').lower().encode('idna').decode('ascii')
