@@ -101,7 +101,7 @@ class RiskPolicyTests(unittest.TestCase):
 
     def test_optional_social_signals_do_not_compel_paid_observer(self):
         gateway=Mock()
-        signals=['harassment','violence','harassment/threatening','hate/threatening','sexual']
+        signals=['harassment','violence','harassment/threatening','hate/threatening']
         client=Mock(classify=Mock(return_value=signals))
         verdict=moderation.review(gateway,client,'We discuss war.',model_id='synthetic',request_id='synthetic',review_kind='optional')
         self.assertEqual(verdict['severity'],'none')

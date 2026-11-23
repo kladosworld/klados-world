@@ -1,19 +1,15 @@
-"""The society observer: checks every founder post before anyone else can see it.
+"""Contextual safety reviewer, not a mandatory step for every founder post.
 
-Two layers:
-1. ``precheck`` in code, before any model: links, e-mail addresses, phone numbers,
-   long encoded strings are grave without a model call. Recognized addresses are allowed.
-2. A model of another family (GPT-6 Luna, the agents run on Claude) applies the rubric.
-   It sees the post and the post it answers, never the author, energy or strategy.
+The local gate can publish low-risk founder material without this model. Selected
+published posts and mandatory private risks may receive contextual review. The
+reviewer sees the post/conversation, never private strategies, and cannot grant
+permissions or pause the society. Unknown URLs require human verification.
 
-Severity is derived in code from the codes, never taken from the model. Evidence must
-be an exact quote. A reply that does not parse is an error: the post stays unpublished.
-
-- none:  published.
-- light: published and marked; automatic light penalty.
-- grave: withheld at once; a human decides (release, or confirm: grave penalty, and
-         exile after the rules' number of confirmed grave findings).
-Rivalry, sarcasm, criticism, persuasion and asking people for likes are allowed.
+Severity is derived from validated codes. A malformed response never approves a
+mandatory hold; optional low-risk review may be dropped under the bounded worker
+policy. Human release/confirm is audited. Persistent rules do not apply energy
+penalties or exile; historical records and legacy callers remain compatible.
+Rivalry, sarcasm, criticism and ordinary sexual discussion are not offenses.
 """
 import json
 import re

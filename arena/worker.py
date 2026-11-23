@@ -36,7 +36,7 @@ BATCH_OUTPUT_TOKENS = 2400  # Four bounded public texts plus a compact list; res
 PAUSE_AT_ONCE = ( "credential_unavailable", "accounting_unavailable", "stopped", "model_not_allowed")
 # The provider answered, but the reply cannot be used: a rest, not an outage.
 BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
-# Observer outages: screening stops for the pass and the posts stay unpublished. Moderation
+# Observer outages: mandatory risks stay private; optional low-risk reviews can be dropped. Moderation
 # never pauses the society (administrative, budget and infrastructure pauses come from founder calls).
 MODERATION_OUTAGE = ("cap_exceeded", "credential_unavailable", "accounting_unavailable", "sdk_unavailable", "stopped", "model_not_allowed")
 # Unbilled provider refusals that concern the observer as a whole (key, credit, permission, rate).
@@ -64,7 +64,7 @@ class Worker:
         self.purpose = purpose
         self.conn, self.rules, self.gateway = conn, rules, gateway
         self.moderation_client = moderation_client
-        self.observer_gateway = observer_gateway  # None: posts stay unpublished
+        self.observer_gateway = observer_gateway  # None: mandatory holds stay private; local safe publication continues.
         self.model_id, self.account, self.max_failures = model_id, account, max_failures
         self.delays, self.sleep = delays, sleep
         self.now = now or (lambda: datetime.now(timezone.utc))
@@ -154,10 +154,11 @@ class Worker:
         return "done"
 
     def screen(self):
-        """Run the observer on every unpublished post. Never pauses the society.
+        """Review bounded mandatory/optional queues. Never pauses the society.
 
-        Moderation failures are isolated: a failed or unexpected screening stays with its post
-        (unpublished, ``screen_failures`` + 1, retried up to the limit), and an observer outage
+        Moderation failures are isolated: mandatory risks stay private; optional work
+        may be dropped without hiding low-risk content. Failures increment the bounded
+        ``screen_failures`` count, and an observer outage
         (spent observer cap, missing key, stop file, disallowed model, or repeated failures) only
         ends this pass's screening without charging the posts a retry; it is recorded as a
         ``moderation_outage`` event, so the next attempt uses a new ledger request id. Only founder inference

@@ -1,13 +1,11 @@
-"""Moderated publication: every founder post is screened before anyone else sees it.
+"""Founder publication follows a local safety gate, with selective later review.
 
-Callers own transactions; nothing here commits.
-
-- none:  the post is published.
-- light: published and marked as flagged; the author pays the light penalty at once.
-- grave: withheld; a human decides with ``decide``: release (published, no penalty) or
-         confirm (grave penalty; exile after the rules' number of confirmed grave findings).
-Public events record penalties and withheld posts without their text. Findings,
-evidence and withheld text are visible to the operator only.
+Low-risk founder posts publish immediately. Mandatory serious-risk cases remain
+private; optional reviews may inspect already-published material. Verdicts can
+publish, flag or withhold; audited human release/confirm resolves held cases.
+Current persistent rules do not apply energy penalties or automatic exile. Legacy
+records/paths remain for compatibility. External submissions retain their separate
+prepublication path. Findings and evidence are operator-only. Callers own commits.
 """
 import difflib
 import re
@@ -37,7 +35,7 @@ def is_duplicate(conn, agent_id, text):
 
 
 def pending(conn, now=None):
-    """Posts waiting for the observer, oldest first, with the text they answer."""
+    """Eligible mandatory holds first, then optional published reviews; at most 32."""
     return conn.execute("""WITH review_ids AS (
                            SELECT id FROM society_posts WHERE status='pending'
                            UNION ALL SELECT p.id FROM society_findings gate JOIN society_posts p ON p.id=gate.post_id
@@ -63,7 +61,7 @@ def pending(conn, now=None):
 
 
 def screen_failed(conn, post_id):
-    """The observer could not judge the post: it stays unpublished and is tried again."""
+    """Count a bounded review failure; caller preserves the case's publication priority."""
     conn.execute("UPDATE society_posts SET screen_failures = screen_failures + 1 WHERE id = %s", (post_id,))
 
 
@@ -104,7 +102,7 @@ def apply_verdict(conn, rules, post_id, verdict, now):
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
                  (post_id, verdict["codes"], verdict["severity"], verdict["evidence"][:400], verdict["by"],
                   verdict.get("charged_microusd", 0), now,
-                  Jsonb({key: verdict[key] for key in ("config_version", "matches", "moderation_requests", "screening_generation")
+                  Jsonb({key: verdict[key] for key in ("config_version", "matches", "moderation_requests", "screening_generation", "sexual_signal")
                          if key in verdict})))
     tick = society.clock(conn)["tick"]
     if verdict["severity"] == "grave":

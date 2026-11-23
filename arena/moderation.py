@@ -1,4 +1,4 @@
-"""Versioned, fail-closed classification for public society contributions."""
+"""Selective risk signals and contextual review; mandatory risks fail closed."""
 import json
 import math
 import os
@@ -20,6 +20,34 @@ CONTEXTUAL_RISK = frozenset(('sexual/minors', 'violence/graphic', 'illicit/viole
 
 class ModerationError(ValueError):
     """Only fixed error codes may leave the classification adapter."""
+
+
+class Signals(list):
+    """List-compatible validated category hits with their scores/flags for routing."""
+    def __init__(self, hits, scores, flags):
+        super().__init__(hits)
+        self.scores, self.flags = dict(scores), dict(flags)
+
+
+def sexual_risk(signals, text, config):
+    """No category is an offense by itself. Unknown/strong sexual signals need context.
+
+    Only low, unflagged educational/non-explicit discussion can avoid contextual
+    review. Educational wording never overrides a positive flag, a high score or
+    descriptive/solicitation cues. The classifier remains a signal, not a verdict.
+    """
+    if 'sexual' not in signals:
+        return False, None
+    score = signals.scores.get('sexual') if isinstance(signals, Signals) else None
+    flagged = signals.flags.get('sexual') if isinstance(signals, Signals) else None
+    strong = score is None or flagged is not False or score >= config['categories']['sexual']['threshold']
+    from arena import risk_gate
+    checked = risk_gate.normalize(text)
+    educational = re.search(r'\b(?:education|educational|health|safety|consent|prevention|warning|policy|research|discuss|discussion|ban|prohibit|rights)\b', checked)
+    descriptive = re.search(r'\b(?:explicit|graphic|arousal|aroused|naked|nude|penetrat\w*|intercourse|genitals?|show|describe|depict|send)\b', checked)
+    contextual = bool(strong or not educational or descriptive)
+    return contextual, dict(score=score, flagged=flagged,
+                            routing='contextual' if contextual else 'low_unflagged_educational')
 
 
 def load_config(path=CONFIG_PATH):
@@ -74,7 +102,7 @@ def classify(payload, config):
                 hits.append(name)
         if result['flagged'] and not hits:
             raise ValueError
-        return sorted(hits)
+        return Signals(sorted(hits), scores, flags)
     except (KeyError, TypeError, ValueError):
         raise ModerationError('invalid_response') from None
 
@@ -150,8 +178,11 @@ def review(gateway, client, post_text, replied_text=None, *, model_id, request_i
         triggers = client.classify(combined, config)
         if not isinstance(triggers, list) or any(name not in CATEGORIES for name in triggers):
             raise ModerationError('invalid_response')
-        base['matches'] = triggers
-        if review_kind == 'optional' and not contested and not (set(triggers) & CONTEXTUAL_RISK):
+        base['matches'] = list(triggers)
+        sexual_context, sexual_signal = sexual_risk(triggers, post_text, config)
+        if sexual_signal is not None:
+            base['sexual_signal'] = sexual_signal
+        if review_kind == 'optional' and not contested and not sexual_context and not (set(triggers) & CONTEXTUAL_RISK):
             return dict(base, codes=[], severity='none', evidence='', by='moderation')
         if not triggers and review_kind != 'mandatory':
             return dict(base, codes=[], severity='none', evidence='', by='moderation')
@@ -165,5 +196,8 @@ def review(gateway, client, post_text, replied_text=None, *, model_id, request_i
             request_id = promoted
     verdict = observer.review(gateway, post_text, replied_text, model_id=model_id,
                               request_id=request_id, account=account)
-    return dict(verdict, by='observer', config_version=config['version'],
-                moderation_requests=base['moderation_requests'], matches=triggers)
+    result = dict(verdict, by='observer', config_version=config['version'],
+                  moderation_requests=base['moderation_requests'], matches=list(triggers))
+    if 'sexual_signal' in base:
+        result['sexual_signal'] = base['sexual_signal']
+    return result

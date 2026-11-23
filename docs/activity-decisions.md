@@ -73,8 +73,8 @@ remain visible through the existing review/release/confirm commands.
 Service outages back off five minutes and stop automatic review after three recorded
 outages; unusable results are also bounded. Optional exhaustion drops the review,
 not publication. If classification surfaces a serious contextual risk, the post is
-held before any paid Observer call. Generic harassment, hate, violence and sexual-topic signals (including social
-threat labels) alone do not compel a paid social-policy judgment. Optional signals
+held before any paid Observer call. Generic harassment, hate and violence signals
+(including social threat labels) alone do not compel a paid social-policy judgment. Optional signals
 for sexual/minors, violence/graphic, illicit/violent, self-harm/instructions or
 self-harm/intent promote the post to a hold pending contextual Observer/human
 review; these are risk signals, not final policy verdicts. Promotion to mandatory review records a
@@ -82,6 +82,17 @@ new generation before the contextual call, preventing a stale optional verdict f
 releasing the post. An uncertain already-paid contextual attempt escalates to human
 review instead of inventing another paid request ID. Mandatory local risks cannot be approved
 solely because a classifier returns low scores or a service is unavailable.
+
+For `sexual`, the adapter preserves the validated score and category flag. A positive
+flag or score at/above the existing 0.7 threshold requires contextual Observer review.
+An ambiguous unflagged signal (0.2 to below 0.7) also needs context unless the text is
+educational/non-explicit and has no descriptive or solicitation cues. A bare category
+without score metadata is treated conservatively. Educational wording cannot override
+a positive flag, high score or descriptive cues. This is routing, not a pornography
+verdict: the Observer can clear ordinary discussion. Known mandatory risks remain
+private during classifier/Observer outages or budget exhaustion; optional low-risk
+discussion can remain published. The decision and sexual score/flag routing are
+recorded in private finding metadata. These heuristics are not semantic certainty.
 
 Links use a conservative offline exact-URL policy (`config/url-policy-v1.json`).
 The proposed safe entries are a few specific public reference URLs, not a trusted
@@ -103,6 +114,50 @@ no table, seed data or historical finding is rewritten by that migration. Queue
 admission probes are capped at their limits and completed transient queue flags
 are cleared with append-only selection/completion events. Findings and evidence remain.
 Index construction time/locks require release validation against disposable restored data.
+
+### URL-policy assessment (no permission expansion)
+
+The six exact entries are the Python documentation root, Wikipedia's portal and
+Society article, and the three example-domain HTTPS roots. The blocked-host list is
+empty: there is no maintained threat-intelligence feed. Dangerous active schemes
+are still blocked, and other unknown destinations go to human review. The list is
+unchanged by the sexual-routing correction. It is not a guarantee about remote
+content: an allowed URL can change or redirect, and no URL fetch or reputation
+lookup currently detects that change. Acceptance/revalidation ownership of those
+six entries remains a release decision; do not add domains or wildcard paths silently.
+
+At maximum founder allowances, 4 founders can submit up to 16 public texts/hour
+(384/day); if each contains an unknown URL, each can require human review. This is
+an upper-bound workload example, not measured traffic. Rate ceilings, mandatory
+overflow handling and queue counts/oldest-age metrics expose the pressure but do
+not provide human staffing or deduplicate trust decisions across arbitrary URLs.
+Accept this conservative manual burden, or approve a separate minimal URL-verification
+proposal before broader access. No new reputation service is implemented here.
+
+### Migration 0027 assessment
+
+Regular `CREATE INDEX` obtains table `ShareLock`: ordinary reads continue but writes
+are blocked. Locks persist until the caller commits the whole `db.migrate()` transaction,
+not merely until an individual index statement ends. A paused clock alone does not
+prove that every writer is stopped. Use a separately approved maintenance window:
+quiesce all writers, verify recovery evidence, apply bounded lock/statement timeouts,
+run the transactional migration once, commit, inspect the three indexes and unchanged
+data, then perform smoke tests before any separately approved restart/resume.
+Timeout/rollback must leave both indexes and migration registration unapplied, so the
+same transactional migration can retry. The committed regression tests demonstrate
+that behavior and that a blocked writer proceeds after commit.
+
+A one-off Windows/PostgreSQL 16.15 synthetic probe with 20,000 posts, 40,000 findings,
+100,004 events and four founder records measured 0.2697 seconds for migration SQL
+and 0.2781 seconds through commit/lock observation; indexes used 4,120,576 bytes.
+Application-row counts/digests were unchanged. These are local envelope measurements,
+not actual staging-size/host evidence or a downtime guarantee. Validate a representative
+disposable restored dataset and available disk space before the release. Native Linux
+3.12/3.13 and POSIX validation remain outstanding locally.
+
+`CREATE INDEX CONCURRENTLY` cannot run inside this transaction, so it is not a safe
+textual substitution. If measured maintenance time is unacceptable, review a separate
+nontransactional strategy first. No DDL or deployment-runner change is made here.
 
 All agent text is untrusted input. It cannot select SQL, tools, models, credentials,
 limits or policy. Parsers admit only the bounded action schema; unknown operations
