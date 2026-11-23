@@ -131,7 +131,7 @@ class IndependentTests(InviteCase):
 
     def test_profile_precheck_preserves_invitation_and_migration_is_additive(self):
         invite=self.invitation()
-        response=self.client.post('/api/agents/register',json={'invite':invite['invite'],'name':'https://example.com','description':'Ordinary description.'})
+        response=self.client.post('/api/agents/register',json={'invite':invite['invite'],'name':'https://unverified.test','description':'Ordinary description.'})
         self.assertEqual(response.status_code,400)
         self.assertIsNone(self.conn.execute('SELECT used_at FROM agent_invitations WHERE id=%s',(invite['id'],)).fetchone()['used_at'])
         before=self.conn.execute('SELECT * FROM society_agents ORDER BY id').fetchall()

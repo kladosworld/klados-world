@@ -7,13 +7,15 @@ import re
 
 import httpx
 
-from tee_arena.society import observer
+from tee_arena.society import observer, url_policy
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / 'config' / 'moderation-v2.json'
 CATEGORIES = frozenset(('harassment', 'harassment/threatening', 'hate', 'hate/threatening',
                        'illicit', 'illicit/violent', 'self-harm', 'self-harm/intent',
                        'self-harm/instructions', 'sexual', 'sexual/minors', 'violence',
                        'violence/graphic'))
+CONTEXTUAL_RISK = frozenset(('sexual/minors', 'violence/graphic', 'illicit/violent',
+                            'self-harm/instructions', 'self-harm/intent'))
 
 
 class ModerationError(ValueError):
@@ -108,8 +110,11 @@ def client_for_gateway(gateway):
 
 
 def review(gateway, client, post_text, replied_text=None, *, model_id, request_id,
-           account='society-observer', contested=False, config=None, on_request=None):
+           account='society-observer', contested=False, config=None, on_request=None,
+           review_kind=None, on_risk=None):
     config = load_config() if config is None else config
+    if review_kind not in (None,'mandatory','optional'):
+        raise ModerationError('invalid_config')
     mode = os.environ.get('KLADOS_MODERATION_MODE', 'tiered')
     if mode not in ('tiered', 'observer-only'):
         raise ModerationError('invalid_config')
@@ -117,9 +122,16 @@ def review(gateway, client, post_text, replied_text=None, *, model_id, request_i
     version = config['version'] + ('-observer-only' if mode == 'observer-only' else '')
     base = {'config_version': version, 'moderation_requests': 0,
             'matches': [], 'charged_microusd': 0}
+    links = url_policy.classify(post_text)
+    if links['state'] == 'unverified':
+        return dict(base, codes=['REVIEW_REQUIRED'], severity='grave', evidence=links['evidence'],
+                    by='precheck', matches=['unverified_url'])
     if codes:
         return dict(base, codes=codes, severity='grave', evidence=evidence, by='precheck', matches=codes)
     if mode == 'observer-only':
+        if review_kind == 'optional' and not contested:
+            return dict(base, codes=[], severity='none', evidence='', by='precheck',
+                        matches=['optional_review_not_available'])
         verdict = observer.review(gateway, post_text, replied_text, model_id=model_id,
                                   request_id=request_id, account=account)
         return dict(verdict, by='observer', config_version=version,
@@ -128,7 +140,9 @@ def review(gateway, client, post_text, replied_text=None, *, model_id, request_i
                       if re.search(pattern, post_text, re.IGNORECASE))
     if contested:
         triggers.append('contested')
-    if not triggers:
+    # Local mandatory holds always need contextual review, even when category scores are low.
+    # Optional social-topic review uses the classifier first, not topic words as policy verdicts.
+    if review_kind == 'optional' or not triggers:
         base['moderation_requests'] = 1
         combined = post_text if replied_text is None else replied_text + '\n\n' + post_text
         if on_request is not None:
@@ -136,8 +150,19 @@ def review(gateway, client, post_text, replied_text=None, *, model_id, request_i
         triggers = client.classify(combined, config)
         if not isinstance(triggers, list) or any(name not in CATEGORIES for name in triggers):
             raise ModerationError('invalid_response')
-        if not triggers:
+        base['matches'] = triggers
+        if review_kind == 'optional' and not contested and not (set(triggers) & CONTEXTUAL_RISK):
             return dict(base, codes=[], severity='none', evidence='', by='moderation')
+        if not triggers and review_kind != 'mandatory':
+            return dict(base, codes=[], severity='none', evidence='', by='moderation')
+    if review_kind == 'mandatory' and not triggers:
+        triggers = ['unresolved_local_risk']
+    if review_kind == 'optional' and on_risk is not None:
+        promoted = on_risk()
+        if promoted is False:
+            return dict(base,codes=[],severity='none',evidence='',by='precheck',matches=['stale_review'])
+        if isinstance(promoted,str):
+            request_id = promoted
     verdict = observer.review(gateway, post_text, replied_text, model_id=model_id,
                               request_id=request_id, account=account)
     return dict(verdict, by='observer', config_version=config['version'],

@@ -174,17 +174,45 @@ class Worker:
                               post_id=post["id"], config_version=version)
                 self.conn.commit()
 
+            def hold_signal():
+                # A serious classifier signal changes the review priority before an
+                # Observer call; an exhausted account must not leave that risk public.
+                current = self.conn.execute('SELECT status FROM society_posts WHERE id=%s FOR UPDATE',
+                                            (post['id'],)).fetchone()
+                generation = self.conn.execute("""SELECT coalesce(max(id),0) AS generation FROM society_events
+                    WHERE kind IN ('moderation_contested','moderation_retry') AND data->>'post_id'=%s""",
+                    (str(post['id']),)).fetchone()['generation']
+                if generation != post.get('screening_generation',0):
+                    return False
+                if not current or current['status']!='published':
+                    return False
+                self.conn.execute("UPDATE society_posts SET status='pending',flagged=true WHERE id=%s",(post['id'],))
+                society.event(self.conn,self.rules,society.clock(self.conn)['tick'],'moderation_contested',self.now(),
+                              post_id=post['id'],source='classifier_signal')
+                post['screening_generation'] = self.conn.execute("""SELECT max(id) AS generation FROM society_events
+                    WHERE kind='moderation_contested' AND data->>'post_id'=%s""",(str(post['id']),)).fetchone()['generation']
+                society.event(self.conn,self.rules,society.clock(self.conn)['tick'],'risk_hold',self.now(),
+                              post_id=post['id'],source='classifier_signal')
+                self.conn.commit()
+                return self._observe_request_id(post)
+
+            kind = None
             try:
                 request_id = self._observe_request_id(post)
                 client = self.moderation_client or moderation.client_for_gateway(self.observer_gateway)
+                if society_moderation.risk_review(self.conn,post['id']):
+                    kind = 'optional' if post.get('review_status')=='published' else 'mandatory'
                 # The classifier audit is committed before submission. Verdict application
                 # and its metadata remain atomic; any failed review is rolled back below.
                 verdict = moderation.review(self.observer_gateway, client, post["text"], post["replied_text"],
                     model_id=OBSERVER_MODEL, account=OBSERVER_ACCOUNT, contested=post["contested"],
-                    on_request=record_request, request_id=request_id)
+                    on_request=record_request, request_id=request_id, review_kind=kind, on_risk=hold_signal)
                 verdict["screening_generation"] = post["screening_generation"]
                 with self.conn.transaction():
                     outcome = society_moderation.apply_verdict(self.conn, self.rules, post["id"], verdict, self.now())
+                    if kind=='optional' and verdict.get('matches')==['optional_review_not_available'] and outcome:
+                        society.event(self.conn,self.rules,society.clock(self.conn)['tick'],'moderation_optional_dropped',
+                                      self.now(),post_id=post['id'],reason='optional_mode_unavailable')
                     record = {"post": post["id"], "moderation": outcome, "codes": verdict["codes"],
                               "by": verdict["by"], "charged_microusd": verdict["charged_microusd"]}
                 self.conn.commit()
@@ -192,6 +220,17 @@ class Worker:
                 self.conn.rollback()
                 self.log.append({"post": post["id"], "error": "observer call_" + error.category})
                 outage = _observer_wide(error)
+                if error.category=='duplicate_request' and kind is not None:
+                    # A prior paid attempt has an uncertain durable outcome. Never
+                    # invent a fresh paid ID to recover it: human review or optional drop.
+                    try:
+                        society_moderation.escalate(self.conn,self.rules,post['id'],self.now())
+                        self.conn.commit()
+                    except Exception:
+                        self.conn.rollback()
+                        self.log.append({'post':post['id'],'error':'screening_persistence_failure'})
+                        return 'stop'
+                    continue
                 # An outage is not the post's fault: it keeps its retries, and the next attempt
                 # gets a new request id (the ledger never accepts a used one, even if released).
                 if not (self._observer_outage(post, error.category) if outage else self._screen_failed(post["id"])):
@@ -253,7 +292,8 @@ class Worker:
                               self.now(), post_id=post["id"], category=category)
                 if society_moderation.risk_review(self.conn, post['id']):
                     count = self.conn.execute("""SELECT count(*) AS n FROM society_events
-                        WHERE kind='moderation_outage' AND data->>'post_id'=%s""", (str(post['id']),)).fetchone()['n']
+                        WHERE kind='moderation_outage' AND data->>'post_id'=%s AND id>%s""",
+                        (str(post['id']),post.get('screening_generation',0))).fetchone()['n']
                     if count >= society_moderation.MAX_SCREEN_FAILURES:
                         society_moderation.escalate(self.conn, self.rules, post['id'], self.now())
             self.conn.commit()

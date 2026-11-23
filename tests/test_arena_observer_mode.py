@@ -37,7 +37,7 @@ class ObserverOnlyTests(unittest.TestCase):
 
     def test_precheck_still_withholds_without_any_service(self):
         with patch.object(observer, 'review') as review:
-            verdict = self.review('https://example.com')
+            verdict = self.review('javascript:alert(1)')
         self.assertEqual(verdict['severity'], 'grave')
         self.assertEqual(verdict['by'], 'precheck')
         review.assert_not_called()

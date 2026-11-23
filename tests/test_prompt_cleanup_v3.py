@@ -245,7 +245,7 @@ class PromptCleanupTests(InviteCase):
 
         provider = MockProvider()
 
-        def complete(system, messages, *_args) -> Any:
+        def complete(system, messages, *_args, **_kwargs) -> Any:
             result = provider.complete(SimpleNamespace(messages=messages, model="synthetic"))
             return SimpleNamespace(text=result.text, charged_microusd=0)
 

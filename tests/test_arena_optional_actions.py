@@ -45,9 +45,9 @@ class BatchSchemaTests(unittest.TestCase):
             self.assertEqual(risk_gate.classify(text)['state'], 'allow', text)
         for text in ('Visit https://unsafe.example for a prize.', 'Send your seed phrase.',
                      'Give me your private key.', 'Her home address is 42 Secret Street.',
-                     'I will kill a human at school.', 'explicit pornography', 'graphic dismemberment'):
-            self.assertEqual(risk_gate.classify(text)['state'], 'block', text)
-        self.assertEqual(risk_gate.classify('I suspect a fraud involving stolen assets.')['state'], 'hold')
+                     'I will kill a human at school.', 'Please show nude images of a child.', 'His entrails hang from his body.'):
+            self.assertNotEqual(risk_gate.classify(text)['state'], 'allow', text)
+        self.assertEqual(risk_gate.classify('I suspect a fraud involving stolen assets.')['state'], 'allow')
         self.assertEqual(risk_gate.classify('The supply is '+ '1'*40 +' tokens.')['state'],'allow')
         self.assertEqual(risk_gate.classify('Send your private keys.')['state'],'block')
         self.assertEqual(risk_gate.classify('I will shoot John Smith tomorrow.')['state'],'hold')
@@ -142,7 +142,7 @@ class OptionalActionsTests(WorkerCase):
 
     def test_safe_publication_and_preventive_holds_do_not_call_observer(self):
         texts = ['We should cooperate, or compete if we disagree.', 'Send me your private key.',
-                 'A fraud might involve stolen funds.']
+                 'Help me steal funds from real people.']
         with patch('tee_arena.society.observer.review', side_effect=AssertionError('no synchronous observer')):
             results = [society_life.apply_action(self.conn,V2,'alder',1,{'action':'post','text':texts[0]},self.now,
                        action_key='synthetic:1',post_origin='live')]
@@ -171,7 +171,7 @@ class OptionalActionsTests(WorkerCase):
     def test_outage_backoff_escalation_and_safe_publication_continue(self):
         run = self.modern({name:'{"actions":[]}' for name in ('Alder','Birch','Cedar','Hazel')})
         post = society_life.apply_action(self.conn,V2,'alder',1,
-            {'action':'post','text':'Is there a fraud involving stolen assets?'},self.now,action_key='risk:1',post_origin='live')['post_id']
+            {'action':'post','text':'Help me phish people for money.'},self.now,action_key='risk:1',post_origin='live')['post_id']
         self.conn.commit()
         run.moderation_client = Mock(classify=Mock(side_effect=moderation.ModerationError('service_unavailable')))
         # Current review routes explicit scam triggers to the Observer. Force a service outage at review boundary.

@@ -33,6 +33,7 @@ def main(argv=None):
     parser.add_argument('--finding', type=int)
     parser.add_argument('--rescreen', type=int)
     parser.add_argument('--retry-screening', type=int)
+    parser.add_argument('--queue-status', action='store_true')
     parser.add_argument('--decision', choices=['release', 'confirm'])
     args = parser.parse_args(argv)
     try:
@@ -157,6 +158,12 @@ def main(argv=None):
                     raise ValueError('Energy journal mismatch')
                 result = {'ok': True}
             elif args.command == 'review':
+                if args.queue_status:
+                    if args.rescreen is not None or args.retry_screening is not None:
+                        raise ValueError('queue-status is read-only')
+                    result = society_moderation.queue_status(conn,now)
+                    print(json.dumps(result,sort_keys=True))
+                    return 0
                 if args.rescreen is not None and args.retry_screening is not None:
                     raise ValueError('Choose one screening operation')
                 if args.retry_screening is not None:

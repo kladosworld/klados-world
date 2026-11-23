@@ -110,7 +110,7 @@ class FossilTests(WorkerCase):
         self.assertIn("your energy ran out", prompt.messages[0]["content"])
 
     def test_withheld_last_words_never_reach_the_fossil_or_the_public(self):
-        run = self.last_words_script('{"text": "Find me at https://example.com"}')
+        run = self.last_words_script('{"text": "Find me at https://unverified.test"}')
         self.starve("hazel")
         run.run()
         fossil = self.fossil("hazel")
@@ -122,7 +122,7 @@ class FossilTests(WorkerCase):
         self.assertIsNone(body["last_words"])
         self.assertIsNone(body["fossil"])  # V2 withholds unverified public histories.
         self.assertEqual(society_public.profile(self.conn, RULES, "hazel")["fossil"]["death_cause"], "out of energy")
-        self.assertNotIn("example.com", json.dumps(body))
+        self.assertNotIn("unverified.test", json.dumps(body))
 
     def test_a_fossil_without_last_words_after_three_unusable_replies(self):
         run = self.last_words_script("I am thinking about it...")
