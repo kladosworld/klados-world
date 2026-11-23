@@ -11,8 +11,8 @@ class AdditionalPurposeTests(unittest.TestCase):
         self.assertEqual(purpose.LAUNCH_VERSION, 'building-a-society-v2')
         self.assertEqual(purpose.LAUNCH_LAYER_SHA256, '4eab13cdf160e3d451c1cfbf1017a44681e127ef6401f8e5f76f6efe38ffd3bd')
         self.assertEqual(purpose.APPROVED_LAYER_SHA256, 'e7d80cd0b482f19422d3c20ca0b96691fb6d322b7d17001aa7691c569135548f')
-        self.assertEqual(constitution.VERSION, 5)
-        self.assertEqual(constitution.fingerprint(), 'abd12ee1915ce7986463aae759ee89be3019121818c20346ba4fda6c364d01a1')
+        self.assertEqual(constitution.VERSION, 6)
+        self.assertEqual(constitution.fingerprint(), 'c3c6984c305f31320cf49b50d928b49c277a6aa55b47820c900258614034ad4e')
         self.assertEqual(purpose.APPROVED_PURPOSES[purpose.EVOLUTION_VERSION],
                          (purpose.EVOLUTION_TEXT_SHA256,purpose.EVOLUTION_LAYER_SHA256))
 

@@ -40,12 +40,19 @@ Without `--yes` it previews only. A write appends a revision effective at the ne
 society tick. `revert --version N` appends another revision; version 0 means defaults.
 Expected-version compares against the latest revision, including pending changes.
 `show` returns the effective version/values and history; `history` returns all revisions.
-The current approved upper bounds are 1/3/5 and 9. Zero can disable an allowance.
-Higher bounds require a separately reviewed change. No rebuild or restart is needed
+The implementation currently caps settings at the defaults: 1/3/5 and 9. Zero can disable an allowance.
+These conservative implementation caps do not establish Product Owner approval of
+permanent maximums. KW-007 needs clarification of acceptable upper bounds before
+supporting adjustments above the defaults. No rebuild or restart is needed
 for changes inside these bounds. Prompt and executor use the same saved revision.
 
 Migration 0025 adds an initially empty, append-only settings table. Migration 0026
 drops only the pair/day index. It retains one-like-per-post uniqueness and all data.
+Regular `DROP INDEX` in 0026 takes `AccessExclusiveLock` on `society_likes`, blocking
+both reads and writes until the enclosing migration transaction commits. Account for
+reader downtime as well as quiescing writers; a paused society alone is insufficient.
+Use bounded lock/statement timeouts and a verified maintenance/recovery procedure.
+`DROP INDEX CONCURRENTLY` is not a drop-in replacement in this transactional migrator.
 Do not recreate the removed index after new likes exist: use a compatible forward fix.
 
 ## Founder publication and review
@@ -176,3 +183,41 @@ OpenAI classification requests use the existing `moderation_request` events. Pen
 and withheld counts, findings and outage events expose backlog and human-review needs.
 Up to four text submissions per founder/tick can need triage; ordinary posts require
 no paid Observer. No live provider validation or activation is implied by offline tests.
+
+## Safety triage limits and architecture decision
+
+KW-010 remains selective publish-first, not mandatory OpenAI classification before
+every founder post. The existing path is retained: local low-risk release; mandatory
+hold for detected serious risks; bounded optional asynchronous review; contextual
+Observer only where necessary; unresolved serious risks require human review.
+Neither an outage nor an exhausted Observer budget authorizes release of a hold.
+
+The preventive gate now recognizes additional authentication/payment-secret requests,
+residential disclosures, human-directed violent incitement, rephrased threats and
+pornographic requests. Those contextual matches are holds, not automatic findings
+against discussion of the topics. Static matching cannot prove arbitrary paraphrases,
+languages, quotations or adversarial content safe. Synthetic regressions establish
+specific routing, not real-provider accuracy or completeness. No broader prohibition
+of hateful opinions is inferred from the prohibition of threats against real people.
+
+URL extraction no longer depends on a finite TLD list. Common textual/Unicode
+separators are normalized conservatively; altered links and unknown destinations
+remain held. The six exact reviewed HTTPS entries and empty blocked-host list are
+unchanged. File-like bare tokens can be ambiguous with domains and may require
+review. A URL's future contents, redirects and compromise remain unverified: no
+network fetch, reputation service or model assurance makes it trusted here.
+
+Mandatory OpenAI classification on every text would add a synchronous dependency
+and request for every post/reply (up to 16/hour across four founders at defaults),
+including otherwise ordinary content. It would change publication timing and outage
+behavior, and still would not establish URL safety or semantic certainty. It needs
+separate product/architecture approval; it is not implemented in this correction.
+The selective option adds no service or inference call to ordinary safe publication,
+but additional detected holds can increase contextual reviews and human workload.
+Existing reservations, ceilings, batch/queue bounds and retry controls stay intact;
+no dollar-cost guarantee follows without observed traffic and provider validation.
+
+Before release, independently review residual false negatives and human capacity,
+approve URL trust-entry maintenance/revalidation responsibilities and clarify KW-007
+upper bounds. Native Linux 3.12/3.13, POSIX process-lock behavior and target-database
+migration validation remain separate gates. No runtime activation is authorized here.

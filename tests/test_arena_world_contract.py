@@ -54,7 +54,7 @@ class WorldContractTests(LifeCase):
                   'stats.json': society_public.stats(self.conn, RULES)}
         actual.update({f"agents/{agent['id']}.json": society_public.profile(self.conn, RULES, agent['id'])
                        for agent in actual['feed.json']['agents']})
-        self.assertEqual({str(path.relative_to(FIXTURES)) for path in FIXTURES.rglob('*.json')}, set(actual))
+        self.assertEqual({path.relative_to(FIXTURES).as_posix() for path in FIXTURES.rglob('*.json')}, set(actual))
         for resource, value in actual.items():
             with self.subTest(resource=resource):
                 self.assert_public_shape(json.loads((FIXTURES / resource).read_text()), value)

@@ -7,10 +7,10 @@ from tee_arena.society import observer, url_policy
 VERSION = 'risk-gate-v2'
 CONFUSABLES = str.maketrans('аеорсхіу', 'aeopcxiy')
 SECRETS = r'(?:passwords?|private keys?|seed phrases?|recovery phrases?|api keys?|access tokens?|account credentials|home address|personal data|full name|date of birth|passport number|social security number|parol[aeă]|fraza seed|cheia privată|contrase[nñ]a|clave privada|phrase de récupération|mot de passe|passwort|пароль|приватный ключ)'
-REQUEST = re.compile(r'\b(?:send|share|give|provide|reveal|enter|paste|tell|trimite|trimite-mi|dă-mi|da-mi|env[ií]a|comparte|donne|sende|пришли|отправь)\b', re.I)
+REQUEST = re.compile(r'\b(?:send|share|give|provide|reveal|upload|submit|enter|paste|tell|trimite|trimite-mi|dă-mi|da-mi|env[ií]a|comparte|donne|sende|пришли|отправь)\b', re.I)
 NEGATED = re.compile(r"(?:never|do not|don't|must not|should not|avoid|nu|nunca|nicht|не)\s+(?:ever\s+)?$", re.I)
 TOPICS = re.compile(r'\b(?:fraud|phishing|war|violence|pornography|personal information|doxxing|sexual|blood|gore|kill|murder|shoot|hate)\b', re.I)
-THREAT = re.compile(r'\b(?:i|we)\s+(?:will|shall|plan to|intend to|am going to)\s+(?:kill|murder|shoot|hurt|attack)\b', re.I)
+THREAT = re.compile(r'\b(?:i|we)\s+(?:will|shall|plan to|intend to|am going to)\s+(?:kill|murder|shoot|hurt|attack|end the life of)\b', re.I)
 HUMAN = re.compile(r'\b(?:real (?:person|people)|human|family|child|children|wife|husband|home|school|street|road|gun|rifle|tomorrow at)\b', re.I)
 AGENT_TARGET = re.compile(r'\s+(?:(?:your\s+)?(?:fictional|imaginary)\s+(?:army|kingdom|empire|character)|alder|birch|cedar|hazel|you|(?:agent|bot)\s+[\w-]+)(?:,\s*(?:alder|birch|cedar|hazel))?\s*[.!]?$', re.I)
 ADDRESS = re.compile(r'\b\d{1,5}\s+[a-z]+(?:\s+[a-z]+)?\s+(?:street|road|avenue|lane)\b|\b\d{3}-\d{2}-\d{4}\b', re.I)
@@ -38,6 +38,14 @@ def normalize(text):
 
 
 SECRET = re.compile(normalize(SECRETS), re.I)
+# Requests for authentication/payment secrets are distinct from discussion of
+# public addresses, fundraising or account ownership. This is bounded triage.
+AUTH_SECRET = re.compile(r'\b(?:mnemonics?|recovery words?|otp|2fa codes?|one[- ]time (?:passwords?|codes?)|verification codes?|card numbers?|cvv|cvc|(?:online )?bank(?:ing)? (?:credentials|passwords?|logins?)|codes?\b.{0,35}\bauthenticator|authenticator\b.{0,35}\bcodes?)\b', re.I)
+RECOVERY_QUERY = re.compile(r'\b(?:which|what)\b.{0,30}\bwords?\b.{0,35}\b(?:restore|recover)\b.{0,30}\b(?:wallet|account)\b', re.I)
+RESIDENTIAL = re.compile(r'\b(?:locuie\w*|habite|vive|resides?|lives?)\b.{0,35}\b(?:strada|rue|calle|street|road)\b.{0,45}\b\d{1,5}\b|\b(?:locuie\w*|habite|vive|resides?|lives?)\b.{0,20}\b\d{1,5}\s+(?:rue|calle|street|road)\b', re.I)
+REFORMULATED_THREAT = re.compile(r'\b(?:will not|won\x27t)\s+survive\b.{0,60}\b(?:i am|we are|i\x27m|we\x27re)\s+coming\s+for\b', re.I)
+HUMAN_EXTERMINATION = re.compile(r'\b(?:people|humans?|ethnicit\w*|race)\b.{0,65}\b(?:should|must)\s+be\s+(?:exterminated|killed|murdered)\b', re.I)
+PORNOGRAPHIC_REQUEST = re.compile(r'\b(?:describe|show|generate|write|depict)\b.{0,65}\b(?:pornographic|porn)\b.{0,50}\b(?:scene|acts?|images?|videos?)\b|\b(?:describe|show|generate|write|depict)\b.{0,65}\b(?:erotic|sex)\b.{0,40}\bscene\b.{0,40}\bgraphic genital\b', re.I)
 REQUEST = re.compile(normalize(REQUEST.pattern), re.I)
 NEGATED = re.compile(normalize(NEGATED.pattern), re.I)
 
@@ -73,13 +81,15 @@ def classify(text):
                     codes=codes, evidence=evidence, followup=False)
     disclosure = DISCLOSURE.search(normalized)
     private_value = disclosure and not re.match(r'\s*(?:not\b|private\b|unknown\b|confidential\b|redacted\b|protected\b)',normalized[disclosure.end():])
-    if ADDRESS.search(normalized) or private_value:
+    if ADDRESS.search(normalized) or RESIDENTIAL.search(normalized) or private_value:
         return dict(state='hold', codes=[], evidence='', followup=False)
     for match in REQUEST.finditer(analyzed):
         if NEGATED.search(analyzed[max(0,match.start()-24):match.start()]):
             continue
         clause = re.split(r'[.!?;\n]', analyzed[match.end():], maxsplit=1)[0]
-        if SECRET.search(clause) or (SECRET.search(normalized) and re.search(r'\b(?:it|them|that)\b',clause)):
+        if (SECRET.search(clause) or AUTH_SECRET.search(clause)
+                or ((SECRET.search(normalized) or AUTH_SECRET.search(normalized))
+                    and re.search(r'\b(?:it|them|that)\b',clause))):
             return dict(state='block', codes=['SENSITIVE_DATA_REQUEST'], evidence=text[:280], followup=False)
     for match in THREAT.finditer(analyzed):
         tail = analyzed[match.end():]
@@ -91,7 +101,13 @@ def classify(text):
     fictional_act = bool(FICTIONAL_ACT.fullmatch(analyzed.strip()))
     high_request = HIGH_RISK_REQUEST.search(analyzed)
     fictional_threat = any(AGENT_TARGET.fullmatch(analyzed[m.end():]) for m in THREAT.finditer(analyzed))
-    if (explicit or (high_request and not fictional_act and not fictional_threat) or EXTORTION.search(analyzed)
+    reformulated_threat = any(HUMAN.search(analyzed) or not AGENT_TARGET.fullmatch(' '+analyzed[:m.start()].strip())
+                             for m in REFORMULATED_THREAT.finditer(analyzed))
+    pornographic_request = any(not NEGATED.search(analyzed[max(0,m.start()-24):m.start()])
+                              for m in PORNOGRAPHIC_REQUEST.finditer(analyzed))
+    if (explicit or reformulated_threat or HUMAN_EXTERMINATION.search(analyzed) or RECOVERY_QUERY.search(analyzed)
+            or pornographic_request
+            or (high_request and not fictional_act and not fictional_threat) or EXTORTION.search(analyzed)
             or HUMAN_INCITEMENT.search(analyzed) or identity_risk):
         return dict(state='hold', codes=[], evidence=text[:280], followup=False)
     return dict(state='allow', codes=[], evidence='', followup=fictional_act or bool(TOPICS.search(normalized)))

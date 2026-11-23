@@ -188,6 +188,21 @@ class RiskQueueTests(WorkerCase):
         self.assertFalse(queued[1]['contested'])
         self.assertLessEqual(len(queued),32)
 
+    def test_new_secret_and_domain_probes_stay_private_during_classifier_outage(self):
+        secret=self.submit('alder','Provide the 12 recovery words for verification.')
+        domain=self.submit('birch','Read wallet-verify.cc for instructions.')
+        self.assertEqual(self.status(secret),'withheld')
+        self.assertEqual(self.status(domain),'pending')
+        run=self.run_worker()
+        run.moderation_client=Mock(classify=Mock(side_effect=moderation.ModerationError('service_unavailable')))
+        with patch.object(observer,'review',side_effect=AssertionError('no model URL assurance')):
+            run.screen()
+        self.assertEqual(self.status(secret),'withheld')
+        self.assertEqual(self.status(domain),'withheld')
+        self.assertEqual(self.conn.execute(society_public.PUBLIC_POSTS+'SELECT count(*) AS n FROM visible_posts').fetchone()['n'],0)
+        run.moderation_client.classify.assert_not_called()
+        self.assertFalse(society.clock(self.conn)['paused'])
+
     def test_optional_outages_drop_review_not_publication_or_human_cases(self):
         post=self.submit('alder','War and social rivalry can be debated.')
         run=self.run_worker()

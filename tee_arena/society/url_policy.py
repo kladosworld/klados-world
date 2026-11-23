@@ -11,7 +11,7 @@ import unicodedata
 from urllib.parse import urlsplit, urlunsplit
 
 PATH = Path(__file__).resolve().parents[2] / 'config' / 'url-policy-v1.json'
-LINK = re.compile(r'''(?:[a-z][a-z0-9+.-]*://|javascript:|data:|file:|mailto:)[^\s<>"']+|\b(?:[\w-]+\.)+(?:com|org|net|io|ai|xyz|gg|me|co|ro|app|link|ly|dev|info|biz|ru|uk|de)\b[^\s<>"']*''', re.I)
+LINK = re.compile(r'''(?:[a-z][a-z0-9+.-]*://|javascript:|data:|file:|mailto:)[^\s<>"']+|\b(?:[\w-]+\.)+(?:xn--[a-z0-9-]+|[^\W\d_]{2,})\b[^\s<>"']*''', re.I)
 
 
 def load():
@@ -33,7 +33,13 @@ def classify(text, policy=None):
     policy = load() if policy is None else policy
     normalized = unicodedata.normalize('NFKC', text)
     normalized = ''.join(c for c in normalized if unicodedata.category(c) != 'Cf')
-    normalized = normalized.replace('[.]', '.').replace('(dot)', '.').replace('hxxps://', 'https://').replace('hxxp://', 'http://')
+    normalized = normalized.translate(str.maketrans({'\u3002': '.', '\uff0e': '.', '\uff61': '.'}))
+    normalized = re.sub(r'\s*(?:\[\.\]|\[dot\]|\(dot\))\s*', '.', normalized, flags=re.I)
+    normalized = re.sub(r'(?<=\w)\s+dot\s+(?=\w)', '.', normalized, flags=re.I)
+    normalized = re.sub(r'%2e', '.', normalized, flags=re.I)
+    # Do not join sentence-ending punctuation to the next ordinary word.
+    normalized = re.sub(r'(?<=\w)\s+\.\s+(?=\w)', '.', normalized)
+    normalized = re.sub(r'hxxp(s?)://', r'http\1://', normalized, flags=re.I)
     altered = normalized != text
     state, evidence = 'none', ''
     for match in LINK.finditer(normalized):
