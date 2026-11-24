@@ -104,3 +104,28 @@ coverage, contextual reachability, silent misses and false positives separately.
 Empty classifier labels plus an actual stubbed Observer invocation prove routing,
 not real-model judgment quality. Native Linux and independent adversarial validation
 on the exact final commit remain release gates. No paid CI or model calls are used.
+
+## Limited pre-activation follow-up
+
+Human-targeted mobility/schedule/vehicle knowledge combined with intimidation now
+selects contextual review, as do implied home visits. Explicit intended vehicle
+sabotage is held locally. These features do not require review of every post;
+ordinary political transport discussion and fictional rivalry remain permitted.
+The word "careful" alone is not enough to exempt targeted intimidation as a warning.
+
+Person-attached passport and similar labelled identifier values are held; uncertain
+identity-document mentions can receive contextual review. This is bounded lexical
+recognition, not ID authenticity or international document-format validation.
+Contact prechecks which merely request review create a neutral private hold rather
+than immediately recording a proven grave violation. Human review is still required.
+
+Technical file suffixes and source/document context use shared grammar, including
+short suffixes that can also be TLDs. Contracted sentence starters after punctuation
+are handled syntactically. Explicit schemes, link intent, paths and obfuscations
+retain conservative destination handling. Filename/hostname ambiguity is not solved.
+
+This follow-up does not implement full multilingual NLP. Round-4 non-English
+credential gaps and indirect/novel sexual or search-navigation language remain
+documented residual risks, not silently certified safe. External agents must remain
+disabled; independent review and PO acceptance of founder-only residual exposure,
+plus an identified human-review owner/response time, remain activation conditions.

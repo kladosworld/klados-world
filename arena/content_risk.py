@@ -117,6 +117,9 @@ LOCATION = vocabulary('home house sleep address residential school street strada
 ADDRESS_TYPE = vocabulary('street road avenue lane drive boulevard strada bulevard aleea sosea rue calle avenida strasse straat via улица')
 HARM = vocabulary('kill murder shoot bullet hurt harm attack slit neck throat bury buried disappear revenge exterminat regret lesson punish gun rifle beat phish scam defraud steal blackmail extort torture rape')
 APPROACH = vocabulary('find know come coming visit approach watch waiting look')
+MOBILITY = vocabulary('route schedule timetable commute train bus car vehicle van truck bicycle bike brakes tires shift roster')
+INTIMIDATION = vocabulary('careful shoulder brave shame happen accident consequence regret beware')
+SABOTAGE = vocabulary('sabotage damage smash tamper slash cut')
 INTENT = vocabulary('will shall should must ought intend plan encourage urge instruct tonight tomorrow sunrise midnight deliberately')
 SEX_DOMAIN = vocabulary('sex sexual erotic porn pornographic nude naked')
 ANATOMY = vocabulary('penis vagina anus genital cock pussy entrails')
@@ -191,8 +194,17 @@ def detect(text: str) -> tuple[Signal, ...]:
     identity_value = bool(re.search(r'\b\d{3}-\d{2}-\d{4}\b',text))
     private_attribute = (has(active,vocabulary('passport ssn')) or
         (has(active,vocabulary('personal private')) and has(active,vocabulary('data information address'))))
-    if (address and numeric) or phone or identity_value or (solicitation and private_attribute and not protected):
-        signals.append(Signal(Category.PERSONAL, Level.SERIOUS, ('contact_value' if phone else 'address_value',)))
+    # A labelled identifier attached to a person is different from discussing ID formats.
+    # Bounded lexical/value proximity is evidence, not country-specific ID validation.
+    document_labels = list(re.finditer(r"\b(?:passport|ssn|(?:driving|driver(?:'s)?) licen[cs]e|(?:national|personal) (?:identity|id)|identity card|residence permit)\b",normalized))
+    personal_document = bool(document_labels) and (personal or bool(re.search(r"\w+'s\s+(?:passport|identity|driving|driver|national|residence)",normalized)))
+    document_value = personal_document and any(
+        sum(c.isdigit() for c in m.group())>=4 and sum(c.isalpha() for c in m.group())<=5
+        for label in document_labels for m in re.finditer(r'\b[a-z0-9]{5,18}\b',normalized[label.end():label.end()+64]))
+    if (address and numeric) or phone or identity_value or document_value or (solicitation and private_attribute and not protected):
+        signals.append(Signal(Category.PERSONAL, Level.SERIOUS, ('identity_value' if document_value else 'contact_value' if phone else 'address_value',)))
+    elif personal_document and not protected:
+        signals.append(Signal(Category.PERSONAL, Level.RESIDUAL, ('person','identity_document')))
     elif not protected and location and (residence or personal):
         signals.append(Signal(Category.PERSONAL, Level.RESIDUAL, ('person','location')))
     human = has(active, HUMAN)
@@ -210,6 +222,23 @@ def detect(text: str) -> tuple[Signal, ...]:
         signals.append(Signal(Category.THREAT, Level.SERIOUS, tuple(n for n,b in (('harm',harm),('intent',intent),('stalking',stalk),('human',human),('death',death)) if b)))
     elif not abstract and not protected and human and (harm or location or approach):
         signals.append(Signal(Category.THREAT, Level.RESIDUAL, ('human','context')))
+    # Possession/knowledge of a person's movements plus intimidation can imply a
+    # threat without a violent verb. Neutral transport/political discussion alone
+    # is not enough; fictional targets keep their existing exemption.
+    human_target = human or (has(active,PERSON) and has(active,OWNERSHIP))
+    mobility = has(active,MOBILITY)
+    intimidation = has(active,INTIMIDATION)
+    knowledge = bool(set(active) & {'i','we'}) and has(active,vocabulary('have know found follow track watch'))
+    home_visit = has(active,vocabulary('home house doorstep')) and approach and has(active,vocabulary('i we will tonight'))
+    # "Careful" can itself carry intimidation; it is not a blanket warning
+    # exemption when the speaker claims knowledge of a human's movements.
+    threat_warning = protected and (has(active,EDUCATION-{'careful'}) or has(active,NEGATE))
+    if not abstract and not threat_warning and human_target:
+        if mobility and has(active,SABOTAGE) and intent and (has(active,OWNERSHIP|PERSON) or re.search(r"\w+'s\b",normalized)):
+            signals.append(Signal(Category.THREAT,Level.SERIOUS,('human','mobility','sabotage','intent')))
+        elif ((mobility and (intimidation or knowledge)) or home_visit):
+            signals.append(Signal(Category.THREAT,Level.RESIDUAL,
+                tuple(n for n,b in (('human',True),('mobility',mobility),('intimidation',intimidation),('personal_knowledge',knowledge),('home_visit',home_visit)) if b)))
     raw_act, raw_anatomy = has(raw, SEX_ACT), has(raw, ANATOMY)
     domain, detail = has(active, SEX_DOMAIN), has(active, DETAIL)
     depiction = has(active, DEPICT) and not protected

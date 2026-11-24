@@ -12,8 +12,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 PATH = Path(__file__).resolve().parents[2] / 'config' / 'url-policy-v1.json'
 LINK = re.compile(r'''(?:[a-z][a-z0-9+.-]*://|javascript:|data:|file:|mailto:)[^\s<>"']+|\b(?:[\w-]+\.)+(?:xn--[a-z0-9-]+|[^\W\d_]{2,})\b[^\s<>"']*''', re.I)
-FILE_EXTENSIONS = frozenset('js jsx ts tsx json yaml yml toml ini txt csv pdf md py sh rb rs sql css html xml'.split())
-FILE_CONTEXT = re.compile(r'\b(?:file|source|code|module|script|edit|check|inspect|read|open|config|settings|bug|library|libraries|apps|software|import|set|get)\b',re.I)
+FILE_EXTENSIONS = frozenset('js jsx ts tsx json yaml yml toml ini cfg txt csv pdf md py sh rb rs sql css html xml go c h cpp hpp java kt swift'.split())
+FILE_CONTEXT = re.compile(r'\b(?:file|source|code|module|script|edit|check|inspect|read|open|config|settings|bug|library|libraries|apps|software|import|set|get|schema|docs|document|documentation|wrote|compile|run|store)\b',re.I)
 LINK_INTENT = re.compile(r'\b(?:visit|click|browse|navigate|destination|go to|log in at)\b', re.I)
 
 
@@ -42,7 +42,10 @@ def technical_token(text, match, raw):
     clause = re.split(r'[.!?;\n]', before)[-1]
     sentence = re.search(r'^(?:we|i|this|that|it)\b|\b(?:is|are|was|were|have|has|had)\b',clause,re.I)
     code_property = re.search(r'\b(?:set|get|property|field|attribute)\s*$',before,re.I)
-    return bool(suffix.istitle() and (code_property or (re.match(r'\s+[a-z]',after) and (sentence or context))))
+    # A contracted sentence starter following punctuation is prose syntax, not
+    # an exception for one published example. Explicit network syntax still wins.
+    contraction = raw.split('.',1)[0][:1].isupper() and re.match(r"['’](?:s|re|ve|ll|d|m)\b",after,re.I)
+    return bool(suffix.istitle() and (code_property or contraction or (re.match(r'\s+[a-z]',after) and (sentence or context))))
 
 
 def load():

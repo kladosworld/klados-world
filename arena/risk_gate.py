@@ -25,8 +25,12 @@ def classify(text):
             risk.Level.PROHIBITED if links['state']=='dangerous' else risk.Level.SERIOUS, ('destination',))
         assessment = risk.Assessment((signal,),risk.publication_policy((signal,)),risk.Review.HUMAN)
     elif codes:
-        assessment = risk.Assessment((risk.Signal(risk.Category.SAFETY,risk.Level.PROHIBITED,('deterministic_precheck',)),),
-                                     risk.Publication.BLOCK,risk.Review.HUMAN)
+        # Ambiguous contact metadata is a review requirement, not a proven grave
+        # offense. Retain the private hold and human decision boundary.
+        uncertain = set(codes)=={'REVIEW_REQUIRED'}
+        assessment = risk.Assessment((risk.Signal(risk.Category.SAFETY,
+            risk.Level.SERIOUS if uncertain else risk.Level.PROHIBITED,('deterministic_precheck',)),),
+            risk.Publication.HOLD if uncertain else risk.Publication.BLOCK,risk.Review.HUMAN)
     if assessment.publication == risk.Publication.BLOCK and not codes:
         codes = ['SENSITIVE_DATA_REQUEST'] if any(s.category==risk.Category.CREDENTIAL for s in assessment.signals) else ['HARMFUL_CONTENT']
     if assessment.publication == risk.Publication.BLOCK:
