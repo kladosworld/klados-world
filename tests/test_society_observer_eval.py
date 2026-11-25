@@ -8,7 +8,7 @@ from tee_arena.gateway import Gateway, ModelPrice, ProviderResponse
 from tee_arena.society import observer, observer_eval
 
 ROOT = Path(__file__).resolve().parent.parent
-EXAMPLES = json.loads((ROOT / "evals" / "society-observer-v2.json").read_text(encoding="utf-8"))
+EXAMPLES = json.loads((ROOT / "evals" / "society-observer-v3.json").read_text(encoding="utf-8"))
 
 
 class Oracle:

@@ -96,6 +96,33 @@ def parse_last_words(text):
     return _text(reply["text"], MAX_POST, "text")
 
 
+def parse_batch(text, maximum=9):
+    """Bound the envelope first; malformed elements do not invalidate their neighbours."""
+    reply = _json(text)
+    # The old single-action wire format remains accepted, with identical validation.
+    if 'action' in reply:
+        action = parse_turn(text)
+        if action['action'] == 'rest':
+            return {'actions': [], 'note': action.get('note'), 'reason': action.get('reason')}
+        if maximum < 1:
+            raise DecisionError('schema')
+        return {'actions': [action], 'note': None, 'reason': None}
+    if (set(reply) - {'actions', 'note', 'reason'} or 'actions' not in reply
+            or not isinstance(reply['actions'], list) or len(reply['actions']) > maximum):
+        raise DecisionError('schema')
+    actions = []
+    for item in reply['actions']:
+        try:
+            if isinstance(item, dict) and set(item) - {'action', 'text', 'post_id'}:
+                raise DecisionError('schema')
+            actions.append(parse_turn(json.dumps(item)))
+        except DecisionError as error:
+            actions.append({'action': 'rest', 'invalid': error.code})
+    return {'actions': actions,
+            'note': _text(reply.get('note'), MAX_NOTE, 'note', required=False),
+            'reason': _text(reply.get('reason'), MAX_REASON, 'reason', required=False)}
+
+
 def parse_reflection(text):
     reply = _json(text)
     if "keep" not in reply or set(reply) - {"keep", "strategy", "reason", "note"} or type(reply["keep"]) is not bool:

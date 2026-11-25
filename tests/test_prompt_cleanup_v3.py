@@ -245,7 +245,7 @@ class PromptCleanupTests(InviteCase):
 
         provider = MockProvider()
 
-        def complete(system, messages, *_args) -> Any:
+        def complete(system, messages, *_args, **_kwargs) -> Any:
             result = provider.complete(SimpleNamespace(messages=messages, model="synthetic"))
             return SimpleNamespace(text=result.text, charged_microusd=0)
 
@@ -272,11 +272,11 @@ class PromptCleanupTests(InviteCase):
 
 class ConstitutionTests(unittest.TestCase):
     def test_current_rules_fingerprint_and_preserved_autonomy_boundaries(self):
-        self.assertEqual(constitution.VERSION, 5)
+        self.assertEqual(constitution.VERSION, 6)
         self.assertEqual(
             constitution.fingerprint(),
             hashlib.sha256(
-                ("klados-society-constitution-v5\n" + constitution.TEXT).encode()
+                ("klados-society-constitution-v6\n" + constitution.TEXT).encode()
             ).hexdigest(),
         )
         self.assertNotEqual(

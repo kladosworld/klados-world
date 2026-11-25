@@ -21,7 +21,7 @@ class ObserverOnlyTests(unittest.TestCase):
                                  model_id='synthetic', request_id='screen.1', **kwargs)
 
     def test_clean_posts_require_observer_and_preserve_context_and_account(self):
-        clean = dict(observer.parse('{"codes":[]}', 'A reply.'), charged_microusd=123)
+        clean = dict(observer.parse('{"codes":[]}', 'A reply.'), charged_microusd=123, by='model')
         audit = Mock()
         with patch.object(observer, 'review', return_value=clean) as review:
             verdict = self.review('A reply.', replied_text='A public parent.', on_request=audit)
@@ -37,7 +37,7 @@ class ObserverOnlyTests(unittest.TestCase):
 
     def test_precheck_still_withholds_without_any_service(self):
         with patch.object(observer, 'review') as review:
-            verdict = self.review('https://example.com')
+            verdict = self.review('javascript:alert(1)')
         self.assertEqual(verdict['severity'], 'grave')
         self.assertEqual(verdict['by'], 'precheck')
         review.assert_not_called()
@@ -54,7 +54,7 @@ class ObserverOnlyTests(unittest.TestCase):
 
     def test_observer_withholding_and_contested_cases_are_preserved(self):
         bad = dict(observer.parse('{"codes":["HARMFUL_CONTENT"],"evidence":"threat"}', 'A threat'),
-                   charged_microusd=3)
+                   charged_microusd=3, by='model')
         with patch.object(observer, 'review', return_value=bad) as review:
             verdict = self.review('A threat', contested=True)
         self.assertEqual(verdict['severity'], 'grave')
@@ -65,7 +65,7 @@ class ObserverOnlyTests(unittest.TestCase):
         for text in ('0x1234567890123456789012345678901234567890',
                      'So11111111111111111111111111111111111111112',
                      'Trading and voluntary fundraising are worth discussing.'):
-            clean = dict(observer.parse('{"codes":[]}', text), charged_microusd=1)
+            clean = dict(observer.parse('{"codes":[]}', text), charged_microusd=1, by='model')
             with self.subTest(text=text), patch.object(observer, 'review', return_value=clean) as review:
                 self.assertEqual(self.review(text)['by'], 'observer')
                 review.assert_called_once()

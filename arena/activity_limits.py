@@ -35,6 +35,8 @@ def check(conn, rules, agent_id, action, now, *, limits=None):
     if locked["isolation"] not in ("read committed", "read uncommitted"):
         raise society.SocietyError("activity_limits_unavailable")
     limit = limits[action]
+    if limit == 0:
+        raise ActivityLimit(action, 0, WINDOW_SECONDS)
     cutoff = now - timedelta(seconds=WINDOW_SECONDS)
     # The limit-th newest action determines when fewer than limit remain.
     # Include future timestamps conservatively if clocks differ or a request waited.

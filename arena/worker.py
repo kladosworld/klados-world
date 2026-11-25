@@ -15,13 +15,14 @@ Safety:
   age, so nobody dies of an outage.
 """
 import argparse
+from psycopg.types.json import Jsonb
 from datetime import datetime, timezone
 import os
 from pathlib import Path
 import sys
 import time
 
-from arena import eras, db, moderation, society, society_death, society_life, society_moderation
+from arena import activity_settings, founder_batch, eras, db, moderation, society, society_death, society_life, society_moderation
 from tee_arena import gateway as gateway_module, ledger as ledger_module
 from tee_arena.society import decisions, observer, prompts, shared_purpose, rules as rules_module
 
@@ -32,10 +33,11 @@ OBSERVER_MODEL = "openrouter:openai/gpt-6-luna"  # another family than the agent
 ACCOUNT = "society-agents"
 OBSERVER_ACCOUNT = "society-observer"
 MAX_OUTPUT_TOKENS = 1200  # the model may spend part of it reasoning before the JSON
+BATCH_OUTPUT_TOKENS = 2400  # Four bounded public texts plus a compact list; reserved before sending.
 PAUSE_AT_ONCE = ( "credential_unavailable", "accounting_unavailable", "stopped", "model_not_allowed")
 # The provider answered, but the reply cannot be used: a rest, not an outage.
 BAD_REPLY = ("response_incomplete", "response_invalid", "response_too_large")
-# Observer outages: screening stops for the pass and the posts stay unpublished. Moderation
+# Observer outages: mandatory risks stay private; optional low-risk reviews can be dropped. Moderation
 # never pauses the society (administrative, budget and infrastructure pauses come from founder calls).
 MODERATION_OUTAGE = ("cap_exceeded", "credential_unavailable", "accounting_unavailable", "sdk_unavailable", "stopped", "model_not_allowed")
 # Unbilled provider refusals that concern the observer as a whole (key, credit, permission, rate).
@@ -63,19 +65,19 @@ class Worker:
         self.purpose = purpose
         self.conn, self.rules, self.gateway = conn, rules, gateway
         self.moderation_client = moderation_client
-        self.observer_gateway = observer_gateway  # None: posts stay unpublished
+        self.observer_gateway = observer_gateway  # None: mandatory holds stay private; local safe publication continues.
         self.model_id, self.account, self.max_failures = model_id, account, max_failures
         self.delays, self.sleep = delays, sleep
         self.now = now or (lambda: datetime.now(timezone.utc))
         self.failures = 0
         self.log = []
 
-    def call(self, system, messages, request_id):
+    def call(self, system, messages, request_id, *, max_output_tokens=MAX_OUTPUT_TOKENS):
         """One model call with retries on HTTP 429, under new request ids."""
         for attempt in range(len(self.delays) + 1):
             try:
                 return self.gateway.call(account=self.account, role="agent", model_id=self.model_id, system=system,
-                                         messages=messages, max_output_tokens=MAX_OUTPUT_TOKENS,
+                                         messages=messages, max_output_tokens=max_output_tokens,
                                          request_id=request_id + (f":a{attempt}" if attempt else ""))
             except gateway_module.GatewayError as error:
                 if error.category == "provider_rejected" and error.status == 429 and attempt < len(self.delays):
@@ -101,13 +103,20 @@ class Worker:
         self.conn.commit()  # the turn is spent even if everything below fails
         try:
             context = society_life.turn_context(self.conn, self.rules, agent_id)
+            settings = activity_settings.effective(self.conn, tick) if self.rules.persistent else None
+            if settings is not None:
+                context['activity_settings'] = settings
+                context['rules']['activity_limits_per_hour'] = {
+                    key: settings['values'][key] for key in ('post', 'reply', 'like')}
+                context['rules'].pop('likes_you_may_give_per_agent_per_day', None)
         except society.SocietyError:
             society_life.fail_turn(self.conn, agent_id, tick, "participation_unavailable")
             self.conn.commit()
             return "failed"
         system, messages = prompts.turn(context, purpose=self.purpose)
         try:
-            result = self.call(system, messages, f"klados.turn.{agent_id}.{tick}")
+            options = {'max_output_tokens': BATCH_OUTPUT_TOKENS} if settings is not None else {}
+            result = self.call(system, messages, f"klados.turn.{agent_id}.{tick}", **options)
         except gateway_module.GatewayError as error:
             code = "budget_exhausted" if error.category == "cap_exceeded" else ("reply_" if error.category in BAD_REPLY else "call_") + error.category
             society_life.fail_turn(self.conn, agent_id, tick, code, charged_microusd=error.charged_microusd)
@@ -118,7 +127,8 @@ class Worker:
             return "stop" if self._failed(error) else "failed"
         self.failures = 0
         try:
-            decision = decisions.parse_turn(result.text)
+            decision = (decisions.parse_batch(result.text, settings['values']['max_actions'])
+                        if settings is not None else decisions.parse_turn(result.text))
         except decisions.DecisionError as error:
             society_life.fail_turn(self.conn, agent_id, tick, "reply_" + error.code,
                                    charged_microusd=result.charged_microusd)
@@ -129,6 +139,12 @@ class Worker:
         provider = self.gateway.providers.get(self.model_id.split(":", 1)[0])
         origin = ("live" if isinstance(provider, gateway_module.OpenRouterProvider) else
                   "mock" if isinstance(provider, MockProvider) else None)
+        if settings is not None:
+            founder_batch.save(self.conn, agent_id, tick, decision, settings, result.charged_microusd, origin)
+            self.conn.commit()  # Durable decision; a restart never needs to ask the model again.
+            outcome = founder_batch.execute(self.conn, self.rules, agent_id, tick, self.now())
+            self.conn.commit()
+            return outcome
         outcome = society_life.act(self.conn, self.rules, agent_id, tick, decision, self.now(),
                                    charged_microusd=result.charged_microusd, post_origin=origin)
         self.conn.commit()
@@ -139,10 +155,11 @@ class Worker:
         return "done"
 
     def screen(self):
-        """Run the observer on every unpublished post. Never pauses the society.
+        """Review bounded mandatory/optional queues. Never pauses the society.
 
-        Moderation failures are isolated: a failed or unexpected screening stays with its post
-        (unpublished, ``screen_failures`` + 1, retried up to the limit), and an observer outage
+        Moderation failures are isolated: mandatory risks stay private; optional work
+        may be dropped without hiding low-risk content. Failures increment the bounded
+        ``screen_failures`` count, and an observer outage
         (spent observer cap, missing key, stop file, disallowed model, or repeated failures) only
         ends this pass's screening without charging the posts a retry; it is recorded as a
         ``moderation_outage`` event, so the next attempt uses a new ledger request id. Only founder inference
@@ -152,24 +169,53 @@ class Worker:
         if self.observer_gateway is None:
             return None
         failures = 0
-        for post in society_moderation.pending(self.conn):
+        for post in society_moderation.pending(self.conn, self.now()):
             def record_request(version):
                 society.event(self.conn, self.rules, society.clock(self.conn)["tick"],
                               "moderation_request", self.now(), post["author_id"],
                               post_id=post["id"], config_version=version)
                 self.conn.commit()
 
+            def hold_signal():
+                # A classifier or selected contextual signal changes priority before an
+                # Observer call; an exhausted account must not leave that risk public.
+                current = self.conn.execute('SELECT status FROM society_posts WHERE id=%s FOR UPDATE',
+                                            (post['id'],)).fetchone()
+                generation = self.conn.execute("""SELECT coalesce(max(id),0) AS generation FROM society_events
+                    WHERE kind IN ('moderation_contested','moderation_retry') AND data->>'post_id'=%s""",
+                    (str(post['id']),)).fetchone()['generation']
+                if generation != post.get('screening_generation',0):
+                    return False
+                if not current or current['status']!='published':
+                    return False
+                self.conn.execute("UPDATE society_posts SET status='pending',flagged=true WHERE id=%s",(post['id'],))
+                society.event(self.conn,self.rules,society.clock(self.conn)['tick'],'moderation_contested',self.now(),
+                              post_id=post['id'],source='contextual_review_signal')
+                post['screening_generation'] = self.conn.execute("""SELECT max(id) AS generation FROM society_events
+                    WHERE kind='moderation_contested' AND data->>'post_id'=%s""",(str(post['id']),)).fetchone()['generation']
+                society.event(self.conn,self.rules,society.clock(self.conn)['tick'],'risk_hold',self.now(),
+                              post_id=post['id'],source='contextual_review_signal')
+                self.conn.commit()
+                return self._observe_request_id(post)
+
+            kind = None
             try:
                 request_id = self._observe_request_id(post)
                 client = self.moderation_client or moderation.client_for_gateway(self.observer_gateway)
+                if society_moderation.risk_review(self.conn,post['id']):
+                    kind = 'optional' if post.get('review_status')=='published' else 'mandatory'
                 # The classifier audit is committed before submission. Verdict application
                 # and its metadata remain atomic; any failed review is rolled back below.
                 verdict = moderation.review(self.observer_gateway, client, post["text"], post["replied_text"],
                     model_id=OBSERVER_MODEL, account=OBSERVER_ACCOUNT, contested=post["contested"],
-                    on_request=record_request, request_id=request_id)
+                    on_request=record_request, request_id=request_id, review_kind=kind, on_risk=hold_signal,
+                    review_requirement=post.get('review_requirement'))
                 verdict["screening_generation"] = post["screening_generation"]
                 with self.conn.transaction():
                     outcome = society_moderation.apply_verdict(self.conn, self.rules, post["id"], verdict, self.now())
+                    if kind=='optional' and verdict.get('matches')==['optional_review_not_available'] and outcome:
+                        society.event(self.conn,self.rules,society.clock(self.conn)['tick'],'moderation_optional_dropped',
+                                      self.now(),post_id=post['id'],reason='optional_mode_unavailable')
                     record = {"post": post["id"], "moderation": outcome, "codes": verdict["codes"],
                               "by": verdict["by"], "charged_microusd": verdict["charged_microusd"]}
                 self.conn.commit()
@@ -177,6 +223,17 @@ class Worker:
                 self.conn.rollback()
                 self.log.append({"post": post["id"], "error": "observer call_" + error.category})
                 outage = _observer_wide(error)
+                if error.category=='duplicate_request' and kind is not None:
+                    # A prior paid attempt has an uncertain durable outcome. Never
+                    # invent a fresh paid ID to recover it: human review or optional drop.
+                    try:
+                        society_moderation.escalate(self.conn,self.rules,post['id'],self.now())
+                        self.conn.commit()
+                    except Exception:
+                        self.conn.rollback()
+                        self.log.append({'post':post['id'],'error':'screening_persistence_failure'})
+                        return 'stop'
+                    continue
                 # An outage is not the post's fault: it keeps its retries, and the next attempt
                 # gets a new request id (the ledger never accepts a used one, even if released).
                 if not (self._observer_outage(post, error.category) if outage else self._screen_failed(post["id"])):
@@ -236,6 +293,16 @@ class Worker:
             with self.conn.transaction():
                 society.event(self.conn, self.rules, society.clock(self.conn)["tick"], "moderation_outage",
                               self.now(), post_id=post["id"], category=category)
+                changed=self.conn.execute('''UPDATE society_findings SET metadata=metadata || %s
+                    WHERE id=(SELECT max(id) FROM society_findings WHERE post_id=%s)
+                    AND (metadata->>'async_pending'='true' OR EXISTS(SELECT 1 FROM society_posts p WHERE p.id=post_id AND p.status='pending')) RETURNING id''',
+                    (Jsonb(dict(review_status='skipped',review_performed='none',review_skip_reason=category)),post['id'])).fetchone()
+                if changed and society_moderation.risk_review(self.conn, post['id']):
+                    count = self.conn.execute("""SELECT count(*) AS n FROM society_events
+                        WHERE kind='moderation_outage' AND data->>'post_id'=%s AND id>%s""",
+                        (str(post['id']),post.get('screening_generation',0))).fetchone()['n']
+                    if count >= society_moderation.MAX_SCREEN_FAILURES:
+                        society_moderation.escalate(self.conn, self.rules, post['id'], self.now())
             self.conn.commit()
             return True
         except Exception:
@@ -247,7 +314,15 @@ class Worker:
         """Record one failed screening. False when the database cannot record it."""
         try:
             with self.conn.transaction():
+                self.conn.execute('''UPDATE society_findings SET metadata=metadata || %s
+                    WHERE id=(SELECT max(id) FROM society_findings WHERE post_id=%s)
+                    AND (metadata->>'async_pending'='true' OR EXISTS(SELECT 1 FROM society_posts p WHERE p.id=post_id AND p.status='pending'))''',
+                    (Jsonb(dict(review_status='skipped',review_performed='none',review_skip_reason='review_failed')),post_id))
                 society_moderation.screen_failed(self.conn, post_id)
+                row = self.conn.execute('SELECT screen_failures FROM society_posts WHERE id=%s', (post_id,)).fetchone()
+                if (row and row['screen_failures'] >= society_moderation.MAX_SCREEN_FAILURES
+                        and society_moderation.risk_review(self.conn, post_id)):
+                    society_moderation.escalate(self.conn, self.rules, post_id, self.now())
             self.conn.commit()
             return True
         except Exception:
@@ -353,6 +428,12 @@ class Worker:
         if self.screen() == "stop":  # posts left from an earlier pass
             return dict(summary, stopped=True)
         tick = society.clock(self.conn)["tick"]
+        if self.rules.persistent:
+            for agent_id, previous_tick in founder_batch.recoverable(self.conn):
+                recovered = founder_batch.execute(self.conn, self.rules, agent_id, previous_tick, self.now())
+                self.conn.commit()
+                if recovered is not None:
+                    summary['turns' if recovered == 'done' else 'failed'] += 1
         for agent_id in society.due_turns(self.conn, self.now()):
             result = self.turn(agent_id, tick)
             if result == "stop":

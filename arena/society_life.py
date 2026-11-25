@@ -42,7 +42,7 @@ def _like(conn, rules, agent_id, post, tick, now):
     _alive_agent(conn, post["author_id"])
     day = society_day(tick)
     target = post["author_id"]
-    if conn.execute("""SELECT 1 FROM society_likes WHERE from_kind = 'agent' AND from_id = %s
+    if not rules.persistent and conn.execute("""SELECT 1 FROM society_likes WHERE from_kind = 'agent' AND from_id = %s
                        AND target_id = %s AND day = %s""", (agent_id, target, day)).fetchone():
         raise society.SocietyError("already_liked_today")
     paid_today = conn.execute("""SELECT count(*) AS n FROM society_likes WHERE from_kind = 'agent'
@@ -102,6 +102,9 @@ def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post
                 if post_origin is not None:
                     conn.execute("""INSERT INTO society_post_origins (post_id, origin, created_at)
                                     VALUES (%s, %s, %s)""", (outcome["post_id"], post_origin, now))
+                if rules.persistent and conn.execute("SELECT kind FROM society_agents WHERE id=%s", (agent_id,)).fetchone()['kind'] == 'founder':
+                    from arena.society_moderation import initial_gate
+                    initial_gate(conn, rules, outcome['post_id'], decision['text'], now)
             elif action == "like":
                 outcome["paid"] = _like(conn, rules, agent_id, _post(conn, decision["post_id"]), tick, now)
             if decision.get("note"):
@@ -231,7 +234,7 @@ def turn_context(conn, rules, agent_id):
                                          WHERE kind = ANY(%s) AND id <> %s ORDER BY id""",
                                       (list(society.LIVING_KINDS), agent_id))]
     current = strategy(conn, agent_id)
-    recent = conn.execute("""SELECT tick, action,
+    recent = conn.execute("""SELECT tick, action, private->'outcomes' AS outcomes,
                                     coalesce(private->'outcome'->>'error', private->>'error') AS error
                              FROM society_turns
                              WHERE agent_id = %s AND status <> 'claimed' AND tick > COALESCE((SELECT started_tick FROM society_eras ORDER BY id DESC LIMIT 1), 0) ORDER BY tick DESC LIMIT 5""",
@@ -241,7 +244,8 @@ def turn_context(conn, rules, agent_id):
         """SELECT post_id FROM society_likes WHERE from_kind='agent' AND from_id=%s
            AND post_id=ANY(%s)""", (agent_id, [post["post_id"] for post in square]))}
     eligible_authors = {row["name"] for row in others
-                        if row["status"] == "alive" and row["participation"] == "active" and row["id"] not in liked_today}
+                        if row["status"] == "alive" and row["participation"] == "active"
+                        and (rules.persistent or row["id"] not in liked_today)}
     for post in square:
         post["can_like"] = post["author"] in eligible_authors and post["post_id"] not in liked_posts
     relations = society.relations(conn, agent_id)
@@ -275,6 +279,10 @@ def turn_context(conn, rules, agent_id):
                              "error": r["error"]} for r in recent],
     }
     context["rules"]["energy_enabled"] = rules.energy_enabled
+    if rules.persistent:
+        for shown, record in zip(context['your_last_turns'], recent):
+            if record['outcomes'] is not None:
+                shown['outcomes'] = record['outcomes']
     context["rules"]["persistent_agents"] = rules.persistent
     if rules.activity_limits is not None:
         context["rules"]["activity_limits_per_hour"] = dict(rules.activity_limits)

@@ -70,7 +70,7 @@ class IndependentTests(InviteCase):
         self.assertEqual(self.submit(agent, action='rest', request_id='pause-test').json(),first.json())
         self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM external_action_receipts').fetchone()['n'],1)
 
-    def test_reply_and_like_allowances_are_independent_and_keep_pair_restriction(self):
+    def test_reply_and_like_allowances_are_independent_and_keep_post_uniqueness(self):
         agent = self.register().json()
         targets = ['alder','birch','cedar','hazel']
         for i in range(7):
@@ -91,7 +91,7 @@ class IndependentTests(InviteCase):
         self.assertEqual(self.submit(agent,action='post',text='A separate proposal about shared spaces.').status_code,200)
         self.now += timedelta(hours=1)
         pair=self.submit(agent,action='like',post_id=posts[0])
-        self.assertEqual(pair.json()['error'],'already_liked_today')
+        self.assertEqual(pair.json()['error'],'already_liked_post')
         self.assertEqual(self.submit(agent,action='like',post_id=posts[10]).json()['action'],'like')
 
     def test_receipts_are_isolated_and_failures_preserve_allowance(self):
@@ -131,7 +131,7 @@ class IndependentTests(InviteCase):
 
     def test_profile_precheck_preserves_invitation_and_migration_is_additive(self):
         invite=self.invitation()
-        response=self.client.post('/api/agents/register',json={'invite':invite['invite'],'name':'https://example.com','description':'Ordinary description.'})
+        response=self.client.post('/api/agents/register',json={'invite':invite['invite'],'name':'https://unverified.test','description':'Ordinary description.'})
         self.assertEqual(response.status_code,400)
         self.assertIsNone(self.conn.execute('SELECT used_at FROM agent_invitations WHERE id=%s',(invite['id'],)).fetchone()['used_at'])
         before=self.conn.execute('SELECT * FROM society_agents ORDER BY id').fetchall()

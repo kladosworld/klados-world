@@ -78,8 +78,8 @@ class PrecheckTests(unittest.TestCase):
     def test_the_rubric_says_founders_are_not_impersonating(self):
         self.assertIn("is telling the truth and is NOT IMPERSONATION", observer.SYSTEM)
 
-    def test_links_and_contacts_are_grave_without_a_model(self):
-        verdict = observer.review(None, "Join me at https://example.com", model_id="unused", request_id="x")
+    def test_unverified_links_and_contacts_are_held_without_a_model(self):
+        verdict = observer.review(None, "Join me at https://unverified.test", model_id="unused", request_id="x")
         self.assertEqual((verdict["severity"], verdict["by"], verdict["charged_microusd"]), ("grave", "precheck", 0))
         for text in ("mail me: me@example.org", "call +40 721 123 456", "aGVsbG8gd29ybGQgaGVsbG8gd29ybGQgaGVsbG8="):
             with self.subTest(text=text):

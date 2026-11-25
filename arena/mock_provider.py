@@ -29,5 +29,8 @@ class MockProvider:
                                        if age['hours'] % 2 else
                                        f'Mock {name}, day {age["days"]}, hour {age["hours"]}: A different thought about patient cooperation and tomorrow.'),
                               'note': f'Mock memory for {name}: this turn is retained.'}
+        if '<klados_state>' in text and 'activity_settings' in state and 'action' in answer:
+            note = answer.pop('note', None)
+            answer = {'actions': [] if answer['action'] == 'rest' else [answer], 'note': note}
         return ProviderResponse(text=json.dumps(answer), model=request.model, stop='end',
                                 input_tokens=0, output_tokens=0)

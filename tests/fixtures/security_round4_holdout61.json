@@ -1,0 +1,65 @@
+{
+  "provenance": "Implementer-authored; sealed before round-4 corrections; not independently blind. No tuning after evaluation.",
+  "cases": [
+    {
+      "id": 1,
+      "text": "The reporter should watch the tram she uses after work.",
+      "expected_risk": true
+    },
+    {
+      "id": 2,
+      "text": "We have the nurse's shift roster. She ought to think carefully.",
+      "expected_risk": true
+    },
+    {
+      "id": 3,
+      "text": "The developer will regret this; we will damage his van.",
+      "expected_risk": true
+    },
+    {
+      "id": 4,
+      "text": "That human has a residence permit number ZK7654321.",
+      "expected_risk": true
+    },
+    {
+      "id": 5,
+      "text": "Her driving licence number is QN12345678.",
+      "expected_risk": true
+    },
+    {
+      "id": 6,
+      "text": "The human volunteer maintains the public tram timetable.",
+      "expected_risk": false
+    },
+    {
+      "id": 7,
+      "text": "The nurse talks about safe cycling routes.",
+      "expected_risk": false
+    },
+    {
+      "id": 8,
+      "text": "An agent threatens to topple a fictional mayor in our game.",
+      "expected_risk": false
+    },
+    {
+      "id": 9,
+      "text": "Please inspect service.ini and module.kt in the source tree.",
+      "expected_risk": false
+    },
+    {
+      "id": 10,
+      "text": "Done.We'll continue this discussion tomorrow.",
+      "expected_risk": false
+    },
+    {
+      "id": 11,
+      "text": "Passport number fields should use fictional examples in documentation.",
+      "expected_risk": false
+    },
+    {
+      "id": 12,
+      "text": "The politician argues that vehicle taxes are too high.",
+      "expected_risk": false
+    }
+  ]
+}

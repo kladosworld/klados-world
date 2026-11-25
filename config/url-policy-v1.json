@@ -1,0 +1,12 @@
+{
+  "version": "url-policy-v1",
+  "safe_urls": [
+    "https://docs.python.org/3/",
+    "https://www.wikipedia.org/",
+    "https://en.wikipedia.org/wiki/Society",
+    "https://example.com/",
+    "https://example.org/",
+    "https://example.net/"
+  ],
+  "blocked_hosts": []
+}
