@@ -293,7 +293,14 @@ def _participation(conn, agent_id):
 def _institution_rows(conn, kind, identifier=None):
     """Only cleared, current-era, verified public sources. Never SELECT private text."""
     if kind == 'organizations':
-        query = '''SELECT DISTINCT o.id,o.name,o.charter_text,o.charter_version,o.join_policy,
+        query = '''SELECT DISTINCT o.id,o.name,
+            CASE WHEN o.charter_version=1 OR EXISTS (
+                SELECT 1 FROM society_institution_texts amendment JOIN visible_posts source ON source.id=amendment.post_id
+                WHERE amendment.object_kind='proposal' AND amendment.action='org_propose'
+                AND amendment.clearance='cleared' AND amendment.object_id::text=(
+                    SELECT e.data->>'proposal_id' FROM society_org_events e WHERE e.org_id=o.id
+                    AND e.kind='charter_amended' ORDER BY e.id DESC LIMIT 1))
+                THEN o.charter_text ELSE NULL END AS charter_text,o.charter_version,o.join_policy,
             o.created_by,o.created_tick,o.activated_tick,o.status
             FROM society_organizations o JOIN society_institution_texts t
             ON t.object_kind='organization' AND t.object_id=o.id AND t.action='org_found'

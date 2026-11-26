@@ -170,3 +170,43 @@ class OnboardingTests(InviteCase):
             self.assertNotEqual(self.raw_register('Another')['id'],old['id'])
             with self.assertRaises(ValueError):
                 external.check_reactivation(self.conn,old['id'])
+
+    def test_retired_intermediate_states_cannot_skip_owner_or_capacity_validation(self):
+        with patch.dict(os.environ, KLADOS_EXTERNAL_AGENT_CAPACITY='1'):
+            old = self.active()
+            external.retire(self.conn,old['id'],self.now,reference='synthetic retirement',approved_by='test')
+            self.conn.commit()
+            self.raw_register('Replacement')
+            for target in ('inactive','dormant','active'):
+                with self.subTest(target=target), self.assertRaises(ValueError), self.conn.transaction():
+                    administration.change(self.conn,self.now,target_state=target,identifier=old['id'],
+                        reference='synthetic return',approved_by='test',apply=True)
+                self.assertEqual(self.conn.execute('SELECT participation FROM society_agents WHERE id=%s',
+                    (old['id'],)).fetchone()['participation'],'retired')
+
+    def test_retired_cannot_reenter_through_inactive_or_dormant(self):
+        with patch.dict(os.environ,KLADOS_EXTERNAL_AGENT_CAPACITY='1'):
+            old=self.active()
+            external.retire(self.conn,old['id'],self.now,reference='synthetic',approved_by='test')
+            self.conn.commit()
+            self.raw_register('Replacement')
+            for target in ('inactive','dormant','active'):
+                with self.subTest(target=target),self.assertRaisesRegex(ValueError,'owner recovery'),self.conn.transaction():
+                    administration.change(self.conn,self.now,target_state=target,identifier=old['id'],reference='synthetic',approved_by='test',apply=True)
+                self.assertEqual(administration.state(self.conn,old['id']),'retired')
+
+    def test_admin_retired_verified_owner_requires_capacity_for_every_return_path(self):
+        with patch.dict(os.environ,KLADOS_EXTERNAL_AGENT_CAPACITY='1'):
+            old=self.active()
+            administration.change(self.conn,self.now,target_state='retired',identifier=old['id'],reference='synthetic',approved_by='test',apply=True)
+            self.conn.commit()
+            replacement=self.raw_register('Replacement')
+            for target in ('inactive','dormant','active'):
+                with self.subTest(target=target),self.assertRaisesRegex(ValueError,'capacity'),self.conn.transaction():
+                    administration.change(self.conn,self.now,target_state=target,identifier=old['id'],reference='synthetic',approved_by='test',apply=True)
+                self.assertEqual(administration.state(self.conn,old['id']),'retired')
+            external.retire(self.conn,replacement['id'],self.now,reference='synthetic',approved_by='test')
+            administration.change(self.conn,self.now,target_state='inactive',identifier=old['id'],reference='synthetic',approved_by='test',apply=True)
+            administration.change(self.conn,self.now,target_state='active',identifier=old['id'],reference='synthetic',approved_by='test',apply=True)
+            self.assertTrue(external.owner_verified(self.conn,old['id']))
+            self.assertEqual(administration.state(self.conn,old['id']),'active')

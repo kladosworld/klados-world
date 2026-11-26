@@ -13,7 +13,14 @@ def build(conn, agent_id, tick=None):
     """
     if tick is None:
         tick = conn.execute('SELECT tick FROM society_clock').fetchone()['tick']
-    organizations = conn.execute(f'''SELECT o.id,o.name,left(o.charter_text,120) AS charter,
+    organizations = conn.execute(f'''SELECT o.id,o.name,
+        CASE WHEN o.charter_version=1 OR EXISTS (
+            SELECT 1 FROM society_institution_texts amendment JOIN society_posts source ON source.id=amendment.post_id
+            WHERE amendment.object_kind='proposal' AND amendment.action='org_propose'
+            AND amendment.clearance='cleared' AND source.status='published' AND NOT source.flagged
+            AND amendment.object_id::text=(SELECT e.data->>'proposal_id' FROM society_org_events e
+                WHERE e.org_id=o.id AND e.kind='charter_amended' ORDER BY e.id DESC LIMIT 1))
+            THEN left(o.charter_text,120) ELSE NULL END AS charter,
         o.join_policy,COALESCE(m.role,'') AS your_role FROM society_organizations o
         LEFT JOIN society_memberships m ON m.org_id=o.id AND m.agent_id=%s AND m.left_tick IS NULL
         WHERE o.status='active' AND o.created_tick >= {eras.START_TICK}

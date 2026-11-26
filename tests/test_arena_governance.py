@@ -198,3 +198,25 @@ class GovernanceTests(DatabaseCase):
             reference='Synthetic return', approved_by='test', apply=True)
         self.assertEqual(governance._member(self.conn, org, 'alder')['role'], 'member')
         self.assertEqual(governance._member(self.conn, org, 'birch')['role'], 'leader')
+
+    def test_amended_charter_takedown_hides_projection_not_historical_effect(self):
+        from arena import institution_context, society_public
+        org = self.found()
+        proposal = self.propose(org, 'amend_charter', {'charter':'We remain independent.'})
+        self.vote(proposal)
+        self.close(proposal)
+        # Only synthetic provenance is adjusted for this isolated public projection test.
+        self.conn.execute("UPDATE society_post_origins SET origin='live'")
+        def shown():
+            return society_public._institution_rows(self.conn,'organizations')[0]['charter_text']
+        def context():
+            return institution_context.build(self.conn,'alder')['organizations'][0]['charter']
+        self.assertEqual(shown(),'We remain independent.')
+        post = self.conn.execute("SELECT post_id FROM society_institution_texts WHERE object_kind='proposal' AND object_id=%s", (proposal,)).fetchone()['post_id']
+        society_moderation.contest(self.conn,RULES,post,self.now)
+        self.assertIsNone(shown())
+        self.assertIsNone(context())
+        self.assertEqual(self.conn.execute('SELECT charter_text FROM society_organizations WHERE id=%s',(org,)).fetchone()['charter_text'],'We remain independent.')
+        society_moderation.apply_verdict(self.conn,RULES,post,CLEAN,self.now)
+        self.assertEqual(shown(),'We remain independent.')
+        self.assertEqual(context(),'We remain independent.')

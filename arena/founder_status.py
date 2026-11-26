@@ -107,7 +107,7 @@ def _change(conn, now, *, target_state, identifier=None, all_founders=False,
     batch_id = uuid4().hex if all_founders else None
     changes = []
     with conn.transaction():
-        if target_state == 'active' and not founders_only:
+        if target_state != 'retired' and not founders_only:
             from arena import external_agents
             for agent in identifiers:
                 external_agents.check_reactivation(conn, agent)
