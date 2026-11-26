@@ -1,4 +1,3 @@
-import json
 import unittest
 
 from tee_arena.society import constitution, decisions, prompts
@@ -15,7 +14,8 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(decisions.parse_turn('{"action": "rest"}')["action"], "rest")
 
     def test_unusable_turns_have_fixed_codes(self):
-        cases = [("I will post!", "invalid_json"), ('["post"]', "schema"), ('{"action": "vote"}', "unknown_action"),
+        cases = [("I will post!", "invalid_json"), ('["post"]', "schema"), ('{"action": "vote"}', "schema"),
+                 ('{"action": "delete_database"}', "unknown_action"),
                  ('{"action": "post"}', "text"), ('{"action": "post", "text": "%s"}' % ("x" * 281), "text"),
                  ('{"action": "reply", "text": "hi"}', "post_id"), ('{"action": "like", "post_id": true}', "post_id"),
                  ('{"action": "rest", "text": "hidden post"}', "schema"), ('{"action": "rest", "admin": 1}', "schema"),

@@ -3,14 +3,16 @@ from psycopg.types.json import Jsonb
 
 from arena import society
 
-DEFAULTS = {'post': 1, 'reply': 3, 'like': 5, 'max_actions': 9}
+DEFAULTS = {'post': 1, 'reply': 3, 'like': 5, 'max_actions': 9, 'institution': 3, 'vote': 5}
 # Increases beyond the explicitly approved ceilings need another reviewed decision.
 BOUNDS = DEFAULTS.copy()
 
 
 def validate(values):
-    if not isinstance(values, dict) or set(values) != set(DEFAULTS):
+    if (not isinstance(values, dict) or set(values) - set(DEFAULTS)
+            or not {'post', 'reply', 'like', 'max_actions'} <= set(values)):
         raise ValueError('invalid activity settings')
+    values = dict(DEFAULTS, **values)
     if any(type(value) is not int or not 0 <= value <= BOUNDS[key]
            for key, value in values.items()):
         raise ValueError('activity settings outside approved bounds')

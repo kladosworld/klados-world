@@ -88,6 +88,12 @@ def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post
         with conn.transaction():  # savepoint: a refused action leaves nothing behind
             _alive_agent(conn, agent_id)
             action = decision["action"]
+            from tee_arena.society.decisions import INSTITUTION_ACTIONS
+            if action in INSTITUTION_ACTIONS:
+                from arena import institutions
+                return dict(action=action, **institutions.apply(
+                    conn, rules, agent_id, tick, decision, now,
+                    action_key=action_key, origin=post_origin, limits=limits))
             activity_limits.check(conn, rules, agent_id, action, now, limits=limits)
             if action in ("post", "reply"):
                 reply_to = _post(conn, decision["post_id"])["id"] if action == "reply" else None

@@ -44,8 +44,30 @@ def check(conn, rules, agent_id, action, now, *, limits=None):
         query = """SELECT created_at FROM society_likes WHERE from_kind='agent'
             AND from_id=%s AND created_at>%s ORDER BY created_at DESC OFFSET %s LIMIT 1"""
         row = conn.execute(query, (agent_id, cutoff, limit - 1)).fetchone()
+    elif action in ('institution', 'vote'):
+        if action == 'vote':
+            query = '''SELECT created_at FROM society_votes WHERE voter_id=%s AND created_at>%s
+                ORDER BY created_at DESC OFFSET %s LIMIT 1'''
+        else:
+            # Link rows reserve an institutional allowance even during moderation.
+            # Later effect events with the same action_key never count twice.
+            query = '''SELECT min(created_at) AS created_at FROM (
+                SELECT action_key, created_at FROM society_institution_texts WHERE actor_id=%s
+                UNION ALL SELECT action_key,created_at FROM society_trust WHERE from_id=%s
+                UNION ALL SELECT action_key,created_at FROM society_org_events
+                    WHERE actor_id=%s AND action_key IS NOT NULL
+                UNION ALL SELECT action_key,created_at FROM society_commitment_events
+                    WHERE actor_id=%s AND action_key IS NOT NULL
+                UNION ALL SELECT action_key,created_at FROM society_case_entries
+                    WHERE actor_id=%s AND action_key IS NOT NULL
+                ) actions GROUP BY action_key HAVING min(created_at)>%s
+                ORDER BY created_at DESC OFFSET %s LIMIT 1'''
+        params = (agent_id, cutoff, limit - 1) if action == 'vote' else (
+            agent_id, agent_id, agent_id, agent_id, agent_id, cutoff, limit - 1)
+        row = conn.execute(query, params).fetchone()
     else:
         query = """SELECT created_at FROM society_posts WHERE author_id=%s AND created_at>%s
+            AND NOT EXISTS (SELECT 1 FROM society_institution_texts i WHERE i.post_id=society_posts.id)
             AND (reply_to IS NOT NULL)=%s ORDER BY created_at DESC OFFSET %s LIMIT 1"""
         row = conn.execute(
             query, (agent_id, cutoff, action == "reply", limit - 1)

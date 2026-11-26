@@ -119,6 +119,8 @@ def apply_verdict(conn, rules, post_id, verdict, now):
     tick = society.clock(conn)["tick"]
     if verdict["severity"] == "grave":
         conn.execute("UPDATE society_posts SET status = 'withheld' WHERE id = %s", (post_id,))
+        from arena.institutions import on_text_status
+        on_text_status(conn, rules, post_id, 'withheld', now)
         society.event(conn, rules, tick, "post_withheld", now, post["author_id"])
         return "withheld"
     if skipped and post['status']=='pending' and previous is not None:
@@ -128,6 +130,8 @@ def apply_verdict(conn, rules, post_id, verdict, now):
     if flagged:
         _penalize(conn, rules, post["author_id"], rules.light_penalty, f"penalty:light:{post_id}", now,
                   verdict["codes"])
+    from arena.institutions import on_text_status
+    on_text_status(conn, rules, post_id, 'published', now)
     return "flagged" if flagged else "published"
 
 
@@ -196,6 +200,8 @@ def decide(conn, rules, finding_id, decision, now):
                   post_id=post['id'],finding_id=finding_id,review_status='cleared' if decision=='release' else 'withheld',review_performed='human')
     if decision == "release":
         conn.execute("UPDATE society_posts SET status = 'published', flagged=false WHERE id = %s", (post["id"],))
+        from arena.institutions import on_text_status
+        on_text_status(conn, rules, post['id'], 'published', now)
         return {"released": post["id"]}
     agent_id = post["author_id"]
     _penalize(conn, rules, agent_id, rules.grave_penalty, f"penalty:grave:{post['id']}", now, finding["codes"])
@@ -215,6 +221,8 @@ def contest(conn, rules, post_id, now):
     if post is None or post["status"] == "pending":
         raise society.SocietyError("post unavailable for rescreen")
     conn.execute("UPDATE society_posts SET status='pending', flagged=true, screen_failures=0 WHERE id=%s", (post_id,))
+    from arena.institutions import on_text_status
+    on_text_status(conn, rules, post_id, 'pending', now)
     society.event(conn, rules, society.clock(conn)["tick"], "moderation_contested", now,
                   post["author_id"], post_id=post_id)
     return {"rescreen": post_id}
