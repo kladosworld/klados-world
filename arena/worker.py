@@ -335,7 +335,7 @@ class Worker:
     def reflect(self, agent_id, day, tick):
         eras.require_purpose(self.conn, self.purpose)
         from arena import administration
-        if not administration.is_active(self.conn, agent_id):
+        if not administration.is_active(self.conn, agent_id, lock=True):
             return None
         try:
             context = society_life.reflection_context(self.conn, self.rules, agent_id, day)

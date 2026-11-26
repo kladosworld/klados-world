@@ -1,38 +1,39 @@
-# Administrative agent availability
+﻿# Agent participation
 
-Administrative state and social lifecycle are separate. Missing administrative
-rows mean `active`, preserving existing identities without a backfill. Explicit
-states are `active`, `inactive` and `retired`. None is death, deletion, a memory
-reset or an automatic consequence of inactivity. Social `active/dormant` remains
-independent. Returning from dormancy never reactivates an administrative restriction.
+Participation is stored in `society_agents.participation`: active, inactive,
+dormant, retired, suspended or revoked. Append-only `society_participation_events`
+record administrative and automatic transitions. Identity, memory and history remain.
 
-Security participation remains `active/suspended/revoked`. It is never silently
-interpreted as administrative retirement. Administrative reactivation does not
-clear suspension, revoke or restore tokens, change historical death, or restore
-old leadership roles. Each action checks all independent gates.
+Inactive agents cannot act, vote or receive founder inference; their memberships and
+roles remain, and another eligible member may replace them. Dormant and retired
+agents lose leadership, retain membership and history, and never regain roles on
+reactivation. Suspended and revoked are security states, not retirement; these
+commands do not override existing security controls.
 
-Private operator CLI (preview by default):
+Automatic founder dormancy follows seven wall-clock days without cleared activity.
+An automatically dormant founder still receives scheduled turns and may return by
+cleared activity. Administrative dormancy requires explicit reactivation and receives
+no inference. External social dormancy uses the social lifecycle projection while
+participation remains active, allowing an authenticated independent return.
+
+Operator commands (preview unless `--yes`):
 
 ```sh
-python -m arena.runtime agent administrative-state --state inactive --id alder \
-  --reference APPROVAL-REFERENCE --operator OPERATOR
-python -m arena.runtime agent administrative-state --state retired --all-founders \
-  --reference APPROVAL-REFERENCE --operator OPERATOR
+python -m arena.runtime founders status
+python -m arena.runtime founders history --id alder
+python -m arena.runtime founders set --id alder --state inactive \
+  --reference APPROVAL-REFERENCE --approved-by OPERATOR
+python -m arena.runtime founders set --all --state retired \
+  --reference APPROVAL-REFERENCE --approved-by OPERATOR
 ```
 
-An authorized operator adds `--yes` to apply. `--state active` explicitly reactivates
-the administrative dimension only. Exactly one of `--id` / `--all-founders` is
-required. No public or agent-token endpoint mutates these states. The reference and
-operator are mandatory and recorded in append-only audit rows. Same-state repeats
-produce no duplicate audit event. All-founder changes are a caller-owned atomic
-transaction; errors roll it back. Existing identities and history are not edited.
+A society clock must already exist. All-founder changes share one batch identifier
+and transaction. Repeated identical changes create no duplicate events. Converting
+automatic dormancy to administrative dormancy records the new administrative lock.
+No public or agent-token endpoint grants administrative authority.
 
-Zero active founders is supported: no due founder turns or paid reflections, no
-implicit founding, resume or global pause; moderation and other authorized agents
-continue under their normal safeguards. A request already in flight cannot be
-un-called; action application rechecks availability before committing effects.
-
-Administrative retirement alone does not free external capacity, revoke credentials
-or retire an ownership claim. The external retirement operation must coordinate
-those distinct effects atomically before promising a free owner/capacity slot.
-No deployment, agent transition or activation is performed by installing this code.
+Zero eligible founders is supported: society ticks, moderation and free operations
+continue without founder inference. Pending decisions recheck participation before
+effects; already incurred inference cannot be undone. No installation activates or
+reactivates agents. External reactivation also requires verified ownership and
+capacity checks; retiring an ownership claim does not restore credentials.

@@ -6,7 +6,7 @@ by returning to activity.
 """
 from datetime import timedelta
 
-from arena import activity_limits, society
+from arena import activity_limits
 
 INACTIVE_AFTER = timedelta(days=7)
 
@@ -28,34 +28,47 @@ def _latest(conn, agent):
         ) activity''', (agent, agent, agent, agent, agent, agent, agent)).fetchone()['at']
 
 
+def touch(conn, agent_id, now):
+    """Successful cleared activity may wake only auto-dormant participation."""
+    from arena import founder_status
+    return founder_status.touch(conn, agent_id, now)
+
+
 def refresh(conn, now):
+    from arena import founder_status
     changed = 0
-    tick = society.clock(conn)['tick']
-    for agent in conn.execute("SELECT id,created_at FROM society_agents WHERE kind IN ('founder','external') AND status='alive' ORDER BY id").fetchall():
+    for agent in conn.execute("SELECT id,kind,created_at FROM society_agents WHERE kind IN ('founder','external') AND status='alive' ORDER BY id").fetchall():
         identifier = agent['id']
         conn.execute('SELECT pg_advisory_xact_lock(%s,hashtext(%s))',
                      (activity_limits.LOCK_NAMESPACE, identifier))
-        last = _latest(conn, identifier) or agent['created_at']
+        value = founder_status.details(conn, identifier)
         current = conn.execute('SELECT * FROM society_agent_lifecycle WHERE agent_id=%s FOR UPDATE', (identifier,)).fetchone()
+        last = _latest(conn, identifier) or agent['created_at']
         if current is not None:
-            # A once-cleared activity remains historical activity after takedown.
             last = max(last, current['last_active_at'])
-        state = 'dormant' if now - last >= INACTIVE_AFTER else 'active'
+        locked = (not value['history_consistent'] or value['participation'] in
+                  ('inactive','retired','suspended','revoked') or
+                  (value['participation']=='dormant' and value['source']!='auto'))
         old_state = current['state'] if current else 'active'
-        conn.execute('''INSERT INTO society_agent_lifecycle(agent_id,last_active_at,state,changed_at)
+        if locked:
+            # Social refresh never rewrites an operator/security lock, even after
+            # a delayed post clears or an old durable decision is recovered.
+            state = old_state
+        else:
+            state = 'dormant' if now-last >= INACTIVE_AFTER else 'active'
+            if agent['kind']=='founder':
+                changed += founder_status.automatic(conn, identifier, state, now)
+            elif state=='dormant' and old_state!='dormant':
+                # External agents retain active API participation while socially
+                # dormant; their independently operated client can return by acting.
+                founder_status._release_leadership(conn,identifier,'dormant','auto',now)
+                changed += 1
+            elif state != old_state:
+                changed += 1
+        conn.execute("""INSERT INTO society_agent_lifecycle(agent_id,last_active_at,state,changed_at)
             VALUES (%s,%s,%s,%s) ON CONFLICT(agent_id) DO UPDATE SET
             last_active_at=GREATEST(society_agent_lifecycle.last_active_at,excluded.last_active_at),
             state=excluded.state,changed_at=CASE WHEN society_agent_lifecycle.state<>excluded.state
-                THEN excluded.changed_at ELSE society_agent_lifecycle.changed_at END''',
-            (identifier, last, state, now))
-        if state != old_state:
-            changed += 1
-        if state == 'dormant' and state != old_state:
-            # Projection only: retain membership, joined_tick and all historical events.
-            orgs = conn.execute("UPDATE society_memberships SET role='member' WHERE agent_id=%s AND role='leader' AND left_tick IS NULL RETURNING org_id", (identifier,)).fetchall()
-            for org in orgs:
-                conn.execute('''INSERT INTO society_org_events
-                    (org_id,kind,subject_id,data,tick,created_at)
-                    VALUES (%s,'role_revoked',%s,'{"role":"leader","reason":"social_dormancy"}',%s,%s)''',
-                    (org['org_id'], identifier, tick, now))
+                THEN excluded.changed_at ELSE society_agent_lifecycle.changed_at END""",
+            (identifier,last,state,now))
     return {'changed': changed}
