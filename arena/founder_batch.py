@@ -31,7 +31,7 @@ def execute(conn, rules, agent_id, tick, now):
         return 'failed'
     limits = private['settings']['values']
     try:
-        society_life._alive_agent(conn, agent_id)
+        society_life._alive_agent(conn, agent_id, acting=True)
     except society.SocietyError:
         private.update(phase='expired', error='participation_unavailable')
         conn.execute('''UPDATE society_turns SET status='failed', action='rest', private=%s

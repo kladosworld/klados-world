@@ -27,15 +27,18 @@ def _hash(action):
 
 
 def _active(conn, agent_id):
+    from arena import administration
     row = conn.execute('SELECT kind,status,participation FROM society_agents WHERE id=%s',
                        (agent_id,)).fetchone()
     if row is None or row['kind'] not in society.LIVING_KINDS or row['status'] != 'alive' or row['participation'] != 'active':
+        raise society.SocietyError('not_alive')
+    if not administration.is_active(conn, agent_id, lock=True):
         raise society.SocietyError('not_alive')
 
 
 def _receipt(conn, action_key):
     return conn.execute('''SELECT i.actor_id,i.request_hash,i.object_kind AS object,i.object_id AS id,
-        CASE WHEN i.object_kind='organization' THEN o.status ELSE i.clearance END AS state
+        CASE WHEN i.object_kind='organization' AND i.action='org_found' THEN o.status ELSE i.clearance END AS state
         FROM society_institution_texts i LEFT JOIN society_organizations o
         ON i.object_kind='organization' AND o.id=i.object_id WHERE i.action_key=%s
         UNION ALL SELECT from_id,request_hash,'trust',id,'private'
@@ -94,24 +97,41 @@ def _trust(conn, agent, tick, action, now, key, request_hash):
 
 
 def _found(conn, rules, agent, tick, action, now, key, request_hash, origin):
-    from arena import society_moderation
     text = action['name'] + '\n' + action['charter']
-    if len(text) > decisions.MAX_POST:
-        # The approved DDL-only migration cannot relax the existing 280-character
-        # CHECK. Never truncate, split moderation context, or partially create an org.
-        return {'error': 'institution_text_storage_limit'}
     row = conn.execute('''INSERT INTO society_organizations
         (name,charter_text,join_policy,default_rule,created_by,created_tick)
         VALUES (%s,%s,%s,%s,%s,%s) RETURNING id''',
         (action['name'], action['charter'], action['join_policy'], Jsonb(action['default_rule']), agent, tick)).fetchone()
     object_id = row['id']
-    # Moderate name and charter together, without silently truncating/splitting.
+    submit_text(conn, rules, agent, tick, action, 'organization', object_id, text, now,
+                action_key=key, origin=origin, request_hash=request_hash)
+    state = conn.execute('SELECT status FROM society_organizations WHERE id=%s', (object_id,)).fetchone()['status']
+    return {'object': 'organization', 'id': object_id, 'state': state}
+
+
+def submit_text(conn, rules, agent, tick, action, object_kind, object_id, text, now, *,
+                action_key, origin, request_hash):
+    """Shared W1/W2 text intake; authorizing executor creates its object first.
+
+    Full text, provenance, object linkage, quota identity and initial moderation
+    share the caller's transaction. Deferred DB guards verify owner/link integrity.
+    """
+    from arena import society_moderation
+    action = decisions.validate_institution(action)
+    _active(conn, agent)
+    maximum = 2061 if action['action'] == 'org_found' else 2000
+    if not isinstance(text, str) or not 1 <= len(text) <= maximum:
+        raise society.SocietyError('institution_text_limit')
     post = conn.execute('''INSERT INTO society_posts(author_id,tick,text,created_at)
         VALUES (%s,%s,%s,%s) RETURNING id''', (agent, tick, text, now)).fetchone()['id']
     conn.execute('''INSERT INTO society_institution_texts
-        (post_id,object_kind,object_id,actor_id,action,action_key,request_hash,tick,created_at)
-        VALUES (%s,'organization',%s,%s,'org_found',%s,%s,%s,%s)''',
-        (post, object_id, agent, key, request_hash, tick, now))
+        (post_id,object_kind,object_id,actor_id,action,action_key,request_hash,tick,created_at,intent)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+        (post, object_kind, object_id, agent, action['action'], action_key, request_hash, tick, now,
+         Jsonb({'public_text': text, 'action': action})))
+    # Check now as well as at commit: a programming error cannot spend moderation
+    # budget or expose a text before its author/object association is verified.
+    conn.execute('SELECT society_check_institution_text(%s)', (post,))
     if origin is not None:
         conn.execute('INSERT INTO society_post_origins(post_id,origin,created_at) VALUES (%s,%s,%s)',
                      (post, origin, now))
@@ -125,8 +145,7 @@ def _found(conn, rules, agent, tick, action, now, key, request_hash, origin):
         conn.execute('''UPDATE society_posts SET status='pending' WHERE id=%s AND status='published'
             AND EXISTS (SELECT 1 FROM society_institution_texts WHERE post_id=%s AND clearance<>'cleared')''',
             (post, post))
-    state = conn.execute('SELECT status FROM society_organizations WHERE id=%s', (object_id,)).fetchone()['status']
-    return {'object': 'organization', 'id': object_id, 'state': state}
+    return post
 
 
 def on_text_status(conn, rules, post_id, status, now):
@@ -163,7 +182,10 @@ def on_text_status(conn, rules, post_id, status, now):
         if cleared and not founded:
             actor = conn.execute('SELECT status,participation FROM society_agents WHERE id=%s',
                                  (link['actor_id'],)).fetchone()
-            if org['status'] == 'dissolved' or actor['status'] != 'alive' or actor['participation'] != 'active':
+            from arena import administration
+            if (org['status'] == 'dissolved' or actor['status'] != 'alive'
+                    or actor['participation'] != 'active'
+                    or not administration.is_active(conn, link['actor_id'], lock=True)):
                 cleared = False
                 clearance = 'withheld'
         state = 'active' if cleared else 'withheld' if clearance == 'withheld' else 'pending_clearance'

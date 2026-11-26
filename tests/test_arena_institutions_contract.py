@@ -104,10 +104,40 @@ class InstitutionTests(DatabaseCase):
         # Three text receipts + three activation events are three actions, not six.
         self.conn.commit()
 
-    def test_long_charter_storage_conflict_fails_closed_without_rows(self):
-        self.assertEqual(self.perform(dict(FOUND, charter='x'*2000))['error'], 'institution_text_storage_limit')
-        self.assertIsNone(self.conn.execute('SELECT 1 FROM society_organizations').fetchone())
-        self.assertIsNone(self.conn.execute('SELECT 1 FROM society_posts').fetchone())
+    def test_long_charter_full_text_clearance_and_ordinary_limit(self):
+        from arena import risk_gate
+        body = ('A shared idea for everyone. ' * 100)[:2000]
+        seen = []
+        safe = risk_gate.classify('An ordinary text.')
+        def classify(text):
+            seen.append(text)
+            return safe
+        with patch.object(risk_gate, 'classify', side_effect=classify):
+            result = self.perform(dict(FOUND, charter=body))
+        self.assertEqual(result['state'], 'active')
+        self.assertEqual(seen, [FOUND['name']+'\n'+body])
+        self.assertEqual(self.conn.execute('SELECT text FROM society_posts').fetchone()['text'], seen[0])
+        self.conn.commit()  # deferred integrity guard runs at actual commit
+        for reply_to in (None, self.link()['post_id']):
+            with self.subTest(reply=reply_to), self.assertRaises(Exception), self.conn.transaction():
+                self.conn.execute("INSERT INTO society_posts(author_id,tick,text,reply_to,created_at) VALUES ('birch',0,%s,%s,%s)", ('x'*281, reply_to, NOW))
+                self.conn.execute('SET CONSTRAINTS ALL IMMEDIATE')
+        self.conn.commit()
+        self.assertIn('post_id', self.perform({'action':'post','text':'Ordinary allowance remains available.'}, key='ordinary'))
+
+    def test_long_text_bad_owner_or_removed_link_cannot_bypass_constraints(self):
+        from arena import risk_gate
+        body = ('A shared idea. '*150)[:2000]
+        with patch.object(risk_gate, 'classify', return_value=risk_gate.classify('An ordinary text.')):
+            org = self.perform(dict(FOUND, charter=body))['id']
+        self.conn.commit()
+        with self.assertRaises(Exception), self.conn.transaction():
+            institutions.submit_text(self.conn, RULES, 'birch', 0, FOUND, 'organization', org,
+                'x'*300, NOW, action_key='fake-owner', origin='mock', request_hash='synthetic')
+        with self.assertRaises(Exception), self.conn.transaction():
+            self.conn.execute('DELETE FROM society_institution_texts')
+            self.conn.execute('SET CONSTRAINTS ALL IMMEDIATE')
+        self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_institution_texts').fetchone()['n'],1)
 
     def test_async_clearance_withholding_human_release_and_takedown(self):
         from arena import risk_gate
@@ -185,26 +215,55 @@ class InstitutionTests(DatabaseCase):
         self.assertEqual(limited['retry_after_seconds'], 1)
         self.assertEqual(self.perform(key='boundary', now=NOW+timedelta(hours=1))['state'], 'active')
 
+    def reset_to_previous_schema(self):
+        from pathlib import Path
+        self.conn.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(self.schema)))
+        self.conn.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(self.schema)))
+        self.conn.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(self.schema)))
+        self.conn.execute('CREATE TABLE arena_migrations(name text PRIMARY KEY)')
+        paths=sorted((Path(__file__).resolve().parents[1]/'arena/migrations').glob('*.sql'))
+        for path in paths:
+            if path.name >= '0028':
+                continue
+            self.conn.execute(path.read_text(encoding='utf-8'))
+            self.conn.execute('INSERT INTO arena_migrations VALUES (%s)', (path.name,))
+        society.found(self.conn, RULES, NOW)
+
     def test_migration_is_empty_idempotent_and_preserves_existing_data(self):
         from pathlib import Path
-        path = Path(__file__).resolve().parents[1]/'arena/migrations/0028_society_institutions.sql'
-        names = [r['tablename'] for r in self.conn.execute("SELECT tablename FROM pg_tables WHERE schemaname=%s", (self.schema,))]
         import re
-        new = re.findall(r'CREATE TABLE (\w+)', path.read_text())
-        for table in new:
-            self.assertEqual(self.conn.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table))).fetchone()['n'], 0)
-        self.conn.execute(sql.SQL('DROP TABLE {} CASCADE').format(sql.SQL(',').join(map(sql.Identifier, new))))
-        self.conn.execute('DELETE FROM arena_migrations WHERE name=%s', (path.name,))
+        path=Path(__file__).resolve().parents[1]/'arena/migrations/0028_society_institutions.sql'
+        self.reset_to_previous_schema()
         self.conn.execute("INSERT INTO society_notes(agent_id,tick,text,created_at) VALUES ('alder',0,'Private historical note',%s)", (NOW,))
-        self.conn.execute("INSERT INTO society_reflections(agent_id,day,outcome,private,created_at) VALUES ('alder',0,'kept','{\"memory\":\"historical\"}',%s)", (NOW,))
-        historical_post = self.conn.execute("INSERT INTO society_posts(author_id,tick,text,status,created_at) VALUES ('alder',0,'Historical contribution','published',%s) RETURNING *", (NOW,)).fetchone()
+        self.conn.execute("INSERT INTO society_reflections(agent_id,day,outcome,private,created_at) VALUES ('alder',0,'kept','{}',%s)", (NOW,))
+        historical_post=self.conn.execute("INSERT INTO society_posts(author_id,tick,text,status,created_at) VALUES ('alder',0,'Historical contribution','published',%s) RETURNING *", (NOW,)).fetchone()
         society_life._like(self.conn, RULES, 'birch', historical_post, 0, NOW)
-        original = {t: self.conn.execute(sql.SQL('SELECT to_jsonb(t) AS row FROM {} t').format(sql.Identifier(t))).fetchall()
-                    for t in names if t not in new and t != 'arena_migrations'}
+        names=[r['tablename'] for r in self.conn.execute('SELECT tablename FROM pg_tables WHERE schemaname=%s', (self.schema,)) if r['tablename']!='arena_migrations']
+        original={t:self.conn.execute(sql.SQL('SELECT to_jsonb(t) AS row FROM {} t ORDER BY to_jsonb(t)::text').format(sql.Identifier(t))).fetchall() for t in names}
         db.migrate(self.conn)
         db.migrate(self.conn)
-        for table, rows in original.items():
-            self.assertEqual(self.conn.execute(sql.SQL('SELECT to_jsonb(t) AS row FROM {} t').format(sql.Identifier(table))).fetchall(), rows)
+        for table,rows in original.items():
+            self.assertEqual(self.conn.execute(sql.SQL('SELECT to_jsonb(t) AS row FROM {} t ORDER BY to_jsonb(t)::text').format(sql.Identifier(table))).fetchall(),rows)
+        for table in re.findall(r'CREATE TABLE (\w+)',path.read_text()):
+            self.assertEqual(self.conn.execute(sql.SQL('SELECT count(*) AS n FROM {}').format(sql.Identifier(table))).fetchone()['n'],0)
+        locks=self.conn.execute("SELECT mode FROM pg_locks l JOIN pg_class c ON c.oid=l.relation WHERE l.pid=pg_backend_pid() AND c.relname='society_posts' AND l.granted").fetchall()
+        self.assertIn('AccessExclusiveLock',[r['mode'] for r in locks])
+
+    def test_migration_lock_timeout_rolls_back_without_data_or_constraint_changes(self):
+        self.reset_to_previous_schema()
+        self.conn.commit()
+        with db.connect(DSN) as reader:
+            reader.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(self.schema)))
+            reader.execute('SELECT count(*) FROM society_posts')
+            self.conn.execute("SET LOCAL lock_timeout='150ms'")
+            with self.assertRaises(Exception):
+                db.migrate(self.conn)
+            self.conn.rollback()
+        self.assertIsNone(self.conn.execute("SELECT 1 FROM arena_migrations WHERE name LIKE '0028%' ").fetchone())
+        self.assertIsNone(self.conn.execute("SELECT to_regclass('society_organizations') AS name").fetchone()['name'])
+        self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM society_agents WHERE kind='founder'").fetchone()['n'],4)
+        with self.assertRaises(Exception),self.conn.transaction():
+            self.conn.execute("INSERT INTO society_posts(author_id,tick,text,created_at) VALUES ('alder',0,%s,%s)",('x'*281,NOW))
 
     def test_scheduler_hooks_never_run_while_paused(self):
         with patch.object(institutions, 'close_due') as close, patch('arena.lifecycle.refresh') as refresh:

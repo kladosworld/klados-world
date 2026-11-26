@@ -22,10 +22,14 @@ def society_day(tick):
     return max(tick - 1, 0) // 24
 
 
-def _alive_agent(conn, agent_id):
+def _alive_agent(conn, agent_id, *, acting=False):
     row = conn.execute("SELECT * FROM society_agents WHERE id = %s", (agent_id,)).fetchone()
     if row is None or row["kind"] not in society.LIVING_KINDS or row["status"] != "alive" or row["participation"] != "active":
         raise society.SocietyError("not_alive")
+    if acting:
+        from arena import administration
+        if not administration.is_active(conn, agent_id, lock=True):
+            raise society.SocietyError('not_alive')
     return row
 
 
@@ -86,7 +90,7 @@ def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post
     outcome = {"action": decision["action"]}
     try:
         with conn.transaction():  # savepoint: a refused action leaves nothing behind
-            _alive_agent(conn, agent_id)
+            _alive_agent(conn, agent_id, acting=True)
             action = decision["action"]
             from tee_arena.society.decisions import INSTITUTION_ACTIONS
             if action in INSTITUTION_ACTIONS:
