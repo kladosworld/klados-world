@@ -70,8 +70,9 @@ class PromptCleanupTests(InviteCase):
         system, messages = compose(context)
         self.assertEqual(
             system,
-            constitution.TEXT + (prompts.REFLECTION_FORMAT if reflection else prompts.TURN_FORMAT)
-            + (prompts.INSTITUTION_GUIDANCE if 'institutions' in context else ''),
+            constitution.TEXT
+            + (prompts.REFLECTION_FORMAT if reflection else prompts.TURN_FORMAT)
+            + (prompts.INSTITUTION_GUIDANCE if "institutions" in context else ""),
         )
         content = messages[0]["content"]
         self.assertEqual(content.count("<klados_state>"), 1)
