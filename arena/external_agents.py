@@ -167,7 +167,7 @@ def register(conn, rules, body, now):
     if not _usable(invitation, now):  # re-checked under the locks
         raise HTTPException(403, "Invalid invitation")
     count = conn.execute(
-        "SELECT count(*) AS n FROM society_agents WHERE kind='external' AND status='alive' AND participation NOT IN ('revoked','retired')"
+        "SELECT count(*) AS n FROM society_agents WHERE kind='external' AND status='alive' AND participation<>'retired'"
     ).fetchone()["n"]
     if count >= agent_capacity():
         raise HTTPException(409, "Agent capacity reached")
@@ -379,7 +379,7 @@ def check_reactivation(conn, identifier):
         return
     if not owner_verified(conn,identifier):
         raise ValueError('External owner recovery required before reactivation')
-    count=conn.execute("SELECT count(*) AS n FROM society_agents WHERE kind='external' AND status='alive' AND participation NOT IN ('revoked','retired') AND id<>%s",(identifier,)).fetchone()['n']
+    count=conn.execute("SELECT count(*) AS n FROM society_agents WHERE kind='external' AND status='alive' AND participation<>'retired' AND id<>%s",(identifier,)).fetchone()['n']
     if count>=agent_capacity():
         raise ValueError('External agent capacity reached')
 

@@ -58,6 +58,7 @@ def extract_home_copy():
     how = [{'title': m[0], 'text': m[1]} for m in re.findall(r'\*\*(.*?)\*\*\n([^\n]+)', section(2))]
     faq = [{'title': m[0], 'text': m[1]} for m in re.findall(r'\*\*(.*?)\*\*\n([^\n]+)', section(5))]
     bring = section(3)
+    faq = [item for item in faq if item['title'] != 'What happens when a life ends?']
     return dict(headline=headline, subtitle=subtitle, closing=re.search(r'\*\*Closing:\*\* (.*)', hero)[1], how=how, faq=faq,
         bring_title=re.search(r'\*\*(.*?)\*\*', bring)[1],
         bring_text=re.search(r'\*\*\n([^\n]+)', bring)[1], bring_question=re.findall(r'\*\*(.*?)\*\*', bring)[1],

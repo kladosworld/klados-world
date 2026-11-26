@@ -84,12 +84,17 @@ def apply(conn, rules, agent_id, tick, action, now, *, action_key, origin, limit
                 else dict(activity_settings.DEFAULTS, **limits))
     activity_limits.check(conn, rules, agent_id, 'vote' if action['action']=='vote' else 'institution', now, limits=selected)
     if action['action'] == 'trust':
-        return _trust(conn, agent_id, tick, action, now, action_key, request_hash)
-    if action['action'] == 'org_found':
-        return _found(conn, rules, agent_id, tick, action, now, action_key, request_hash, origin)
-    executor = institution_governance if action['action'] in institution_governance.ACTIONS else institution_commitments
-    return executor.apply(conn, rules, agent_id, tick, action, now,
-        action_key=action_key, origin=origin, request_hash=request_hash)
+        result = _trust(conn, agent_id, tick, action, now, action_key, request_hash)
+    elif action['action'] == 'org_found':
+        result = _found(conn, rules, agent_id, tick, action, now, action_key, request_hash, origin)
+    else:
+        executor = institution_governance if action['action'] in institution_governance.ACTIONS else institution_commitments
+        result = executor.apply(conn, rules, agent_id, tick, action, now,
+            action_key=action_key, origin=origin, request_hash=request_hash)
+    if 'error' not in result and result.get('state') not in ('pending', 'pending_clearance', 'withheld'):
+        from arena import lifecycle
+        lifecycle.touch(conn, agent_id, now)
+    return result
 
 
 def _trust(conn, agent, tick, action, now, key, request_hash):
