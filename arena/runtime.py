@@ -17,10 +17,13 @@ def main(argv=None):
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
                                           'review', 'show', 'decide', 'invite', 'agent',
                                           'refresh-founders-v2', 'budget', 'cap', 'era', 'limits'])
-    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start', 'history', 'revert'])
+    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start', 'history', 'revert', 'administrative-state'])
     for name in ('post', 'reply', 'like', 'max-actions', 'expected-version', 'version'):
         parser.add_argument('--' + name, type=int)
     parser.add_argument('--id', dest='identifier')
+    parser.add_argument('--state', choices=['active', 'inactive', 'retired'])
+    parser.add_argument('--all-founders', action='store_true')
+    parser.add_argument('--operator')
     parser.add_argument('--ledger', default='/data/ledger.json')
     parser.add_argument('--cap-usd', default='1.00')
     parser.add_argument('--yes', action='store_true')
@@ -96,7 +99,12 @@ def main(argv=None):
                     raise ValueError('Invalid limits operation')
             elif args.command in ('invite', 'agent'):
                 from arena import external_agents
-                if args.command == 'invite' and args.operation == 'create':
+                if args.command == 'agent' and args.operation == 'administrative-state':
+                    from arena import administration
+                    result = administration.change(conn, now, target_state=args.state,
+                        identifier=args.identifier, all_founders=args.all_founders,
+                        reference=args.reference, approved_by=args.operator, apply=args.yes)
+                elif args.command == 'invite' and args.operation == 'create':
                     result = external_agents.create_invite(conn, now)
                 elif args.command == 'invite' and args.operation == 'list':
                     result = external_agents.list_invites(conn)

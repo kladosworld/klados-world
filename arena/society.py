@@ -206,7 +206,9 @@ def sync_descriptions(conn, now, descriptions=None):
     for agent_id, text in descriptions.items():
         filled += conn.execute("""UPDATE society_agents SET public_description = %s, description_updated_at = %s
                                   WHERE id = %s AND kind='founder' AND status='alive'
-                                  AND participation='active' AND public_description IS NULL""", (text, now, agent_id)).rowcount
+                                  AND participation='active' AND public_description IS NULL
+                                  AND NOT EXISTS (SELECT 1 FROM society_agent_administration admin
+                                      WHERE admin.agent_id=society_agents.id AND admin.state<>'active')""", (text, now, agent_id)).rowcount
     return filled
 
 
@@ -237,8 +239,16 @@ def refresh_founders_v2(conn, rules, now, *, apply=False):
             if row is None or row["kind"] != "founder" or row["name"] != name:
                 result["skipped"][identifier] = "identity_mismatch"
                 continue
-            if row["status"] != "alive" or row["participation"] != "active":
-                result["skipped"][identifier] = "retired"
+            if row["status"] != "alive":
+                result["skipped"][identifier] = "historical_death"
+                continue
+            if row["participation"] != "active":
+                result["skipped"][identifier] = "participation_unavailable"
+                continue
+            from arena import administration
+            administrative_state = administration.state(conn, identifier)
+            if administrative_state != 'active':
+                result['skipped'][identifier] = 'administratively_' + administrative_state
                 continue
             before = legacy[identifier]["personality"]
             after = current[identifier]["personality"]
@@ -318,6 +328,9 @@ def set_paused(conn, rules, paused, now, reason):
 def claim_turn(conn, agent_id, tick_number, now):
     """Claim an agent's turn for a tick exactly once. False if already claimed or not allowed."""
     now = _utc(now)
+    from arena import administration
+    if not administration.is_active(conn, agent_id, lock=True):
+        return False
     agent = conn.execute("SELECT kind, status, participation FROM society_agents WHERE id = %s", (agent_id,)).fetchone()
     if agent is None or agent["kind"] not in LIVING_KINDS or agent["status"] != "alive" or agent["participation"] != "active":
         return False
@@ -340,6 +353,8 @@ def due_turns(conn, now):
     return [row["id"] for row in conn.execute("""
         SELECT a.id FROM society_agents a
         WHERE a.kind = 'founder' AND a.status = 'alive' AND a.participation='active' AND a.turn_minute <= %s AND %s > COALESCE((SELECT started_tick FROM society_eras ORDER BY id DESC LIMIT 1), 0)
+          AND NOT EXISTS (SELECT 1 FROM society_agent_administration admin
+                          WHERE admin.agent_id=a.id AND admin.state<>'active')
           AND NOT EXISTS (SELECT 1 FROM society_turns t WHERE t.agent_id = a.id AND t.tick = %s)
         ORDER BY a.turn_minute, a.id""", (_utc(now).minute, state["tick"], state["tick"]))]
 
@@ -364,6 +379,8 @@ def status(conn, rules):
                          energy=float(rules.energy(row["balance"])) if rules.energy_enabled else None,
                          energy_enabled=rules.energy_enabled,
                          age_days=round(lived / 24, 2), death_cause=row["death_cause"])
+            from arena import administration
+            entry['administrative_state'] = administration.state(conn, row['id'])
         agents.append(entry)
     return {"tick": state["tick"], "paused": state["paused"], "rules_version": state["rules_version"],
             "agents": agents}

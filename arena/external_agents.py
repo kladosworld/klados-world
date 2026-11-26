@@ -229,6 +229,9 @@ def authenticate(conn, authorization, now, *, tick_check=False):
     ).fetchone()
     if agent is None or agent["status"] != "alive" or agent["participation"] != "active":
         raise HTTPException(403, "Agent unavailable")
+    from arena import administration
+    if not administration.is_active(conn, agent['id']):
+        raise HTTPException(403, "Agent unavailable")
     return agent
 
 
@@ -299,6 +302,9 @@ def action(conn, rules, identifier, body, now):
     conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (activity_limits.LOCK_NAMESPACE, identifier))
     agent = conn.execute("SELECT kind,status,participation FROM society_agents WHERE id=%s", (identifier,)).fetchone()
     if agent is None or agent["kind"] != "external" or agent["status"] != "alive" or agent["participation"] != "active":
+        raise HTTPException(403, "Agent unavailable")
+    from arena import administration
+    if not administration.is_active(conn, identifier, lock=True):
         raise HTTPException(403, "Agent unavailable")
     receipt = conn.execute("SELECT * FROM external_action_receipts WHERE agent_id=%s AND request_id=%s",
                            (identifier, request_id)).fetchone()
