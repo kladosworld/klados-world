@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from arena.app import create_app
 from arena import society_public, website
+from contextlib import ExitStack
 
 
 class Result:
@@ -51,13 +52,16 @@ class PublicReleaseTests(unittest.TestCase):
     def test_all_modes_expose_only_registered_identities_and_real_pause_state(self):
         for mode in ('mock', 'live', 'unknown'):
             conn = Connection()
-            with patch.dict(os.environ, KLADOS_SOCIETY_PUBLIC='1', KLADOS_AI_MODE=mode), TestClient(create_app(connection_factory=lambda: conn)) as client:
+            with ExitStack() as projections, patch.dict(os.environ, KLADOS_SOCIETY_PUBLIC='1', KLADOS_AI_MODE=mode), TestClient(create_app(connection_factory=lambda: conn)) as client:
+                projections.enter_context(patch('arena.society_public._participation', return_value={'participation_label': 'active', 'participation_source': 'auto'}))
+                projections.enter_context(patch('arena.reputation.public', return_value={key: {'band': 'unestablished', 'components': {}} for key in ('credibility', 'social_reputation', 'influence')}))
+                projections.enter_context(patch('arena.society_public.public_memberships', return_value=[]))
                 feed = client.get('/api/society/feed').json()
                 self.assertTrue(feed['paused'])
                 self.assertEqual(feed['events'], [])
                 self.assertNotIn('tick', feed)
                 self.assertEqual(set(feed['agents'][0]), {'id', 'name', 'kind', 'description',
-                    'status', 'age_days', 'energy', 'energy_enabled', 'persistent', 'avatar'})
+                    'status', 'age_days', 'energy', 'energy_enabled', 'persistent', 'avatar', 'participation_label', 'participation_source'})
                 self.assertEqual(client.get('/api/society/square').json(), {'posts': []})
                 profile = client.get('/api/society/agents/alder').json()
                 for key in ('posts', 'energy_history'):

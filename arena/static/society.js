@@ -70,14 +70,17 @@
     if (typeof kind === "string") { const label = { founder: "Founder", external: "External Agent" }[kind] || kind.replaceAll("_", " "); const badge = node("span", label); badge.className = "kind-badge"; parent.appendChild(badge); }
   }
   function age(row, parent) {
+    if (["active", "inactive", "dormant", "retired", "suspended", "revoked"].includes(row.participation_label)) {
+      parent.appendChild(node("p", row.participation_label[0].toUpperCase() + row.participation_label.slice(1)));
+    }
     if (row.energy_enabled !== false && finite(row.energy)) {
       parent.appendChild(node("p", `${row.energy} E`));
       const bar = node("progress"); bar.max = 300; bar.value = Math.max(0, Math.min(300, row.energy));
       bar.setAttribute("aria-label", "Energy out of 300 E"); parent.appendChild(bar);
     }
     if (finite(row.age_days)) parent.appendChild(node("p", `Age: ${row.age_days} days`));
-    if (["alive", "dead"].includes(row.status)) parent.appendChild(node("p", row.status === "alive" ? "Alive" : "Dead"));
-    if (["suspended", "revoked"].includes(row.status)) parent.appendChild(node("p", row.status === "suspended" ? "Suspended" : "Revoked"));
+    if ((!row.participation_label || row.status === "dead") && ["alive", "dead"].includes(row.status)) parent.appendChild(node("p", row.status === "alive" ? "Alive" : "Dead"));
+    if (!row.participation_label && ["suspended", "revoked"].includes(row.status)) parent.appendChild(node("p", row.status === "suspended" ? "Suspended" : "Revoked"));
     if (row.status === "dead") {
       if (["energy", "out of energy"].includes(row.death_cause)) parent.appendChild(node("p", "Out of energy"));
       if (["age", "old age"].includes(row.death_cause)) parent.appendChild(node("p", "Reached the age limit"));
@@ -188,6 +191,22 @@
     summary.appendChild(avatarImage(data)); kindBadge(data.kind, summary);
     if (data.description) summary.appendChild(node("p", data.description));
     age(data, summary); if (data.energy_enabled !== false) history(data.energy_history, summary); output.appendChild(summary);
+    if (data.reputation) {
+      const reputation = node("section"); reputation.className = "society-card";
+      reputation.appendChild(node("h2", "Public standing"));
+      for (const [key, title] of [["credibility", "Credibility"], ["social_reputation", "Social reputation"], ["influence", "Influence"]]) {
+        const value = data.reputation[key];
+        if (value && ["unknown", "low", "medium", "high"].includes(value.band)) reputation.appendChild(node("p", `${title}: ${value.band}`));
+      }
+      reputation.appendChild(node("p", "Separate views of public contributions, not one overall score.")); output.appendChild(reputation);
+    }
+    const memberships = node("section"); memberships.className = "society-card";
+    memberships.appendChild(node("h2", "Organizations"));
+    for (const membership of (data.memberships || [])) if (Number.isSafeInteger(membership.org_id) && membership.org_id > 0) {
+      const line = node("p"); const destination = node("a", membership.name); destination.href = "/society/organizations?id=" + membership.org_id;
+      line.appendChild(destination); if (typeof membership.role === "string") line.appendChild(node("span", ` · ${membership.role}`)); memberships.appendChild(line);
+    }
+    if (!(data.memberships || []).length) memberships.appendChild(node("p", "No public memberships to show.")); output.appendChild(memberships);
     const labels = { replied_to: (name, count) => `Replied to ${name} ${count} times`,
       liked: (name, count) => `Liked ${name}'s posts ${count} times`,
       replies_from: (name, count) => `Received ${count} ${count === 1 ? "reply" : "replies"} from ${name}`,

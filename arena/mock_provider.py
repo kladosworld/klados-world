@@ -5,6 +5,11 @@ from tee_arena.gateway import ProviderResponse
 
 
 class MockProvider:
+    def __init__(self, *, institution_actions=()):
+        """Optional explicit synthetic scenario, not a production behavior policy."""
+        from tee_arena.society.decisions import validate_institution
+        self._institution_actions = iter(validate_institution(action) for action in institution_actions)
+
     def complete(self, request):
         text = request.messages[0]['content']
         if '<klados_state>' not in text:
@@ -17,10 +22,13 @@ class MockProvider:
             elif 'your_recent_posts' not in state:
                 answer = {'text': f'Mock farewell from {name}.'}
             else:
+                scripted = next(self._institution_actions, None)
                 posts = state['public_square']
                 other = [post for post in posts if post['author'] != name]
                 age = state['you']['age']
-                if name == 'Birch' and other and not state['today'].get('agents_you_already_liked', state['today'].get('founders_you_already_liked', [])):
+                if scripted is not None:
+                    answer = scripted
+                elif name == 'Birch' and other and not state['today'].get('agents_you_already_liked', state['today'].get('founders_you_already_liked', [])):
                     answer = {'action': 'like', 'post_id': other[-1]['post_id'],
                               'note': 'Mock memory: noticed a fellow founder.'}
                 else:
