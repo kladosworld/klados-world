@@ -85,13 +85,23 @@ def main(argv=None):
             if args.command == 'founders':
                 from arena import founder_status
                 if args.operation == 'status':
-                    result = founder_status.status(conn)
+                    status = founder_status.status(conn)
+                    result = {'founders': [dict(id=r['agent_id'], participation=r['participation'], source=r['source'], since=r['since'])
+                                           for r in status['founders']]}
                 elif args.operation == 'history':
-                    result = founder_status.history(conn, identifier=args.identifier)
+                    events = founder_status.history(conn, identifier=args.identifier)
+                    result = {'events': [dict(agent_id=r['agent_id'], **{'from':r['from_state'], 'to':r['to_state']},
+                        source=r['source'], reference=r['reference'], approved_by=r['approved_by'],
+                        batch_id=int(r['batch_id'],16) if r['batch_id'] else None, created_at=r['created_at']) for r in events]}
                 elif args.operation == 'set':
                     result = founder_status.change(conn, now, target_state=args.state,
                         identifier=args.identifier, all_founders=args.all_founders,
                         reference=args.reference, approved_by=args.approved_by, apply=args.yes)
+                    if not result['changed']:
+                        raise ValueError('No founder participation change')
+                    result = {'preview': not args.yes, 'changes': [dict(id=r['agent_id'],
+                        **{'from':r['previous_state'], 'to':r['participation']}) for r in result['agents']],
+                        'batch_id':int(result['batch_id'],16) if result['batch_id'] else None}
                 else:
                     raise ValueError('Invalid founder operation')
             elif args.command == 'limits':

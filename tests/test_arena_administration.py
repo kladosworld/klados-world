@@ -36,3 +36,36 @@ class AdministrationTests(DatabaseCase):
         self.assertEqual(len(founder_status.history(self.conn,'alder')),1)
         with self.assertRaises(Exception),self.conn.transaction():
             self.conn.execute('DELETE FROM society_participation_events')
+
+    def test_operator_cli_matches_minimal_json_contract_without_private_data(self):
+        from contextlib import contextmanager, redirect_stdout
+        import io
+        import json
+        import os
+        from unittest.mock import patch
+        from arena import runtime
+        @contextmanager
+        def connection(_):
+            yield self.conn
+            self.conn.commit()
+        def run(args):
+            out = io.StringIO()
+            with patch('arena.runtime.db.connect', side_effect=connection), \
+                 patch.dict(os.environ, ARENA_DATABASE_URL='synthetic'), redirect_stdout(out):
+                code = runtime.main(['founders', *args])
+            self.assertEqual(code, 0)
+            return json.loads(out.getvalue())
+        initial = run(['status'])
+        self.assertEqual([r['id'] for r in initial['founders']], ['alder','birch','cedar','hazel'])
+        self.assertEqual(set(initial['founders'][0]), {'id','participation','source','since'})
+        args = ['set','--all','--state','inactive','--reference','SYNTHETIC-PO','--approved-by','operator']
+        preview = run(args)
+        self.assertTrue(preview['preview'])
+        self.assertTrue(all(r['participation']=='active' for r in run(['status'])['founders']))
+        applied = run([*args,'--yes'])
+        self.assertFalse(applied['preview'])
+        self.assertIs(type(applied['batch_id']), int)
+        events = run(['history'])['events']
+        self.assertEqual(len(events), 4)
+        self.assertEqual({r['batch_id'] for r in events}, {applied['batch_id']})
+        self.assertEqual({r['to'] for r in events}, {'inactive'})

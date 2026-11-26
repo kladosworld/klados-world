@@ -19,11 +19,11 @@ def _lock(conn, identifier):
 def details(conn, identifier, *, lock=False):
     if lock:
         _lock(conn, identifier)
-    row = conn.execute('SELECT id,kind,status,participation FROM society_agents WHERE id=%s',
+    row = conn.execute('SELECT id,kind,status,participation,created_at FROM society_agents WHERE id=%s',
                        (identifier,)).fetchone()
     if row is None or row['kind'] not in society.LIVING_KINDS:
         raise society.SocietyError('no_such_agent')
-    event = conn.execute('''SELECT to_state,source FROM society_participation_events
+    event = conn.execute('''SELECT to_state,source,created_at FROM society_participation_events
         WHERE agent_id=%s ORDER BY id DESC LIMIT 1''', (identifier,)).fetchone()
     consistent = event is None or event['to_state'] == row['participation']
     source = event['source'] if event else 'auto' if row['participation'] == 'active' else 'admin'
@@ -33,6 +33,7 @@ def details(conn, identifier, *, lock=False):
     label_source = 'security' if row['participation'] in SECURITY_STATES else source
     return {'agent_id': identifier, 'kind': row['kind'], 'lifecycle_status': row['status'],
             'participation': row['participation'], 'source': source,
+            'since': (event['created_at'] if event else row['created_at']).isoformat(),
             'participation_label': row['participation'], 'participation_source': label_source,
             'history_consistent': consistent, 'can_participate': can_act}
 
@@ -106,6 +107,10 @@ def _change(conn, now, *, target_state, identifier=None, all_founders=False,
     batch_id = uuid4().hex if all_founders else None
     changes = []
     with conn.transaction():
+        if target_state == 'active' and not founders_only:
+            from arena import external_agents
+            for agent in identifiers:
+                external_agents.check_reactivation(conn, agent)
         for agent in identifiers:
             _lock(conn, agent)
             row = conn.execute('SELECT kind,status,participation FROM society_agents WHERE id=%s FOR UPDATE',
@@ -118,7 +123,7 @@ def _change(conn, now, *, target_state, identifier=None, all_founders=False,
                 raise society.SocietyError('historical_agent_not_reactivatable')
             previous = details(conn, agent)
             changed = (row['participation'] != target_state or
-                       (target_state == 'dormant' and previous['source'] != 'admin'))
+                       previous['source'] != 'admin')
             if apply and changed:
                 _record(conn, agent, row['participation'], target_state, 'admin', now,
                         reference=reference.strip(), approved_by=approved_by.strip(), batch_id=batch_id)
