@@ -165,3 +165,36 @@ class GovernanceTests(DatabaseCase):
                 governance._effect(self.conn, RULES, dict(row, kind=effect), 1, self.now)
         society.set_paused(self.conn, RULES, True, self.now, 'synthetic')
         self.assertEqual(governance.close_due(self.conn, RULES, self.now), {'closed': 0, 'applied': 0})
+
+    def test_administrative_transitions_preserve_open_electorate_and_quorum(self):
+        from arena import administration
+        org = self.found(default_rule={'quorum_pct': 100, 'threshold_pct': 50})
+        self.join(org)
+        proposal = self.propose(org)
+        original = self.conn.execute('SELECT rule,opens_tick,closes_tick FROM society_proposals WHERE id=%s', (proposal,)).fetchone()
+        self.assertEqual(original['rule']['electorate_ids'], ['alder', 'birch'])
+        self.assertEqual(original['rule']['quorum_required'], 2)
+        administration.change(self.conn, self.now, target_state='inactive', identifier='birch',
+            reference='Synthetic administrative restriction', approved_by='test', apply=True)
+        self.assertEqual(governance._member(self.conn, org, 'birch')['role'], 'member')
+        self.assertIn('error', self.vote(proposal, 'birch'))
+        self.vote(proposal)
+        self.assertEqual(self.close(proposal)['applied'], 0)
+        result = self.conn.execute('SELECT result FROM society_proposals WHERE id=%s', (proposal,)).fetchone()['result']
+        self.assertEqual((result['electorate'], result['quorum_required'], result['votes']), (2, 2, 1))
+        self.assertFalse(result['passed'])
+
+    def test_inactive_leader_can_be_replaced_without_reactivation_restoring_role(self):
+        from arena import administration
+        org = self.found()
+        self.join(org)
+        administration.change(self.conn, self.now, target_state='inactive', identifier='alder',
+            reference='Synthetic inactive leader', approved_by='test', apply=True)
+        self.assertEqual(governance._member(self.conn, org, 'alder')['role'], 'leader')
+        proposal = self.propose(org, 'change_leader', {'agent_id':'birch'}, agent='birch')
+        self.vote(proposal, 'birch')
+        self.assertEqual(self.close(proposal)['applied'], 1)
+        administration.change(self.conn, self.now, target_state='active', identifier='alder',
+            reference='Synthetic return', approved_by='test', apply=True)
+        self.assertEqual(governance._member(self.conn, org, 'alder')['role'], 'member')
+        self.assertEqual(governance._member(self.conn, org, 'birch')['role'], 'leader')

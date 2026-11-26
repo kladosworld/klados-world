@@ -177,21 +177,20 @@ CREATE CONSTRAINT TRIGGER society_posts_institution_text_guard AFTER INSERT OR U
 CREATE CONSTRAINT TRIGGER society_links_institution_text_guard AFTER INSERT OR UPDATE OR DELETE
  ON society_institution_texts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION society_institution_text_guard();
 
--- Administrative state is orthogonal to social active/dormant and security
--- active/suspended/revoked. Missing administration rows mean historical active.
-CREATE TABLE society_agent_administration (
- agent_id text PRIMARY KEY REFERENCES society_agents(id),
- state text NOT NULL CHECK (state IN ('active','inactive','retired')),
- changed_at timestamptz NOT NULL
-);
-CREATE TABLE society_administration_events (
+-- KW-028: extend the existing participation gate, retaining security states.
+-- Rows and identities are unchanged. This metadata change takes AccessExclusiveLock.
+ALTER TABLE society_agents DROP CONSTRAINT society_agents_participation_check;
+ALTER TABLE society_agents ADD CONSTRAINT society_agents_participation_check
+ CHECK (participation IN ('active','suspended','revoked','inactive','dormant','retired')) NOT VALID;
+ALTER TABLE society_agents VALIDATE CONSTRAINT society_agents_participation_check;
+CREATE TABLE society_participation_events (
  id bigserial PRIMARY KEY, agent_id text NOT NULL REFERENCES society_agents(id),
- previous_state text NOT NULL CHECK (previous_state IN ('active','inactive','retired')),
- state text NOT NULL CHECK (state IN ('active','inactive','retired')),
- reference text NOT NULL CHECK (length(reference) BETWEEN 1 AND 200),
- approved_by text NOT NULL CHECK (length(approved_by) BETWEEN 1 AND 100),
- created_at timestamptz NOT NULL
+ from_state text NOT NULL, to_state text NOT NULL,
+ source text NOT NULL CHECK(source IN ('admin','auto')),
+ reference text NOT NULL CHECK(length(reference) BETWEEN 1 AND 200),
+ approved_by text NOT NULL CHECK(length(approved_by) BETWEEN 1 AND 100),
+ batch_id text, created_at timestamptz NOT NULL
 );
-CREATE INDEX society_administration_events_agent ON society_administration_events(agent_id,id);
-CREATE TRIGGER society_administration_events_no_rewrite BEFORE UPDATE OR DELETE OR TRUNCATE
- ON society_administration_events FOR EACH STATEMENT EXECUTE FUNCTION society_settings_immutable();
+CREATE INDEX society_participation_events_agent ON society_participation_events(agent_id,id);
+CREATE TRIGGER society_participation_events_no_rewrite BEFORE UPDATE OR DELETE OR TRUNCATE
+ ON society_participation_events FOR EACH STATEMENT EXECUTE FUNCTION society_settings_immutable();

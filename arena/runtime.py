@@ -16,13 +16,13 @@ def main(argv=None):
     parser.add_argument('command', choices=['bootstrap', 'demo', 'status', 'audit', 'pause',
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
                                           'review', 'show', 'decide', 'invite', 'agent',
-                                          'refresh-founders-v2', 'budget', 'cap', 'era', 'limits'])
-    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start', 'history', 'revert', 'administrative-state'])
+                                          'refresh-founders-v2', 'budget', 'cap', 'era', 'limits', 'founders'])
+    parser.add_argument('operation', nargs='?', choices=['status', 'create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start', 'history', 'revert', 'administrative-state'])
     for name in ('post', 'reply', 'like', 'max-actions', 'expected-version', 'version'):
         parser.add_argument('--' + name, type=int)
     parser.add_argument('--id', dest='identifier')
-    parser.add_argument('--state', choices=['active', 'inactive', 'retired'])
-    parser.add_argument('--all-founders', action='store_true')
+    parser.add_argument('--state', choices=['active', 'inactive', 'dormant', 'retired'])
+    parser.add_argument('--all-founders', '--all', dest='all_founders', action='store_true')
     parser.add_argument('--operator')
     parser.add_argument('--ledger', default='/data/ledger.json')
     parser.add_argument('--cap-usd', default='1.00')
@@ -79,7 +79,19 @@ def main(argv=None):
         rules = rules_module.load(os.environ.get('KLADOS_RULES') or rules_module.DEFAULT_PATH)
         with db.connect(os.environ['ARENA_DATABASE_URL']) as conn:
             now = datetime.now(timezone.utc)
-            if args.command == 'limits':
+            if args.command == 'founders':
+                from arena import founder_status
+                if args.operation == 'status':
+                    result = founder_status.status(conn)
+                elif args.operation == 'history':
+                    result = founder_status.history(conn, identifier=args.identifier)
+                elif args.operation == 'set':
+                    result = founder_status.change(conn, now, target_state=args.state,
+                        identifier=args.identifier, all_founders=args.all_founders,
+                        reference=args.reference, approved_by=args.approved_by, apply=args.yes)
+                else:
+                    raise ValueError('Invalid founder operation')
+            elif args.command == 'limits':
                 from arena import activity_settings
                 if args.operation == 'show':
                     result = dict(activity_settings.effective(conn, society.clock(conn)['tick']),

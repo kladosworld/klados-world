@@ -4,6 +4,7 @@ Only explicit allowlisted effects are executable. This module has no provider,
 budget, platform configuration or administrative participation mutation path.
 """
 import json
+import math
 
 from psycopg.types.json import Jsonb
 
@@ -158,7 +159,8 @@ def _vote(conn, agent, tick, action, now, key, request_hash):
     if proposal is None or proposal['status'] != 'open' or proposal['closes_tick'] <= tick:
         return {'error': 'proposal_not_open'}
     _org(conn, proposal['scope_id'])
-    if agent not in proposal['rule'].get('electorate_ids', []) or not _eligible(conn, agent):
+    if (agent not in proposal['rule'].get('electorate_ids', []) or not _eligible(conn, agent)
+            or not _member(conn, proposal['scope_id'], agent)):
         return {'error': 'not_in_electorate'}
     if action['choice'] not in proposal['options']:
         return {'error': 'invalid_choice'}
@@ -206,8 +208,14 @@ def on_text_status(conn, rules, link, status, cleared, now):
         raise society.SocietyError('proposal_author_unavailable')
     if action == 'org_propose' and not _member(conn, org['id'], proposal['author_id']):
         raise society.SocietyError('not_member')
+    # Once opened, administrative transitions/rescreening cannot change the
+    # denominator, required quorum or deadline. Missing voters can cause expiry.
+    if proposal['opens_tick'] is not None:
+        conn.execute("UPDATE society_proposals SET status='open' WHERE id=%s", (proposal['id'],))
+        return True
     electorate = _electorate(conn, org, proposal['rule'])
-    rule = dict(proposal['rule'], electorate_ids=electorate)
+    rule = dict(proposal['rule'], electorate_ids=electorate,
+                quorum_required=math.ceil(len(electorate)*proposal['rule']['quorum_pct']/100))
     duration = link['intent'].get('action', {}).get('closes_in_ticks', 24 if action == 'org_join' else 1)
     if type(duration) is not int or not 1 <= duration <= 72:
         raise society.SocietyError('invalid_voting_window')
@@ -230,9 +238,10 @@ def close_due(conn, rules, now):
         electorate = proposal['rule'].get('electorate_ids', [])
         n, total = len(electorate), len(votes)
         yes = sum(v['choice'] == proposal['options'][0] for v in votes)
-        passed = (n > 0 and total > 0 and total*100 >= proposal['rule']['quorum_pct']*n
+        quorum = proposal['rule'].get('quorum_required', math.ceil(proposal['rule']['quorum_pct']*n/100))
+        passed = (n > 0 and total > 0 and total >= quorum
                   and yes*100 >= proposal['rule']['threshold_pct']*total)
-        result = {'electorate': n, 'votes': total, 'approval_votes': yes, 'passed': passed}
+        result = {'electorate': n, 'quorum_required': quorum, 'votes': total, 'approval_votes': yes, 'passed': passed}
         status = 'failed'
         if passed:
             try:

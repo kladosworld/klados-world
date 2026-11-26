@@ -9,6 +9,7 @@ import json
 from psycopg.types.json import Jsonb
 
 from arena import activity_limits, activity_settings, society
+from arena import institution_governance, institution_commitments
 from tee_arena.society import decisions
 
 EFFECT_ALLOWLIST = frozenset(decisions.PROPOSAL_EFFECTS)
@@ -30,19 +31,31 @@ def _active(conn, agent_id):
     from arena import administration
     row = conn.execute('SELECT kind,status,participation FROM society_agents WHERE id=%s',
                        (agent_id,)).fetchone()
-    if row is None or row['kind'] not in society.LIVING_KINDS or row['status'] != 'alive' or row['participation'] != 'active':
+    if row is None or row['kind'] not in society.LIVING_KINDS or row['status'] != 'alive':
         raise society.SocietyError('not_alive')
     if not administration.is_active(conn, agent_id, lock=True):
         raise society.SocietyError('not_alive')
 
 
 def _receipt(conn, action_key):
-    return conn.execute('''SELECT i.actor_id,i.request_hash,i.object_kind AS object,i.object_id AS id,
-        CASE WHEN i.object_kind='organization' AND i.action='org_found' THEN o.status ELSE i.clearance END AS state
+    row = conn.execute('''SELECT i.actor_id,i.request_hash,i.object_kind AS object,i.object_id AS id,
+        CASE WHEN i.object_kind='organization' AND i.action='org_found' THEN o.status
+             WHEN i.object_kind='proposal' THEN p.status
+             WHEN i.object_kind='commitment' THEN c.status
+             WHEN i.object_kind='case' THEN k.status
+             WHEN i.object_kind='case_entry' THEN e.clearance
+             WHEN i.clearance='cleared' THEN 'joined'
+             WHEN i.clearance='pending' THEN 'pending_clearance' ELSE i.clearance END AS state
         FROM society_institution_texts i LEFT JOIN society_organizations o
-        ON i.object_kind='organization' AND o.id=i.object_id WHERE i.action_key=%s
+        ON i.object_kind='organization' AND o.id=i.object_id
+        LEFT JOIN society_proposals p ON i.object_kind='proposal' AND p.id=i.object_id
+        LEFT JOIN society_commitments c ON i.object_kind='commitment' AND c.id=i.object_id
+        LEFT JOIN society_cases k ON i.object_kind='case' AND k.id=i.object_id
+        LEFT JOIN society_case_entries e ON i.object_kind='case_entry' AND e.id=i.object_id
+        WHERE i.action_key=%s
         UNION ALL SELECT from_id,request_hash,'trust',id,'private'
         FROM society_trust WHERE action_key=%s''', (action_key, action_key)).fetchone()
+    return row or institution_governance.receipt(conn, action_key) or institution_commitments.receipt(conn, action_key)
 
 
 def apply(conn, rules, agent_id, tick, action, now, *, action_key, origin, limits):
@@ -67,15 +80,16 @@ def apply(conn, rules, agent_id, tick, action, now, *, action_key, origin, limit
         if previous['actor_id'] != agent_id or previous['request_hash'] != request_hash:
             return {'error': 'idempotency_conflict'}
         return {key: previous[key] for key in ('object', 'id', 'state')}
-    # W0 intentionally cannot mutate unimplemented governance or commitments.
-    if action['action'] not in ('org_found', 'trust'):
-        return {'error': 'institution_not_implemented'}
     selected = (activity_settings.effective(conn, tick)['values'] if limits is None
                 else dict(activity_settings.DEFAULTS, **limits))
-    activity_limits.check(conn, rules, agent_id, 'institution', now, limits=selected)
+    activity_limits.check(conn, rules, agent_id, 'vote' if action['action']=='vote' else 'institution', now, limits=selected)
     if action['action'] == 'trust':
         return _trust(conn, agent_id, tick, action, now, action_key, request_hash)
-    return _found(conn, rules, agent_id, tick, action, now, action_key, request_hash, origin)
+    if action['action'] == 'org_found':
+        return _found(conn, rules, agent_id, tick, action, now, action_key, request_hash, origin)
+    executor = institution_governance if action['action'] in institution_governance.ACTIONS else institution_commitments
+    return executor.apply(conn, rules, agent_id, tick, action, now,
+        action_key=action_key, origin=origin, request_hash=request_hash)
 
 
 def _trust(conn, agent, tick, action, now, key, request_hash):
@@ -156,21 +170,27 @@ def on_text_status(conn, rules, post_id, status, now):
     """
     link = conn.execute('SELECT * FROM society_institution_texts WHERE post_id=%s FOR UPDATE',
                         (post_id,)).fetchone()
-    if link is None:
-        return
-    post = conn.execute('SELECT status,flagged FROM society_posts WHERE id=%s', (post_id,)).fetchone()
+    post = conn.execute('SELECT author_id,status,flagged FROM society_posts WHERE id=%s', (post_id,)).fetchone()
     latest = conn.execute('SELECT metadata,severity,decision FROM society_findings WHERE post_id=%s ORDER BY id DESC LIMIT 1',
                           (post_id,)).fetchone()
     metadata = latest['metadata'] if latest else {}
     cleared = (status == 'published' and post['status'] == 'published' and not post['flagged']
                and latest is not None and (latest['decision'] == 'released' or
                    (latest['severity'] == 'none' and metadata.get('review_status') in ('not_required', 'cleared'))))
+    if cleared:
+        from arena import lifecycle
+        lifecycle.touch(conn, post['author_id'], now)
+    if link is None:
+        return
     clearance = 'cleared' if cleared else 'withheld' if status == 'withheld' else 'pending'
     if link['clearance'] == clearance:
         return
     if link['object_kind'] != 'organization' or link['action'] != 'org_found':
-        # Fail closed until that stream registers its explicit transaction logic.
-        if cleared:
+        handled = institution_governance.on_text_status(conn, rules, link, status, cleared, now)
+        if not handled and link['action'] in institution_commitments.ACTIONS:
+            institution_commitments.on_text_status(conn, rules, link, status, cleared, now)
+            handled = True
+        if not handled and cleared:
             raise society.SocietyError('institution_clearance_not_implemented')
     else:
         org = conn.execute('SELECT status FROM society_organizations WHERE id=%s FOR UPDATE',
@@ -184,7 +204,6 @@ def on_text_status(conn, rules, post_id, status, now):
                                  (link['actor_id'],)).fetchone()
             from arena import administration
             if (org['status'] == 'dissolved' or actor['status'] != 'alive'
-                    or actor['participation'] != 'active'
                     or not administration.is_active(conn, link['actor_id'], lock=True)):
                 cleared = False
                 clearance = 'withheld'
@@ -207,5 +226,8 @@ def on_text_status(conn, rules, post_id, status, now):
 
 
 def close_due(conn, rules, now):
-    """W1 deterministic proposal closer contract; W0 has no executable proposals."""
-    return {'closed': 0}
+    """Deterministic, transaction-owned expiry/closure; never inference."""
+    if society.clock(conn)['paused']:
+        return {'closed': 0, 'expired': 0}
+    return dict(institution_governance.close_due(conn, rules, now),
+                **institution_commitments.close_due(conn, rules, now))

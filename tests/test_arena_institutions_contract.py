@@ -194,9 +194,9 @@ class InstitutionTests(DatabaseCase):
         self.assertEqual(self.perform(agent='birch')['error'], 'idempotency_conflict')
         self.assertEqual(self.perform(dict(TRUST, agent_id='alder'), key='self')['error'], 'own_trust')
         for action in institutions.ACTIONS - {'trust', 'org_found'}:
-            # Valid yet unimplemented actions fail closed; no phantom allowances.
+            # Membership failure creates no phantom institution allowance.
             if action == 'org_leave':
-                self.assertEqual(self.perform({'action': action, 'org_id': 1}, key=action)['error'], 'institution_not_implemented')
+                self.assertEqual(self.perform({'action': action, 'org_id': 1}, key=action)['error'], 'not_member')
         self.conn.rollback()
         self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_organizations').fetchone()['n'], 0)
         self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_posts').fetchone()['n'], 0)
