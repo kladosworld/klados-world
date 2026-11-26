@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from arena.app import create_app
-from arena import society_public, website
+from arena import website
 from contextlib import ExitStack
 
 
