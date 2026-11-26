@@ -530,8 +530,8 @@ def install(app, connection_factory, now):
                         result = society_life.turn_context(conn, rules, agent["id"])
                         if result.get("state_version") == 2:
                             result["rules"]["activity_limits_per_hour"] = dict(EXTERNAL_ACTION_LIMITS)
-                        result['ownership_verified'] = owner_verified(conn,agent['id'])
-                        result['rules']['max_actions'] = 9
+                            result['ownership_verified'] = owner_verified(conn,agent['id'])
+                            result['rules']['max_actions'] = 9
                     elif request.url.path.endswith("/actions"):
                         result = action(conn, rules, agent["id"], body, timestamp)
                     else:
