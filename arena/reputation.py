@@ -54,10 +54,8 @@ def public(conn, agent_id):
             FROM society_memberships leaders JOIN society_organizations o ON o.id=leaders.org_id
             JOIN society_memberships members ON members.org_id=o.id AND members.left_tick IS NULL
             JOIN society_agents a ON a.id=members.agent_id
-            LEFT JOIN society_agent_administration admin ON admin.agent_id=a.id
             WHERE leaders.agent_id=%s AND leaders.role='leader' AND leaders.left_tick IS NULL
-            AND o.status='active' AND a.status='alive' AND a.participation='active'
-            AND COALESCE(admin.state,'active')='active' ''', (agent_id,)).fetchone()['n']
+            AND o.status='active' AND a.status='alive' AND a.participation='active' ''', (agent_id,)).fetchone()['n']
     acknowledgement = min(20, amendments) + min(20, roles) + confirmed_count
     return {
         'credibility': {'band': _band(counterparties), 'components': {

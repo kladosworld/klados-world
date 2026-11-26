@@ -265,6 +265,11 @@ def _effect(conn, rules, proposal, tick, now):
     target = data.get('agent_id')
     actor = proposal['author_id']
     if effect in ('admit_member', 'remove_member', 'assign_role', 'revoke_role', 'change_leader'):
+        # Serialize target eligibility with administrative participation changes.
+        # A retirement committing first must not be followed by a stale role grant.
+        from arena import activity_limits
+        conn.execute('SELECT pg_advisory_xact_lock(%s,hashtext(%s))',
+                     (activity_limits.LOCK_NAMESPACE, target))
         if effect in ('admit_member', 'assign_role', 'change_leader') and not _eligible(conn, target):
             raise society.SocietyError('member_unavailable')
         member = _member(conn, org['id'], target)

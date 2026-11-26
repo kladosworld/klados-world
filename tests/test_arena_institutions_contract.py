@@ -196,7 +196,7 @@ class InstitutionTests(DatabaseCase):
         for action in institutions.ACTIONS - {'trust', 'org_found'}:
             # Membership failure creates no phantom institution allowance.
             if action == 'org_leave':
-                self.assertEqual(self.perform({'action': action, 'org_id': 1}, key=action)['error'], 'not_member')
+                self.assertEqual(self.perform({'action': action, 'org_id': 1}, key=action, agent='birch')['error'], 'not_member')
         self.conn.rollback()
         self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_organizations').fetchone()['n'], 0)
         self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_posts').fetchone()['n'], 0)
@@ -335,7 +335,7 @@ class InstitutionTests(DatabaseCase):
             activity_limits.check(self.conn, RULES, 'alder', 'vote', NOW, limits=activity_settings.DEFAULTS)
         self.assertEqual(self.perform(dict(TRUST, agent_id='cedar'), key='still-institution')['state'], 'private')
 
-    def test_future_text_action_cannot_mutate_whole_existing_organization(self):
+    def test_membership_note_does_not_mutate_whole_existing_organization(self):
         org = self.perform()['id']
         post = self.conn.execute("INSERT INTO society_posts(author_id,tick,text,created_at) VALUES ('birch',0,'A membership note',%s) RETURNING id", (NOW,)).fetchone()['id']
         self.conn.execute('''INSERT INTO society_institution_texts
@@ -343,6 +343,6 @@ class InstitutionTests(DatabaseCase):
             VALUES (%s,'organization',%s,'birch','org_join','future:join','synthetic',0,%s)''', (post, org, NOW))
         institutions.on_text_status(self.conn, RULES, post, 'withheld', NOW)
         self.assertEqual(self.conn.execute('SELECT status FROM society_organizations').fetchone()['status'], 'active')
-        with self.assertRaises(society.SocietyError), self.conn.transaction():
-            society_moderation.apply_verdict(self.conn, RULES, post, CLEAN, NOW)
+        society_moderation.apply_verdict(self.conn, RULES, post, CLEAN, NOW)
+        self.assertIsNotNone(self.conn.execute("SELECT 1 FROM society_memberships WHERE org_id=%s AND agent_id='birch' AND left_tick IS NULL", (org,)).fetchone())
         self.assertEqual(self.conn.execute('SELECT status FROM society_organizations').fetchone()['status'], 'active')
