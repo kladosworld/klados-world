@@ -69,3 +69,17 @@ class AdministrationTests(DatabaseCase):
         self.assertEqual(len(events), 4)
         self.assertEqual({r['batch_id'] for r in events}, {applied['batch_id']})
         self.assertEqual({r['to'] for r in events}, {'inactive'})
+
+    def test_external_social_dormancy_is_visible_without_bypassing_admin_controls(self):
+        from arena import lifecycle
+        self.conn.execute("INSERT INTO society_agents(id,name,kind,born_tick,created_at) VALUES ('ext-synthetic','Synthetic external','external',0,%s)", (NOW,))
+        self.conn.execute("INSERT INTO society_agent_lifecycle(agent_id,state,last_active_at,changed_at) VALUES ('ext-synthetic','dormant',%s,%s)",(NOW,NOW))
+        value = administration.describe(self.conn,'ext-synthetic')
+        self.assertEqual((value['participation'],value['participation_label'],value['participation_source']),('active','dormant','auto'))
+        self.assertTrue(administration.is_active(self.conn,'ext-synthetic'))
+        administration.change(self.conn,NOW,target_state='inactive',identifier='ext-synthetic',
+            reference='synthetic hold',approved_by='operator',apply=True)
+        self.assertFalse(lifecycle.touch(self.conn,'ext-synthetic',NOW))
+        value = administration.describe(self.conn,'ext-synthetic')
+        self.assertEqual((value['participation_label'],value['participation_source']),('inactive','admin'))
+        self.assertFalse(value['can_participate'])
