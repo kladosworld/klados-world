@@ -17,13 +17,16 @@ def main(argv=None):
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
                                           'review', 'show', 'decide', 'invite', 'agent',
                                           'refresh-founders-v2', 'budget', 'cap', 'era', 'limits', 'founders'])
-    parser.add_argument('operation', nargs='?', choices=['status', 'create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start', 'history', 'revert', 'administrative-state'])
+    parser.add_argument('operation', nargs='?', choices=['status', 'create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start', 'history', 'revert', 'administrative-state', 'verify-owner', 'retire'])
     for name in ('post', 'reply', 'like', 'max-actions', 'expected-version', 'version'):
         parser.add_argument('--' + name, type=int)
     parser.add_argument('--id', dest='identifier')
     parser.add_argument('--state', choices=['active', 'inactive', 'dormant', 'retired'])
     parser.add_argument('--all-founders', '--all', dest='all_founders', action='store_true')
     parser.add_argument('--operator')
+    parser.add_argument('--challenge')
+    parser.add_argument('--post-url')
+    parser.add_argument('--attest', action='store_true')
     parser.add_argument('--ledger', default='/data/ledger.json')
     parser.add_argument('--cap-usd', default='1.00')
     parser.add_argument('--yes', action='store_true')
@@ -116,6 +119,17 @@ def main(argv=None):
                     result = administration.change(conn, now, target_state=args.state,
                         identifier=args.identifier, all_founders=args.all_founders,
                         reference=args.reference, approved_by=args.operator, apply=args.yes)
+                elif args.command == 'agent' and args.operation == 'verify-owner':
+                    if not args.yes or not args.identifier:
+                        raise ValueError('Owner verification requires --id and --yes')
+                    result = external_agents.verify_owner(conn,args.identifier,challenge=args.challenge,
+                        post_url=args.post_url,reference=args.reference,approved_by=args.operator,
+                        attest=args.attest,now=now)
+                elif args.command == 'agent' and args.operation == 'retire':
+                    if not args.yes or not args.identifier or not args.operator:
+                        raise ValueError('Retirement requires --id, --operator and --yes')
+                    result = external_agents.retire(conn,args.identifier,now,
+                        reference=args.reference,approved_by=args.operator)
                 elif args.command == 'invite' and args.operation == 'create':
                     result = external_agents.create_invite(conn, now)
                 elif args.command == 'invite' and args.operation == 'list':

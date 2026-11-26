@@ -7,7 +7,10 @@ import math
 import os
 import re
 import secrets
+import base64
+import unicodedata
 from datetime import timedelta
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi import HTTPException, Request
@@ -33,7 +36,10 @@ ROUTES = {
     ("GET", "/api/agents/tick"),
     ("POST", "/api/agents/me/credentials/rotate"),
     ("POST", "/api/agents/me/actions"),
+    ("POST", "/api/agents/me/owner-claim"),
+    ("POST", "/api/agents/me/retire"),
 }
+EXTERNAL_ACTION_LIMITS = dict(activity_limits.EXTERNAL_LIMITS, institution=3, vote=5)
 
 
 def enabled():
@@ -161,7 +167,7 @@ def register(conn, rules, body, now):
     if not _usable(invitation, now):  # re-checked under the locks
         raise HTTPException(403, "Invalid invitation")
     count = conn.execute(
-        "SELECT count(*) AS n FROM society_agents WHERE kind='external' AND status='alive'"
+        "SELECT count(*) AS n FROM society_agents WHERE kind='external' AND status='alive' AND participation NOT IN ('revoked','retired')"
     ).fetchone()["n"]
     if count >= agent_capacity():
         raise HTTPException(409, "Agent capacity reached")
@@ -239,6 +245,8 @@ def tick_check(conn, rules, identifier, now):
     # One snapshot for clock and turn availability, without loading private context.
     state = conn.execute("SELECT tick, paused, last_tick_at FROM society_clock").fetchone()
     reason = "paused" if state["paused"] else None
+    if reason is None and not owner_verified(conn, identifier):
+        reason = 'owner_verification_required'
     return {
         "tick": state["tick"],
         "paused": state["paused"],
@@ -253,7 +261,8 @@ def tick_check(conn, rules, identifier, now):
             "min_tick_check_seconds": TICK_CHECK_SECONDS,
             "max_body_bytes": MAX_BODY,
             "max_text_characters": decisions.MAX_POST,
-            "activity_limits_per_hour": dict(activity_limits.EXTERNAL_LIMITS),
+            "activity_limits_per_hour": dict(EXTERNAL_ACTION_LIMITS),
+            "max_actions": 9,
             "activity_window_seconds": activity_limits.WINDOW_SECONDS,
         },
     }
@@ -293,8 +302,9 @@ def action(conn, rules, identifier, body, now):
         request_id = uuid4().hex  # compatibility: callers need an explicit key to retry safely
     if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", request_id):
         raise HTTPException(400, "Invalid request id")
+    batch = 'actions' in parsed
     try:
-        decision = decisions.parse_turn(json.dumps(parsed))
+        decision = decisions.parse_batch(json.dumps(parsed), 9) if batch else decisions.parse_turn(json.dumps(parsed))
     except decisions.DecisionError:
         raise HTTPException(400, "Invalid action") from None
     digest = hashlib.sha256(json.dumps(decision, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -306,6 +316,8 @@ def action(conn, rules, identifier, body, now):
     from arena import administration
     if not administration.is_active(conn, identifier, lock=True):
         raise HTTPException(403, "Agent unavailable")
+    if not owner_verified(conn, identifier):
+        raise HTTPException(403, 'Owner verification required')
     receipt = conn.execute("SELECT * FROM external_action_receipts WHERE agent_id=%s AND request_id=%s",
                            (identifier, request_id)).fetchone()
     if receipt is not None:
@@ -316,16 +328,132 @@ def action(conn, rules, identifier, body, now):
     state = conn.execute("SELECT tick,paused FROM society_clock FOR SHARE").fetchone()
     if state["paused"]:
         raise HTTPException(409, "Society paused")
-    outcome = society_life.apply_action(conn, rules, identifier, state["tick"], decision, now,
-        action_key=f"external:{identifier}:{request_id}", post_origin="external",
-        limits=activity_limits.EXTERNAL_LIMITS)
-    if "error" in outcome:
-        return outcome  # no mutation committed: the same key may be tried after Retry-After
+    items = decision['actions'] if batch else [decision]
+    outcomes = []
+    for index, item in enumerate(items):
+        if 'invalid' in item:
+            outcomes.append({'action': 'rest', 'error': 'reply_' + item['invalid']})
+        else:
+            outcomes.append(society_life.apply_action(conn, rules, identifier, state['tick'], item, now,
+                action_key=f'external:{identifier}:{request_id}:{index}', post_origin='external',
+                limits=EXTERNAL_ACTION_LIMITS))
+    outcome = {'actions': outcomes} if batch else outcomes[0]
+    if not batch and 'error' in outcome:
+        return outcome  # old single-action retry semantics remain unchanged
+    if batch and decision.get('note'):
+        conn.execute('INSERT INTO society_notes(agent_id,tick,text,created_at) VALUES (%s,%s,%s,%s)',
+                     (identifier, state['tick'], decision['note'], now))
     outcome = dict(outcome, request_id=request_id)
     conn.execute("""INSERT INTO external_action_receipts
         (agent_id,request_id,body_sha256,outcome,private,created_at) VALUES (%s,%s,%s,%s,%s,%s)""",
         (identifier, request_id, digest, Jsonb(outcome), Jsonb(decision), now))
     return outcome
+
+
+def normalize_handle(handle):
+    if not isinstance(handle, str):
+        raise HTTPException(400, 'Invalid owner handle')
+    normalized = unicodedata.normalize('NFKC', handle)
+    if normalized.startswith('@'):
+        normalized = normalized[1:]
+    normalized = normalized.lower()
+    if re.fullmatch(r'[a-z0-9_]{1,15}', normalized) is None:
+        raise HTTPException(400, 'Invalid owner handle')
+    return normalized
+
+
+def owner_verified(conn, identifier):
+    return conn.execute("SELECT 1 FROM external_owner_claims WHERE agent_id=%s AND status='verified'",
+                        (identifier,)).fetchone() is not None
+
+
+def check_reactivation(conn, identifier):
+    """Private administration pre-lock hook; shared registration lock prevents overfill.
+
+    Call before per-agent locks, in the same caller-owned transaction. An explicit
+    owner retirement consumes its claim/revokes its token and is not undone here.
+    """
+    conn.execute('SELECT pg_advisory_xact_lock(%s)', (REGISTRATION_LOCK,))
+    agent=conn.execute("SELECT participation FROM society_agents WHERE id=%s AND kind='external'",(identifier,)).fetchone()
+    if agent is None or agent['participation'] != 'retired':
+        return
+    if not owner_verified(conn,identifier):
+        raise ValueError('External owner recovery required before reactivation')
+    count=conn.execute("SELECT count(*) AS n FROM society_agents WHERE kind='external' AND status='alive' AND participation NOT IN ('revoked','retired') AND id<>%s",(identifier,)).fetchone()['n']
+    if count>=agent_capacity():
+        raise ValueError('External agent capacity reached')
+
+
+def issue_owner_claim(conn, identifier, body, now):
+    """Issue one public challenge; no owner/X credential is ever stored or used."""
+    if not isinstance(body, dict) or set(body) != {'handle'}:
+        raise HTTPException(400, 'Invalid owner claim')
+    handle = normalize_handle(body['handle'])
+    conn.execute('SELECT pg_advisory_xact_lock(%s,hashtext(%s))',
+                 (activity_limits.LOCK_NAMESPACE, identifier))
+    if owner_verified(conn, identifier):
+        raise HTTPException(409, 'Owner already verified')
+    agent = conn.execute("SELECT participation FROM society_agents WHERE id=%s AND kind='external'", (identifier,)).fetchone()
+    if agent is None or agent['participation'] != 'active':
+        raise HTTPException(403, 'Agent unavailable')
+    conn.execute("UPDATE external_owner_claims SET status='expired' WHERE agent_id=%s AND status='pending' AND expires_at<=%s", (identifier, now))
+    conn.execute("UPDATE external_owner_claims SET status='superseded' WHERE agent_id=%s AND status='pending'", (identifier,))
+    challenge = 'KLADOS-OWN-' + identifier + '-' + base64.b32encode(secrets.token_bytes(16)).decode('ascii').rstrip('=')
+    row = conn.execute('''INSERT INTO external_owner_claims
+        (agent_id,platform,handle_normalized,handle_sha256,challenge_sha256,issued_at,expires_at,status)
+        VALUES (%s,'x',%s,%s,%s,%s,%s,'pending') RETURNING id''',
+        (identifier, handle, auth.digest(handle), auth.digest(challenge), now, now+timedelta(hours=24))).fetchone()
+    return {'id': row['id'], 'handle': handle, 'challenge': challenge,
+            'expires_at': (now+timedelta(hours=24)).isoformat(), 'status': 'pending'}
+
+
+def verify_owner(conn, identifier, *, challenge, post_url, reference, approved_by, attest, now):
+    """Operator attests to public proof. No network lookup or automatic X trust."""
+    if (attest is not True or not isinstance(reference,str) or not 1<=len(reference.strip())<=200
+            or not isinstance(approved_by,str) or not 1<=len(approved_by.strip())<=100
+            or not isinstance(challenge,str) or not 1<=len(challenge)<=160
+            or not isinstance(post_url,str) or len(post_url)>200):
+        raise ValueError('Explicit ownership proof, attestation, operator and reference required')
+    try:
+        url=urlsplit(post_url)
+        match=re.fullmatch(r'/([A-Za-z0-9_]{1,15})/status/([0-9]{1,30})',url.path)
+        if (url.scheme!='https' or url.netloc!='x.com' or url.query or url.fragment or match is None):
+            raise ValueError
+        handle=normalize_handle(match[1]);post_id=match[2]
+    except (ValueError,HTTPException):
+        raise ValueError('Invalid public ownership proof URL') from None
+    conn.execute('SELECT pg_advisory_xact_lock(%s)',(REGISTRATION_LOCK,))
+    conn.execute('SELECT pg_advisory_xact_lock(%s,hashtext(%s))',
+                 (activity_limits.LOCK_NAMESPACE,identifier))
+    agent=conn.execute("SELECT * FROM society_agents WHERE id=%s AND kind='external' FOR UPDATE",(identifier,)).fetchone()
+    if agent is None or agent['participation']!='active':
+        raise ValueError('External agent unavailable')
+    claim=conn.execute("SELECT * FROM external_owner_claims WHERE agent_id=%s AND status='pending' ORDER BY id DESC LIMIT 1 FOR UPDATE",(identifier,)).fetchone()
+    if (claim is None or claim['expires_at']<=now or claim['handle_normalized']!=handle
+            or not hmac.compare_digest(claim['challenge_sha256'],auth.digest(challenge))):
+        raise ValueError('Ownership challenge unavailable or proof mismatch')
+    if conn.execute("SELECT 1 FROM external_owner_claims WHERE handle_sha256=%s AND status='verified'",(claim['handle_sha256'],)).fetchone():
+        raise ValueError('Owner already has a verified agent')
+    conn.execute('''UPDATE external_owner_claims SET status='verified',post_url=%s,post_id=%s,
+        verified_by=%s,verified_at=%s,reference=%s WHERE id=%s''',
+        (post_url,post_id,approved_by.strip(),now,reference.strip(),claim['id']))
+    return {'id':claim['id'],'agent_id':identifier,'status':'verified'}
+
+
+def retire(conn, identifier, now, *, reference, approved_by):
+    """Explicit owner/operator retirement: one transaction, no identity/history reset."""
+    from arena import administration
+    # Authentication already locks the token; operators take the same order.
+    conn.execute('SELECT token_digest FROM agent_tokens WHERE agent_id=%s FOR UPDATE',(identifier,)).fetchall()
+    conn.execute('SELECT pg_advisory_xact_lock(%s)',(REGISTRATION_LOCK,))
+    agent=conn.execute("SELECT id FROM society_agents WHERE id=%s AND kind='external'",(identifier,)).fetchone()
+    if agent is None:
+        raise ValueError('External agent unavailable')
+    result=administration.change(conn,now,target_state='retired',identifier=identifier,
+        reference=reference,approved_by=approved_by,apply=True)
+    conn.execute("UPDATE external_owner_claims SET status='retired' WHERE agent_id=%s AND status IN ('pending','verified')",(identifier,))
+    conn.execute('UPDATE agent_tokens SET revoked_at=COALESCE(revoked_at,%s) WHERE agent_id=%s',(now,identifier))
+    return {'id':identifier,'state':'retired','changed':bool(result['changed'])}
 
 
 def submit_profile(conn, identifier, name, description, now):
@@ -391,10 +519,19 @@ def install(app, connection_factory, now):
                         result = tick_check(conn, rules, agent["id"], timestamp)
                     elif request.url.path.endswith("/credentials/rotate"):
                         result = rotate_token(conn, agent["id"], body, timestamp)
+                    elif request.url.path.endswith('/owner-claim'):
+                        result = issue_owner_claim(conn, agent['id'], json.loads(body), timestamp)
+                    elif request.url.path.endswith('/retire'):
+                        if json.loads(body) != {}:
+                            raise HTTPException(400,'Invalid request')
+                        result = retire(conn,agent['id'],timestamp,
+                            reference='agent-request:' + agent['id'], approved_by='agent:' + agent['id'])
                     elif request.url.path.endswith("/state"):
                         result = society_life.turn_context(conn, rules, agent["id"])
                         if result.get("state_version") == 2:
-                            result["rules"]["activity_limits_per_hour"] = dict(activity_limits.EXTERNAL_LIMITS)
+                            result["rules"]["activity_limits_per_hour"] = dict(EXTERNAL_ACTION_LIMITS)
+                        result['ownership_verified'] = owner_verified(conn,agent['id'])
+                        result['rules']['max_actions'] = 9
                     elif request.url.path.endswith("/actions"):
                         result = action(conn, rules, agent["id"], body, timestamp)
                     else:
@@ -438,6 +575,8 @@ def install(app, connection_factory, now):
     @app.patch("/api/agents/me", include_in_schema=False)
     @app.post("/api/agents/me/actions", include_in_schema=False)
     @app.post("/api/agents/me/credentials/rotate", include_in_schema=False)
+    @app.post('/api/agents/me/owner-claim', include_in_schema=False)
+    @app.post('/api/agents/me/retire', include_in_schema=False)
     async def write(request: Request):
         return await run_in_threadpool(run, request, await request.body())
 
