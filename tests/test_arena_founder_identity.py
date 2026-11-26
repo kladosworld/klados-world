@@ -247,7 +247,7 @@ class FounderIdentityTests(InviteCase):
             json.dumps(society_life.turn_context(self.conn, RULES, "birch")),
         )
 
-    def test_custom_and_retired_profiles_and_fossils_are_protected(self):
+    def test_custom_suspended_and_historical_profiles_and_fossils_are_protected(self):
         self.conn.execute(
             "UPDATE society_agents SET public_description='CUSTOM_CANARY' WHERE id='birch'"
         )
@@ -263,8 +263,8 @@ class FounderIdentityTests(InviteCase):
             result["skipped"],
             {
                 "birch": "custom_or_missing_description",
-                "cedar": "retired",
-                "hazel": "retired",
+                "cedar": "participation_unavailable",
+                "hazel": "historical_death",
             },
         )
         self.assertNotIn("CUSTOM_CANARY", json.dumps(result))
@@ -278,7 +278,7 @@ class FounderIdentityTests(InviteCase):
             society.refresh_founders_v2(
                 self.conn, RULES, self.refresh_time, apply=True
             )["skipped"]["cedar"],
-            "retired",
+            "participation_unavailable",
         )
 
     def test_concurrent_refresh_is_idempotent(self):

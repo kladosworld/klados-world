@@ -244,3 +244,29 @@ class OptionalActionsTests(WorkerCase):
         self.assertIsNone(run.turn('alder',1))
         self.assertEqual(len(self.provider.requests),1)
         self.assertEqual(founder_batch.recoverable(self.conn),[])
+
+    def test_four_founder_institution_batches_use_existing_scheduler_and_recover_once(self):
+        names = ('Alder','Birch','Cedar','Hazel')
+        script = {name: json.dumps({'actions': [
+            {'action':'org_found','name':name+' Commons','charter':'Voluntary discussion and cooperation.',
+             'join_policy':'open','default_rule':{'quorum_pct':50,'threshold_pct':50}},
+            {'action':'trust','agent_id':names[(i+1)%4].lower(),'stance':'neutral',
+             'reason':'PRIVATE-INSTITUTION-CANARY'}]}) for i,name in enumerate(names)}
+        run = self.modern(script)
+        identities = self.conn.execute('SELECT id,name,public_description FROM society_agents ORDER BY id').fetchall()
+        at = self.now.replace(minute=59)
+        with patch.dict('os.environ', KLADOS_SHARED_PURPOSE='off'):
+            first = scheduler.step(self.conn,V2,run.gateway,None,at)
+            repeated = scheduler.step(self.conn,V2,run.gateway,None,at+timedelta(seconds=30))
+        self.assertEqual((first['turns'],repeated['turns']),(4,0))
+        self.assertEqual(len(self.provider.requests),4)
+        self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM society_organizations WHERE status='active'").fetchone()['n'],4)
+        self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_trust').fetchone()['n'],4)
+        self.assertEqual(self.conn.execute('SELECT id,name,public_description FROM society_agents ORDER BY id').fetchall(),identities)
+        self.assertEqual(founder_batch.recoverable(self.conn),[])
+        for agent in (name.lower() for name in names):
+            rows = self.conn.execute('SELECT private FROM society_turns WHERE agent_id=%s',(agent,)).fetchall()
+            self.assertEqual(len(rows),1)
+            self.assertFalse(any('error' in outcome for outcome in rows[0]['private']['outcomes']))
+            self.assertNotIn('PRIVATE-INSTITUTION-CANARY',json.dumps(society_public.public_view(self.conn,'profile',agent)))
+        self.assertEqual(society.audit(self.conn),[])

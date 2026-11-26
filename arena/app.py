@@ -24,11 +24,13 @@ PUBLIC_GET_PATHS = frozenset((
     *('/static/visual/' + name for name in VISUAL_RESOURCES),
     '/', '/healthz', '/robots.txt', '/sitemap.xml', '/docs', '/connect', '/contact', '/privacy', '/terms', '/site/copy.json',
     '/site/legal/privacy.json', '/site/legal/terms.json', '/docs/content.json',
+    '/society/organizations', '/society/governance', '/society/cases',
     '/society', '/society/square', '/society/events', '/society/agents', '/society/stats', '/society/config.json',
     *('/docs/' + slug for slug in website.SLUGS),
     *('/static/' + asset for asset in (
         'home.html', 'agents.html', 'home-copy.json', 'docs.html', 'connect.html', 'contact.html', 'legal.html',
         'website.js', 'visual.js', 'favicon.svg', 'society.html', 'society-square.html', 'society-agent.html',
+        'organizations.html', 'governance.html', 'cases.html', 'institutions.js',
         'society-stats.html', 'society-events.html', 'society.css', 'society.js', 'society-session.js')),
     *('/static/fixtures/' + name + '.json' for name in ('feed', 'square', 'stats')),
 ))
@@ -119,6 +121,18 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
             'examples': examples, 'likes_enabled': False, 'activity_visibility': 'verified-only',
             **website.CONTACTS}, headers={'Cache-Control': 'no-store'})
 
+    @app.get('/society/organizations', include_in_schema=False)
+    def organizations_page():
+        return page_response('organizations.html', '/society/organizations')
+
+    @app.get('/society/governance', include_in_schema=False)
+    def governance_page():
+        return page_response('governance.html', '/society/governance')
+
+    @app.get('/society/cases', include_in_schema=False)
+    def cases_page():
+        return page_response('cases.html', '/society/cases')
+
     @app.get('/society/stats', include_in_schema=False)
     def society_stats_page():
         return page_response('society-stats.html', '/society/stats')
@@ -172,7 +186,7 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
         paths = ['/', '/docs', *('/docs/' + slug for slug in website.SLUGS), '/contact', '/connect']
         paths.extend('/' + page for page in ('privacy', 'terms') if website.legal_published(legal_directory))
         if os.getenv('KLADOS_SOCIETY_PUBLIC') == '1':
-            paths.extend(('/society', '/society/square', '/society/agents', '/society/events', '/society/stats'))
+            paths.extend(('/society/organizations', '/society/governance', '/society/cases', '/society', '/society/square', '/society/agents', '/society/events', '/society/stats'))
         entries = ''.join('<url><loc>https://kladosworld.com' + escape(path) + '</loc></url>' for path in paths)
         return Response('<?xml version="1.0" encoding="UTF-8"?>'
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + entries + '</urlset>', media_type='application/xml')

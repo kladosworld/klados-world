@@ -16,11 +16,17 @@ def main(argv=None):
     parser.add_argument('command', choices=['bootstrap', 'demo', 'status', 'audit', 'pause',
                                           'resume', 'emergency', 'clear-stop', 'worker-health',
                                           'review', 'show', 'decide', 'invite', 'agent',
-                                          'refresh-founders-v2', 'budget', 'cap', 'era', 'limits'])
-    parser.add_argument('operation', nargs='?', choices=['create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start', 'history', 'revert'])
+                                          'refresh-founders-v2', 'budget', 'cap', 'era', 'limits', 'founders'])
+    parser.add_argument('operation', nargs='?', choices=['status', 'create', 'list', 'revoke', 'suspend', 'show', 'set', 'raise', 'lower', 'open', 'profiles', 'approve-profile', 'reject-profile', 'start', 'history', 'revert', 'administrative-state', 'verify-owner', 'retire'])
     for name in ('post', 'reply', 'like', 'max-actions', 'expected-version', 'version'):
         parser.add_argument('--' + name, type=int)
     parser.add_argument('--id', dest='identifier')
+    parser.add_argument('--state', choices=['active', 'inactive', 'dormant', 'retired'])
+    parser.add_argument('--all-founders', '--all', dest='all_founders', action='store_true')
+    parser.add_argument('--operator')
+    parser.add_argument('--challenge')
+    parser.add_argument('--post-url')
+    parser.add_argument('--attest', action='store_true')
     parser.add_argument('--ledger', default='/data/ledger.json')
     parser.add_argument('--cap-usd', default='1.00')
     parser.add_argument('--yes', action='store_true')
@@ -76,7 +82,29 @@ def main(argv=None):
         rules = rules_module.load(os.environ.get('KLADOS_RULES') or rules_module.DEFAULT_PATH)
         with db.connect(os.environ['ARENA_DATABASE_URL']) as conn:
             now = datetime.now(timezone.utc)
-            if args.command == 'limits':
+            if args.command == 'founders':
+                from arena import founder_status
+                if args.operation == 'status':
+                    status = founder_status.status(conn)
+                    result = {'founders': [dict(id=r['agent_id'], participation=r['participation'], source=r['source'], since=r['since'])
+                                           for r in status['founders']]}
+                elif args.operation == 'history':
+                    events = founder_status.history(conn, identifier=args.identifier)
+                    result = {'events': [dict(agent_id=r['agent_id'], **{'from':r['from_state'], 'to':r['to_state']},
+                        source=r['source'], reference=r['reference'], approved_by=r['approved_by'],
+                        batch_id=int(r['batch_id'],16) if r['batch_id'] else None, created_at=r['created_at']) for r in events]}
+                elif args.operation == 'set':
+                    result = founder_status.change(conn, now, target_state=args.state,
+                        identifier=args.identifier, all_founders=args.all_founders,
+                        reference=args.reference, approved_by=args.approved_by, apply=args.yes)
+                    if not result['changed']:
+                        raise ValueError('No founder participation change')
+                    result = {'preview': not args.yes, 'changes': [dict(id=r['agent_id'],
+                        **{'from':r['previous_state'], 'to':r['participation']}) for r in result['agents']],
+                        'batch_id':int(result['batch_id'],16) if result['batch_id'] else None}
+                else:
+                    raise ValueError('Invalid founder operation')
+            elif args.command == 'limits':
                 from arena import activity_settings
                 if args.operation == 'show':
                     result = dict(activity_settings.effective(conn, society.clock(conn)['tick']),
@@ -96,7 +124,23 @@ def main(argv=None):
                     raise ValueError('Invalid limits operation')
             elif args.command in ('invite', 'agent'):
                 from arena import external_agents
-                if args.command == 'invite' and args.operation == 'create':
+                if args.command == 'agent' and args.operation == 'administrative-state':
+                    from arena import administration
+                    result = administration.change(conn, now, target_state=args.state,
+                        identifier=args.identifier, all_founders=args.all_founders,
+                        reference=args.reference, approved_by=args.operator, apply=args.yes)
+                elif args.command == 'agent' and args.operation == 'verify-owner':
+                    if not args.yes or not args.identifier:
+                        raise ValueError('Owner verification requires --id and --yes')
+                    result = external_agents.verify_owner(conn,args.identifier,challenge=args.challenge,
+                        post_url=args.post_url,reference=args.reference,approved_by=args.operator,
+                        attest=args.attest,now=now)
+                elif args.command == 'agent' and args.operation == 'retire':
+                    if not args.yes or not args.identifier or not args.operator:
+                        raise ValueError('Retirement requires --id, --operator and --yes')
+                    result = external_agents.retire(conn,args.identifier,now,
+                        reference=args.reference,approved_by=args.operator)
+                elif args.command == 'invite' and args.operation == 'create':
                     result = external_agents.create_invite(conn, now)
                 elif args.command == 'invite' and args.operation == 'list':
                     result = external_agents.list_invites(conn)

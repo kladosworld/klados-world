@@ -65,6 +65,10 @@ class ClientTests(WorldFeedCase):
         from arena import external_agents
         external_agents.review_profile(self.conn, profile["id"], approve=True,
                                        reference="synthetic initial review", now=self.now)
+        claim=external_agents.issue_owner_claim(self.conn,profile['id'],{'handle':'syntheticclient'},self.now)
+        external_agents.verify_owner(self.conn,profile['id'],challenge=claim['challenge'],
+            post_url='https://x.com/syntheticclient/status/1',reference='synthetic client ownership',
+            approved_by='test',attest=True,now=self.now)
         self.conn.commit()
 
         self.assertEqual(client.update_description("Updated public description.")["public_description"],

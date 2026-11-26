@@ -21,7 +21,7 @@ import signal
 import sys
 import time
 
-from arena import db, society, society_report, worker, eras
+from arena import db, society, society_report, worker, eras, institutions, lifecycle
 from tee_arena.society import rules as rules_module
 
 LOCK = 73423189
@@ -52,6 +52,11 @@ def step(conn, rules, agents, watcher, now):
         result.update(tick=ticked["tick"], ticked=ticked["ticked"], deaths=len(ticked.get("deaths", [])))
     summary = worker.Worker(conn, rules, agents, observer_gateway=watcher, now=lambda: now,
                             purpose=purpose).run()
+    # Worker may pause on an infrastructure failure. Hooks must not run afterward.
+    if not society.clock(conn)['paused']:
+        institutions.close_due(conn, rules, now)
+        lifecycle.refresh(conn, now)
+        conn.commit()
     result.update({k: v for k, v in summary.items()})
     return result
 

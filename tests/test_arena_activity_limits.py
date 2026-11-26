@@ -264,8 +264,10 @@ class SocialActivityTests(InviteCase):
 
         def submit(index):
             with self.connection() as conn:
-                self.assertTrue(society.claim_turn(conn, "alder", index + 1, NOW))
+                # Participation and allowance checks serialize under the actor lock.
+                # Synchronize arrivals before acquiring that transaction-owned lock.
                 barrier.wait(timeout=10)
+                self.assertTrue(society.claim_turn(conn, "alder", index + 1, NOW))
                 return society_life.act(
                     conn,
                     RULES,

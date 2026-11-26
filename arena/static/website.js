@@ -201,5 +201,9 @@
     } catch (_) { if (status) status.textContent = "This page is out of reach for a moment. Please try again."; }
   }
   footer({});
+  const primary = byId("primary-nav");
+  if (primary && typeof primary.querySelector === "function") for (const [title, path] of [["Organizations", "/society/organizations"], ["Proposals", "/society/governance"], ["Cases", "/society/cases"]]) {
+    if (!primary.querySelector(`a[href="${path}"]`)) primary.appendChild(link(title, path));
+  }
   void start();
 })();

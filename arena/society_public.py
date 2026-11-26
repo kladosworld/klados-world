@@ -251,6 +251,7 @@ def public_view(conn, view, agent_id=None, *, opened=()):
         agent["energy_enabled"] = rules.energy_enabled
         agent["energy"] = None
         agent["persistent"] = rules.persistent
+        agent.update(_participation(conn, agent['id']))
     if view == "feed":
         return {"paused": clock["paused"], "agents": agents, "events": [],
                 "posts":public_posts(conn, clock["tick"])}
@@ -263,8 +264,99 @@ def public_view(conn, view, agent_id=None, *, opened=()):
         return {"population": {"registered": len(agents)}, "activity_by_day": [],
                 "interactions": [], "events": {}, "published":dict(counts)}
     agent = next((row for row in agents if row["id"] == agent_id), None)
-    return None if agent is None else dict(agent, posts=public_posts(conn,clock["tick"],agent_id,20),
-                                          energy_history=[],relations={},last_words=None,fossil=None)
+    if agent is None:
+        return None
+    from arena import reputation
+    return dict(agent, posts=public_posts(conn,clock['tick'],agent_id,20),
+                energy_history=[],relations={},last_words=None,fossil=None,
+                reputation=reputation.public(conn, agent_id),
+                memberships=public_memberships(conn, agent_id))
+
+
+def _participation(conn, agent_id):
+    """Public labels only; no operator identities, reasons or approval references."""
+    from arena import administration
+    state = administration.describe(conn, agent_id)
+    if state.get('participation_label'):
+        return {'participation_label': state['participation_label'],
+                'participation_source': state.get('participation_source', 'admin')}
+    admin = state['administrative_state']
+    security = state['participation']
+    if admin != 'active':
+        return {'participation_label': admin, 'participation_source': 'admin'}
+    if security != 'active':
+        return {'participation_label': security, 'participation_source': 'security'}
+    row = conn.execute('SELECT state FROM society_agent_lifecycle WHERE agent_id=%s', (agent_id,)).fetchone()
+    return {'participation_label': row['state'] if row else 'active', 'participation_source': 'auto'}
+
+
+def _institution_rows(conn, kind, identifier=None):
+    """Only cleared, current-era, verified public sources. Never SELECT private text."""
+    if kind == 'organizations':
+        query = '''SELECT DISTINCT o.id,o.name,
+            CASE WHEN o.charter_version=1 OR EXISTS (
+                SELECT 1 FROM society_institution_texts amendment JOIN visible_posts source ON source.id=amendment.post_id
+                WHERE amendment.object_kind='proposal' AND amendment.action='org_propose'
+                AND amendment.clearance='cleared' AND amendment.object_id::text=(
+                    SELECT e.data->>'proposal_id' FROM society_org_events e WHERE e.org_id=o.id
+                    AND e.kind='charter_amended' ORDER BY e.id DESC LIMIT 1))
+                THEN o.charter_text ELSE NULL END AS charter_text,o.charter_version,o.join_policy,
+            o.created_by,o.created_tick,o.activated_tick,o.status
+            FROM society_organizations o JOIN society_institution_texts t
+            ON t.object_kind='organization' AND t.object_id=o.id AND t.action='org_found'
+            JOIN visible_posts p ON p.id=t.post_id
+            WHERE o.status='active' AND t.clearance='cleared' AND (%s::bigint IS NULL OR o.id=%s)
+            ORDER BY o.id DESC LIMIT 100'''
+    elif kind == 'proposals':
+        query = '''SELECT DISTINCT o.id,o.scope_id AS org_id,o.author_id,o.kind,o.text,o.options,
+            o.opens_tick,o.closes_tick,o.rule,o.status,o.result
+            FROM society_proposals o JOIN society_organizations org ON org.id=o.scope_id
+            JOIN society_institution_texts t ON t.object_kind='proposal' AND t.object_id=o.id
+            JOIN visible_posts p ON p.id=t.post_id
+            WHERE org.status='active' AND o.status IN ('open','passed','failed','cancelled','applied')
+            AND t.clearance='cleared' AND (%s::bigint IS NULL OR o.id=%s)
+            ORDER BY o.id DESC LIMIT 100'''
+    elif kind == 'cases':
+        query = '''SELECT c.id,c.forum_org_id,c.filed_by,c.subject_ids,c.claim_text,c.status,
+            c.opened_tick,c.closed_tick,c.outcome FROM society_cases c
+            WHERE c.status IN ('open','closed') AND (%s::bigint IS NULL OR c.id=%s) AND (
+                EXISTS (SELECT 1 FROM society_institution_texts t JOIN visible_posts p ON p.id=t.post_id
+                    WHERE t.object_kind='case' AND t.object_id=c.id AND t.action='case_open' AND t.clearance='cleared')
+                OR EXISTS (SELECT 1 FROM society_institution_texts t JOIN visible_posts p ON p.id=t.post_id
+                    WHERE p.id::text=c.outcome->>'source_post_id' AND t.clearance='cleared'))
+            ORDER BY c.id DESC LIMIT 100'''
+    else:
+        raise society.SocietyError('no_such_institution_view')
+    rows = [dict(r) for r in conn.execute(PUBLIC_POSTS + query, (identifier, identifier))]
+    for row in rows:
+        if kind == 'proposals':
+            row['rule'] = {key: row['rule'].get(key) for key in ('electorate', 'quorum_pct', 'threshold_pct')}
+            row['result'] = {key: row['result'][key] for key in
+                ('electorate', 'votes', 'approval_votes', 'passed', 'error') if row['result'] and key in row['result']}
+        elif kind == 'cases':
+            outcome = row.pop('outcome') or {}
+            # A ruling's own proposal must still have a verified cleared source.
+            ruling = outcome.get('ruling') or {}
+            ruling = ruling if isinstance(ruling, dict) else {}
+            proposal_id = ruling.get('proposal_id')
+            valid_id = type(proposal_id) is int and 0 < proposal_id < 2**63
+            visible = bool(_institution_rows(conn, 'proposals', proposal_id)) if valid_id else False
+            row['ruling'] = ({'proposal_id': proposal_id, **{key: ruling[key] for key in ('finding', 'remedy') if isinstance(ruling.get(key), str)}} if visible else {})
+            row['entries'] = [dict(e) for e in conn.execute(PUBLIC_POSTS + '''SELECT e.id,e.actor_id,e.kind,e.text,e.tick
+                FROM society_case_entries e JOIN society_institution_texts t
+                ON t.object_kind='case_entry' AND t.object_id=e.id
+                JOIN visible_posts p ON p.id=t.post_id WHERE e.case_id=%s AND e.clearance='cleared'
+                AND t.clearance='cleared' ORDER BY e.id LIMIT 50''', (row['id'],))]
+    return rows
+
+
+def public_memberships(conn, agent_id):
+    organizations = _institution_rows(conn, 'organizations')
+    allowed = [o['id'] for o in organizations]
+    return [dict(r) for r in conn.execute('''SELECT m.org_id,o.name,m.role,m.joined_tick
+        FROM society_memberships m JOIN society_organizations o ON o.id=m.org_id
+        WHERE m.agent_id=%s AND m.left_tick IS NULL AND m.org_id=ANY(%s)
+        ORDER BY m.org_id LIMIT 100''', (agent_id, allowed))]
 
 
 def install(app, connection_factory, now):
@@ -302,6 +394,40 @@ def install(app, connection_factory, now):
         if result is None:
             raise HTTPException(404, "Not found")
         return result
+
+    def institution(kind, identifier=None):
+        if identifier is not None and not 1 <= identifier <= 9223372036854775807:
+            raise HTTPException(404, 'Not found')
+        rows = read(lambda conn: _institution_rows(conn, kind, identifier))
+        if identifier is None:
+            return {kind: rows}
+        if not rows:
+            raise HTTPException(404, 'Not found')
+        return rows[0]
+
+    @app.get('/api/society/organizations', include_in_schema=False)
+    def get_organizations():
+        return institution('organizations')
+
+    @app.get('/api/society/organizations/{identifier}', include_in_schema=False)
+    def get_organization(identifier: int):
+        return institution('organizations', identifier)
+
+    @app.get('/api/society/proposals', include_in_schema=False)
+    def get_proposals():
+        return institution('proposals')
+
+    @app.get('/api/society/proposals/{identifier}', include_in_schema=False)
+    def get_proposal(identifier: int):
+        return institution('proposals', identifier)
+
+    @app.get('/api/society/cases', include_in_schema=False)
+    def get_cases():
+        return institution('cases')
+
+    @app.get('/api/society/cases/{identifier}', include_in_schema=False)
+    def get_case(identifier: int):
+        return institution('cases', identifier)
 
     @app.post("/api/society/posts/{post_id}/like", include_in_schema=False)
     def post_like(post_id: int, request: Request):

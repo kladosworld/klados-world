@@ -3,7 +3,6 @@
 import io
 import json
 import os
-import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
@@ -140,7 +139,13 @@ class InviteCase(DatabaseCase):
 
         if response.status_code == 201:
             with self.connection() as review:
-                external.review_profile(review, response.json()["id"], approve=True, reference="synthetic fixture approval", now=self.now)
+                identifier=response.json()['id']
+                external.review_profile(review, identifier, approve=True, reference="synthetic fixture approval", now=self.now)
+                handle='kw'+identifier[-13:]
+                claim=external.issue_owner_claim(review,identifier,{'handle':handle},self.now)
+                external.verify_owner(review,identifier,challenge=claim['challenge'],
+                    post_url=f'https://x.com/{handle}/status/1',reference='synthetic fixture ownership',
+                    approved_by='test',attest=True,now=self.now)
         return response
 
     def headers(self, registration):

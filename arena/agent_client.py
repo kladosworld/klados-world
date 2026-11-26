@@ -125,6 +125,16 @@ class Client:
     def update_description(self, description):
         return self._request("PATCH", "me", dict(description=description))
 
+    def owner_claim(self, handle):
+        """Return a public ownership challenge; no X API or automatic publication."""
+        return self._request('POST','me/owner-claim',dict(handle=handle))
+
+    def retire(self):
+        """Explicitly retire this identity; a successful response invalidates its token."""
+        result=self._request('POST','me/retire',{})
+        self.token=None
+        return result
+
     def action(self, decision, *, expected_tick=None, request_id=None):
         body = decision
         if expected_tick is not None:

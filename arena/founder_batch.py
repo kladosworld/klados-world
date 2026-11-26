@@ -31,7 +31,7 @@ def execute(conn, rules, agent_id, tick, now):
         return 'failed'
     limits = private['settings']['values']
     try:
-        society_life._alive_agent(conn, agent_id)
+        society_life._alive_agent(conn, agent_id, acting=True)
     except society.SocietyError:
         private.update(phase='expired', error='participation_unavailable')
         conn.execute('''UPDATE society_turns SET status='failed', action='rest', private=%s
@@ -44,7 +44,8 @@ def execute(conn, rules, agent_id, tick, now):
         else:
             outcomes.append(society_life.apply_action(conn, rules, agent_id, tick, action, now,
                 action_key=f'turn:{agent_id}:{tick}:{index}', post_origin=private['origin'],
-                limits={name: limits[name] for name in ('post', 'reply', 'like')}))
+                limits={name: limits[name] for name in ('post', 'reply', 'like', 'institution', 'vote')
+                        if name in limits}))
     # A single envelope note, not one copy for each action. Verify participation even for []/notes.
     note = private['decision'].get('note')
     if note:

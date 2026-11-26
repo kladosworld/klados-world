@@ -189,6 +189,8 @@ class Worker:
                 if not current or current['status']!='published':
                     return False
                 self.conn.execute("UPDATE society_posts SET status='pending',flagged=true WHERE id=%s",(post['id'],))
+                from arena.institutions import on_text_status
+                on_text_status(self.conn, self.rules, post['id'], 'pending', self.now())
                 society.event(self.conn,self.rules,society.clock(self.conn)['tick'],'moderation_contested',self.now(),
                               post_id=post['id'],source='contextual_review_signal')
                 post['screening_generation'] = self.conn.execute("""SELECT max(id) AS generation FROM society_events
@@ -332,6 +334,9 @@ class Worker:
 
     def reflect(self, agent_id, day, tick):
         eras.require_purpose(self.conn, self.purpose)
+        from arena import administration
+        if not administration.is_active(self.conn, agent_id, lock=True):
+            return None
         try:
             context = society_life.reflection_context(self.conn, self.rules, agent_id, day)
         except society.SocietyError:

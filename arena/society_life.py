@@ -22,10 +22,14 @@ def society_day(tick):
     return max(tick - 1, 0) // 24
 
 
-def _alive_agent(conn, agent_id):
+def _alive_agent(conn, agent_id, *, acting=False):
     row = conn.execute("SELECT * FROM society_agents WHERE id = %s", (agent_id,)).fetchone()
-    if row is None or row["kind"] not in society.LIVING_KINDS or row["status"] != "alive" or row["participation"] != "active":
+    if row is None or row["kind"] not in society.LIVING_KINDS or row["status"] != "alive" or row["participation"] not in ("active", "dormant"): 
         raise society.SocietyError("not_alive")
+    if acting:
+        from arena import administration
+        if not administration.is_active(conn, agent_id, lock=True):
+            raise society.SocietyError('not_alive')
     return row
 
 
@@ -86,8 +90,14 @@ def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post
     outcome = {"action": decision["action"]}
     try:
         with conn.transaction():  # savepoint: a refused action leaves nothing behind
-            _alive_agent(conn, agent_id)
+            _alive_agent(conn, agent_id, acting=True)
             action = decision["action"]
+            from tee_arena.society.decisions import INSTITUTION_ACTIONS
+            if action in INSTITUTION_ACTIONS:
+                from arena import institutions
+                return dict(action=action, **institutions.apply(
+                    conn, rules, agent_id, tick, decision, now,
+                    action_key=action_key, origin=post_origin, limits=limits))
             activity_limits.check(conn, rules, agent_id, action, now, limits=limits)
             if action in ("post", "reply"):
                 reply_to = _post(conn, decision["post_id"])["id"] if action == "reply" else None
@@ -107,6 +117,8 @@ def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post
                     initial_gate(conn, rules, outcome['post_id'], decision['text'], now)
             elif action == "like":
                 outcome["paid"] = _like(conn, rules, agent_id, _post(conn, decision["post_id"]), tick, now)
+                from arena import lifecycle
+                lifecycle.touch(conn, agent_id, now)
             if decision.get("note"):
                 conn.execute("INSERT INTO society_notes (agent_id, tick, text, created_at) VALUES (%s, %s, %s, %s)",
                              (agent_id, tick, decision["note"], now))
@@ -292,6 +304,8 @@ def turn_context(conn, rules, agent_id):
         for key in ("post_cost", "reply_cost", "like_cost", "energy_per_like", "paid_likes_per_day", "energy_cap"):
             context["rules"].pop(key)
         context["rules"]["what_people_can_do"] = "read the public website"
+        from arena import institution_context
+        context["institutions"] = institution_context.build(conn, agent_id)
         return _v2_turn_shape(context)
     return context
 
@@ -301,8 +315,11 @@ def reflections_due(conn):
     tick = society.clock(conn)["tick"]
     due = []
     for agent in conn.execute("""SELECT id, born_tick FROM society_agents
-                                 WHERE kind = 'founder' AND status = 'alive' AND participation='active' ORDER BY id""",
+                                 WHERE kind = 'founder' AND status = 'alive' AND participation IN ('active','dormant') ORDER BY id""",
                                  ()):
+        from arena import administration
+        if not administration.is_active(conn, agent["id"]):
+            continue
         lived = tick - agent["born_tick"]
         if lived >= 24 and agent["born_tick"] + 24 * (lived // 24) > eras.current(conn)["started_tick"]:
             day = lived // 24 - 1
@@ -357,6 +374,8 @@ def reflection_context(conn, rules, agent_id, day):
     if rules.persistent:
         for key in ("energy_at_start", "energy_at_end", "living_cost_tomorrow"):
             context["the_day"].pop(key)
+        from arena import institution_context
+        context["institutions"] = institution_context.build(conn, agent_id)
         return _v2_reflection_shape(context)
     return context
 

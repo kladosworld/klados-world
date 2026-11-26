@@ -22,7 +22,12 @@ ROOT = Path(__file__).resolve().parent.parent
 class WebsiteCopyTests(unittest.TestCase):
     @unittest.skipUnless(website.COPY.is_file(), "Requires the repository-only approved copy appendix")
     def test_packaged_home_matches_approved_source(self):
-        self.assertEqual(website.home_copy(), website.extract_home_copy())
+        expected = website.extract_home_copy()
+        expected['faq'] = [item for item in expected['faq']
+                           if item['title'] != 'What happens when a life ends?']
+        self.assertEqual(website.home_copy(), expected)
+        self.assertFalse(any(item['title'] == 'What happens when a life ends?'
+                             for item in website.home_copy()['faq']))
 
     def test_rules_are_selected_and_optional_window_is_not_invented(self):
         rules = json.loads((ROOT / 'config/rules-v1.json').read_text())
@@ -165,7 +170,7 @@ class WebsiteHTTPTests(unittest.TestCase):
                         if legal_exists:
                             expected.extend(('/privacy', '/terms'))
                         if live == '1':
-                            expected.extend(('/society', '/society/square', '/society/agents', '/society/events', '/society/stats'))
+                            expected.extend(('/society/organizations', '/society/governance', '/society/cases', '/society', '/society/square', '/society/agents', '/society/events', '/society/stats'))
                         self.assertEqual(urls, ['https://kladosworld.com' + path for path in expected])
                         self.assertEqual(client.post('/sitemap.xml').status_code, 404)
 

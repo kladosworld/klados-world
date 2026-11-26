@@ -1,7 +1,6 @@
 """Offline prompt/configuration contracts; no live activation or provider calls."""
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
-from hashlib import sha256
 import json
 from pathlib import Path
 import tempfile
@@ -116,7 +115,12 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_governance_and_economy_language_does_not_add_action_capabilities(self):
         selected = SYNTHETIC
+        system, _ = prompts.turn({"institutions": {}}, purpose=selected)
+        self.assertTrue(system.startswith(selected.prefix()))
+        self.assertNotIn(prompts.INSTITUTION_FORMAT.strip(), system)
         for action in ("vote", "transact", "create_organization", "change_rules", "change_infrastructure"):
             with self.subTest(action=action), self.assertRaises(decisions.DecisionError) as caught:
                 decisions.parse_turn(json.dumps({"action": action}))
-            self.assertEqual(caught.exception.code, "unknown_action")
+            # Shared Purpose cannot fill required fields or grant platform effects.
+            self.assertEqual(caught.exception.code,
+                "schema" if action in decisions.INSTITUTION_ACTIONS else "unknown_action")
