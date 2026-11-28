@@ -271,7 +271,7 @@ def close_due(conn, rules, now):
     from arena import operation_locks
     operation_locks.institutions(conn)
     tick = society.clock(conn)['tick']
-    rows = conn.execute("SELECT id FROM society_commitments WHERE status IN ('open','claimed') AND due_tick<=%s ORDER BY id FOR UPDATE", (tick,)).fetchall()
+    rows = conn.execute("SELECT id FROM society_commitments WHERE status IN ('open','claimed') AND due_tick<=%s ORDER BY id LIMIT 32 FOR UPDATE", (tick,)).fetchall()
     for row in rows:
         _event(conn, row['id'], 'expired', None, tick, now)
         conn.execute("UPDATE society_commitments SET status='expired' WHERE id=%s", (row['id'],))

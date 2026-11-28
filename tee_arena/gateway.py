@@ -16,6 +16,7 @@ injectable provider, usage read from the response envelope) and
 Errors carry a fixed category only, never provider messages, request text or keys.
 Provider adapters import their SDK and read their API key only when a call is made.
 """
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_CEILING
 import json
@@ -37,7 +38,7 @@ INPUT_OVERHEAD_TOKENS = 512
 DEFAULT_STOP_FILE = Path("/etc/klados-control/KILLED")  # Klados only: `touch` it to refuse every model call.
 
 CATEGORIES = ("invalid_request", "model_not_allowed", "stopped", "cap_exceeded", "duplicate_request",
-              "credential_unavailable", "accounting_unavailable", "sdk_unavailable", "provider_failure", "response_incomplete",
+              "paid_operations_suspended", "credential_unavailable", "accounting_unavailable", "sdk_unavailable", "provider_failure", "response_incomplete",
               "response_too_large", "response_invalid", "provider_rejected")
 # Client errors the providers reject before doing any work and do not bill: bad
 # request, authentication, payment required, permission, not found, conflict, too
@@ -52,10 +53,12 @@ class GatewayError(RuntimeError):
     billed). ``charged_microusd`` is what the ledger kept for it.
     """
 
-    def __init__(self, category, *, sent=False, charged_microusd=0, status=None, error_type=None):
+    def __init__(self, category, *, sent=False, charged_microusd=0, status=None, error_type=None, reason=None):
         if category not in CATEGORIES:
             category = "provider_failure"
         self.category, self.sent, self.charged_microusd = category, sent, charged_microusd
+        from tee_arena.paid_control import REASONS
+        self.reason = reason if reason in REASONS else None
         # Safe diagnostics only: an HTTP status and an exception class name, never
         # a message, which could echo request text or credentials.
         self.status = status if type(status) is int and 100 <= status <= 599 else None
@@ -154,6 +157,8 @@ class Gateway:
     providers: dict = field(default_factory=dict)
     stop_file: Path | None = DEFAULT_STOP_FILE
     timeout_seconds: int = 60
+    paid_authorizer: object = None
+    reservation_context: object = None
 
     def __post_init__(self):
         for model_id, price in self.models.items():
@@ -162,6 +167,19 @@ class Gateway:
             price.rates()
         if type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 300:
             raise ValueError("Timeout must be 1-300 seconds.")
+
+    def _authorize_paid(self):
+        if self.paid_authorizer is not None:
+            from tee_arena.paid_control import Decision
+            try:
+                decision = self.paid_authorizer(min_remaining=self.timeout_seconds+60)
+            except Exception:
+                raise GatewayError('paid_operations_suspended', reason='control_unavailable') from None
+            if not isinstance(decision, Decision) or type(decision.allowed) is not bool:
+                raise GatewayError('paid_operations_suspended', reason='control_unavailable')
+            if not decision.allowed:
+                raise GatewayError('paid_operations_suspended', reason=decision.reason)
+            return decision.lease_id
 
     def _provider(self, name):
         if name not in self.providers:
@@ -210,8 +228,11 @@ class Gateway:
         price = self.models[model_id]
         provider_name, model = model_id.split(":", 1)
         reserved = cost_microusd(price, input_token_allowance(system, messages), max_output_tokens)
+        reservation = None
         try:
-            reservation = self.ledger.reserve(account, reserved, request_id, note=f"{role} {model_id}")
+            with self.reservation_context() if self.reservation_context is not None else nullcontext():
+                reservation = self.ledger.reserve(account, reserved, request_id, note=f"{role} {model_id}",
+                                                  **({"authorization":self._authorize_paid} if self.paid_authorizer is not None else {}))
         except ledger_module.CapExceeded:
             raise GatewayError("cap_exceeded") from None
         except ledger_module.DuplicateRequest:
@@ -219,7 +240,13 @@ class Gateway:
         except ledger_module.UnknownAccount:
             raise GatewayError("invalid_request") from None
         except (ledger_module.LedgerError, OSError, ValueError):
+            if reservation is not None:
+                self._release(reservation,note='not sent: reservation context failed')
             raise GatewayError("accounting_unavailable") from None
+        except BaseException:
+            if reservation is not None:
+                self._release(reservation,note='not sent: reservation context failed')
+            raise
 
         request = Request(model=model, system=system, messages=messages,
                           max_output_tokens=max_output_tokens, timeout_seconds=self.timeout_seconds)

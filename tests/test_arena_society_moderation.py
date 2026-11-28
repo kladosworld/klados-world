@@ -160,7 +160,7 @@ class PublicApiTests(LifeCase):
         square = bodies[1].json()["posts"]
         self.assertEqual(square, [])
         alder = bodies[2].json()
-        self.assertEqual(alder["relations"], {})
+        self.assertEqual(alder["relations"], {key: {} for key in ('replied_to', 'replies_from', 'liked', 'liked_by')})
         self.assertEqual(self.client.get("/api/society/agents/nobody").status_code, 404)
 
     def test_everything_is_hidden_until_enabled(self):

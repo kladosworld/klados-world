@@ -101,6 +101,9 @@ def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post
     outcome = {"action": decision["action"]}
     try:
         with conn.transaction():  # savepoint: a refused action leaves nothing behind
+            from tee_arena import paid_control
+            if paid_control.killed():
+                raise society.SocietyError('emergency_stopped')
             _alive_agent(conn, agent_id, acting=True)
             action = decision["action"]
             from tee_arena.society.decisions import INSTITUTION_ACTIONS
@@ -150,6 +153,7 @@ def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post
         # Return literal public codes, never arbitrary exception messages.
         code = {
             "not_alive": "not_alive",
+            "emergency_stopped": "emergency_stopped",
             "no_such_post": "no_such_post",
             "own_post": "own_post",
             "already_liked_today": "already_liked_today",
@@ -164,9 +168,9 @@ def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post
 
 def fail_turn(conn, agent_id, tick, code, *, charged_microusd=0):
     """The model gave no usable decision: the turn is a rest that costs no energy."""
-    conn.execute("""UPDATE society_turns SET status = CASE WHEN %s='budget_exhausted' THEN 'done' ELSE 'failed' END, action = 'rest', charged_microusd = %s, private = %s
+    conn.execute("""UPDATE society_turns SET status = CASE WHEN %s='budget_exhausted' OR %s LIKE 'paid_operations_suspended:%%' THEN 'done' ELSE 'failed' END, action = 'rest', charged_microusd = %s, private = %s
                     WHERE agent_id = %s AND tick = %s AND status = 'claimed'""",
-                 (code, charged_microusd, Jsonb({"error": code}), agent_id, tick))
+                 (code, code, charged_microusd, Jsonb({"error": code}), agent_id, tick))
 
 
 def strategy(conn, agent_id):

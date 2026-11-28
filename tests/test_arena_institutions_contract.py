@@ -271,23 +271,28 @@ class InstitutionTests(DatabaseCase):
         close.assert_not_called()
         refresh.assert_not_called()
 
-    def test_scheduler_contract_after_worker_and_after_worker_pause(self):
+    def test_scheduler_free_maintenance_precedes_paid_worker_and_respects_pause(self):
         society.set_paused(self.conn, RULES, False, NOW, 'synthetic')
         self.conn.commit()
         seen = []
         fake_worker = Mock()
-        fake_worker.run.side_effect = lambda: seen.append('worker') or {}
+        fake_worker.run.side_effect = lambda **kwargs: seen.append('worker') or {}
         with patch('arena.worker.Worker', return_value=fake_worker), \
              patch.object(institutions, 'close_due', side_effect=lambda *a: seen.append('close')), \
              patch('arena.lifecycle.refresh', side_effect=lambda *a: seen.append('refresh')):
             scheduler.step(self.conn, RULES, Mock(), Mock(), NOW)
-        self.assertEqual(seen, ['worker', 'close', 'refresh'])
-        def pause():
+        self.assertEqual(seen, ['close', 'refresh', 'worker'])
+        fake_worker.run.assert_called_once_with(screening=True)
+        def pause(**kwargs):
             society.set_paused(self.conn, RULES, True, NOW, 'synthetic')
             return {}
         fake_worker.run.side_effect = pause
         with patch('arena.worker.Worker', return_value=fake_worker), \
              patch.object(institutions, 'close_due') as close:
+            scheduler.step(self.conn, RULES, Mock(), Mock(), NOW)
+        close.assert_called_once()
+        self.assertTrue(society.clock(self.conn)['paused'])
+        with patch.object(institutions, 'close_due') as close:
             scheduler.step(self.conn, RULES, Mock(), Mock(), NOW)
         close.assert_not_called()
 

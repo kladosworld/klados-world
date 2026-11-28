@@ -76,6 +76,18 @@ def connect(dsn):
     return conn
 
 
+def connect_web(dsn):
+    """Bound active web SQL as well as socket admission; migration callers unchanged."""
+    conn = connect(dsn)
+    try:
+        conn.execute("SET statement_timeout='5s'; SET lock_timeout='2s'; SET idle_in_transaction_session_timeout='15s'")
+        conn.commit()
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
 def migrate(conn):
     """Apply versioned plain SQL migrations exactly once in the caller's transaction."""
     conn.execute('SELECT pg_advisory_xact_lock(73423188)')

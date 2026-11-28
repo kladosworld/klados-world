@@ -45,7 +45,7 @@ def admit_external(conn, agent_id):
     No provider calls or text logging; a refusal rolls back the action's savepoint.
     """
     conn.execute('SELECT pg_advisory_xact_lock(%s)', (73423205,))
-    total = conn.execute("SELECT count(*) AS n FROM (SELECT id FROM society_posts WHERE status='pending' LIMIT %s) q",
+    total = conn.execute("""SELECT count(*) AS n FROM (SELECT p.id FROM society_posts p WHERE p.status='pending' OR (p.status='withheld' AND EXISTS (SELECT 1 FROM society_findings f WHERE f.post_id=p.id AND f.id=(SELECT max(id) FROM society_findings WHERE post_id=p.id) AND f.severity='grave' AND f.decision IS NULL)) LIMIT %s) q""",
                          (MANDATORY_QUEUE_LIMIT,)).fetchone()['n']
     owner = conn.execute('SELECT handle_sha256 FROM external_owner_claims WHERE agent_id=%s ORDER BY id DESC LIMIT 1',
                          (agent_id,)).fetchone()
@@ -54,7 +54,7 @@ def admit_external(conn, agent_id):
         owned = [r['agent_id'] for r in conn.execute(
             'SELECT DISTINCT agent_id FROM external_owner_claims WHERE handle_sha256=%s',
             (owner['handle_sha256'],))]
-    count = conn.execute("SELECT count(*) AS n FROM (SELECT id FROM society_posts WHERE status='pending' AND author_id=ANY(%s) LIMIT %s) q",
+    count = conn.execute("""SELECT count(*) AS n FROM (SELECT p.id FROM society_posts p WHERE p.author_id=ANY(%s) AND (p.status='pending' OR (p.status='withheld' AND EXISTS (SELECT 1 FROM society_findings f WHERE f.post_id=p.id AND f.id=(SELECT max(id) FROM society_findings WHERE post_id=p.id) AND f.severity='grave' AND f.decision IS NULL))) LIMIT %s) q""",
                          (owned, EXTERNAL_OWNER_PENDING_LIMIT)).fetchone()['n']
     if total >= MANDATORY_QUEUE_LIMIT or count >= EXTERNAL_OWNER_PENDING_LIMIT:
         raise society.SocietyError('moderation_queue_full')
@@ -143,6 +143,11 @@ def apply_verdict(conn, rules, post_id, verdict, now):
     previous = conn.execute('SELECT metadata FROM society_findings WHERE post_id=%s ORDER BY id DESC LIMIT 1',(post_id,)).fetchone()
     previous_meta = previous['metadata'] if previous else {}
     skipped = verdict.get('review_status')=='skipped'
+    external = conn.execute('SELECT kind FROM society_agents WHERE id=%s', (post['author_id'],)).fetchone()['kind'] == 'external'
+    if (external and verdict['severity'] != 'grave' and not skipped
+            and 'review_performed' in verdict
+            and verdict['review_performed'] not in ('classifier','contextual','human')):
+        raise society.SocietyError('moderation_review_missing')
     if (previous_meta.get('review_requirement')=='contextual' and verdict['severity']!='grave'
             and not skipped and verdict.get('review_performed') not in ('contextual','human')):
         raise society.SocietyError('contextual_review_missing')

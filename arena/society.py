@@ -288,6 +288,9 @@ def tick(conn, rules, now):
     operation_locks.social(conn, exclusive=True)
     now = _utc(now)
     state = clock(conn, lock=True)
+    from tee_arena import paid_control
+    if paid_control.killed():
+        return {'ticked': False, 'reason': 'emergency_stopped', 'tick': state['tick']}
     if state["paused"]:
         return {"ticked": False, "reason": "paused", "tick": state["tick"]}
     if state["last_tick_at"] and now - state["last_tick_at"] < timedelta(minutes=rules.min_minutes_between_ticks):
@@ -319,6 +322,9 @@ def set_paused(conn, rules, paused, now, reason):
     """Pause or resume. While paused nothing ages; resuming starts a fresh tick gap."""
     from arena import operation_locks
     operation_locks.social(conn, exclusive=True)
+    from tee_arena import paid_control
+    if not paused and paid_control.killed():
+        raise SocietyError('emergency_stopped')
     now = _utc(now)
     state = clock(conn, lock=True)
     if state["paused"] == paused:

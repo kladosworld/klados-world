@@ -250,7 +250,7 @@ class WorkerTests(WorkerCase):
         error = GatewayError("provider_failure", sent=True, charged_microusd=11)
         with patch.object(run, "call", side_effect=[SimpleNamespace(text="thinking", charged_microusd=7), error]):
             self.assertEqual(run.reflect("alder", 0, 24), "stop")
-        self.assertTrue(society.clock(self.conn)["paused"])
+        self.assertFalse(society.clock(self.conn)["paused"])
         row = self.conn.execute("SELECT * FROM society_reflections WHERE agent_id='alder'").fetchone()
         self.assertEqual(row["charged_microusd"], 18)
         self.assertEqual(row["private"]["error"], "call_provider_failure")
@@ -270,14 +270,14 @@ class WorkerTests(WorkerCase):
         self.assertEqual(run.run()["turns"], 0)  # the hour's turns are spent
         self.assertEqual(self.provider.requests[0].model, "anthropic/claude-haiku-5.5")
 
-    def test_repeated_failures_pause_the_society(self):
+    def test_repeated_failures_stop_only_hosted_inference(self):
         def broken(request):
             raise RuntimeError("upstream down")
         run = self.make({name: broken for name in ("Alder", "Birch", "Cedar", "Hazel")})
         self.assertTrue(run.run()["stopped"])
-        self.assertTrue(society.clock(self.conn)["paused"])
+        self.assertFalse(society.clock(self.conn)["paused"])
         self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM society_turns").fetchone()["n"], 3)
-        self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: provider_failure")
+        self.assertEqual(self.events("paused"), [])
 
     def test_an_unusable_reflection_is_tried_once_more(self):
         replies = iter(["thinking...", '{"keep": true}'])

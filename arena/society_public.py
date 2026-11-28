@@ -219,10 +219,21 @@ def public_view(conn, view, agent_id=None, *, opened=()):
     """Published, writer-attested activity only. Historical unknown/mock data stays private."""
     clock = society.clock(conn)
     rules = _rules()
+    if view == 'square':
+        return {'posts': public_posts(conn, clock['tick'], opened=opened)}
+    if view == 'stats':
+        counts = conn.execute(PUBLIC_POSTS + """SELECT
+            count(*) FILTER (WHERE reply_to IS NULL) AS posts,
+            count(*) FILTER (WHERE reply_to IS NOT NULL) AS replies FROM visible_posts""").fetchone()
+        registered = conn.execute('SELECT count(*) AS n FROM society_agents WHERE kind=ANY(%s)',
+                                   (list(society.LIVING_KINDS),)).fetchone()['n']
+        return {'population':{'registered':registered}, 'activity_by_day':[],
+                'interactions':[], 'events':{}, 'published':dict(counts)}
     agents = [dict(row) for row in conn.execute(
         "SELECT a.id, a.name, a.kind, a.status, a.participation, a.born_tick, a.died_tick, a.public_description AS description, v.avatar_key "
         "FROM society_agents a LEFT JOIN external_agent_avatars v ON v.agent_id=a.id "
-        "WHERE a.kind = ANY(%s) ORDER BY a.born_tick, a.id", (list(society.LIVING_KINDS),))]
+        "WHERE a.kind = ANY(%s) AND (%s::text IS NULL OR a.id=%s) ORDER BY a.born_tick, a.id",
+        (list(society.LIVING_KINDS), agent_id if view == "agent" else None, agent_id))]
     for agent in agents:
         agent["avatar"] = avatars.public_key(agent)
         agent.pop("avatar_key", None)
@@ -237,20 +248,12 @@ def public_view(conn, view, agent_id=None, *, opened=()):
     if view == "feed":
         return {"paused": clock["paused"], "agents": agents, "events": [],
                 "posts":public_posts(conn, clock["tick"])}
-    if view == "square":
-        return {"posts": public_posts(conn, clock["tick"], opened=opened)}
-    if view == "stats":
-        counts = conn.execute(PUBLIC_POSTS + """SELECT
-            count(*) FILTER (WHERE reply_to IS NULL) AS posts,
-            count(*) FILTER (WHERE reply_to IS NOT NULL) AS replies FROM visible_posts""").fetchone()
-        return {"population": {"registered": len(agents)}, "activity_by_day": [],
-                "interactions": [], "events": {}, "published":dict(counts)}
     agent = next((row for row in agents if row["id"] == agent_id), None)
     if agent is None:
         return None
     from arena import reputation
     return dict(agent, posts=public_posts(conn,clock['tick'],agent_id,20),
-                energy_history=[],relations={},last_words=None,fossil=None,
+                energy_history=[],relations=society.relations(conn,agent_id),last_words=None,fossil=None,
                 reputation=reputation.public(conn, agent_id),
                 memberships=public_memberships(conn, agent_id))
 

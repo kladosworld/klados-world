@@ -325,18 +325,18 @@ class ModerationIsolationTests(WorkerCase):
         self.assertEqual(self.posts()[post_id], ("pending", 1))
         self.assertEqual(self.events("moderation_outage"), [])
 
-    # Founder inference, budget and infrastructure failures keep their existing safety pause.
+    # Hosted failures stop only their component. Global emergency remains explicit KILLED/PO control.
 
-    def test_founder_failures_still_pause_after_observer_failures(self):
+    def test_founder_failures_stop_only_hosted_inference_after_observer_failures(self):
         def broken(request):
             raise RuntimeError("founder upstream down")
         run = self.make({name: broken for name in ("Alder", "Birch", "Cedar", "Hazel")})
         with patch.object(observer, "review", side_effect=GatewayError("provider_failure", sent=True)):
             self.assertTrue(run.run()["stopped"])
-        self.assertTrue(society.clock(self.conn)["paused"])
-        self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: provider_failure")
+        self.assertFalse(society.clock(self.conn)["paused"])
+        self.assertEqual(self.events("paused"), [])
 
-    def test_founder_credential_and_stop_file_still_pause_at_once(self):
+    def test_founder_credential_and_custom_stop_file_stop_hosted_component(self):
         for category in ("credential_unavailable", "stopped", "model_not_allowed"):
             with self.subTest(category=category):
                 society.set_paused(self.conn, RULES, False, self.now, "test")
@@ -345,8 +345,8 @@ class ModerationIsolationTests(WorkerCase):
                 self.next_hour()
                 with patch.object(run, "call", side_effect=GatewayError(category)):
                     self.assertTrue(run.run()["stopped"])
-                self.assertTrue(society.clock(self.conn)["paused"])
-                self.assertEqual(self.events("paused")[-1]["data"]["reason"], f"worker: {category}")
+                self.assertFalse(society.clock(self.conn)["paused"])
+                self.assertEqual(self.events("paused"), [])
 
     def test_a_spent_global_cap_is_scoped_financial_rest(self):
         run = self.make({name: REST for name in ("Alder", "Birch", "Cedar", "Hazel")}, cap=10)
@@ -354,17 +354,17 @@ class ModerationIsolationTests(WorkerCase):
         self.assertFalse(society.clock(self.conn)["paused"])
         self.assertEqual(len(self.provider.requests), 0)
 
-    def test_a_real_stop_file_still_pauses(self):
+    def test_custom_gateway_stop_file_stops_hosted_component(self):
         run = self.make({name: REST for name in ("Alder", "Birch", "Cedar", "Hazel")})
         with tempfile.TemporaryDirectory() as directory:
             stop = Path(directory) / "KILLED"
             stop.touch()
             run.gateway.stop_file = stop
             self.assertTrue(run.run()["stopped"])
-        self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: stopped")
+        self.assertEqual(self.events("paused"), [])
 
 
-    def test_observer_reservation_outage_keeps_retries_and_founder_accounting_pause(self):
+    def test_observer_reservation_outage_keeps_retries_and_founder_financial_rest(self):
         first = self.pending_post()
         second = self.pending_post("Another pending synthetic contribution.")
         run = self.resting()
@@ -380,10 +380,12 @@ class ModerationIsolationTests(WorkerCase):
             self.assertEqual(len(self.provider.requests), 0)
             self.assertEqual(book.path.read_bytes(), before)
             self.assertEqual(len(self.events("moderation_outage")), 4)
-            # The same accounting failure on the founder path still pauses immediately.
-            self.assertTrue(run.run()["stopped"])
-        self.assertTrue(society.clock(self.conn)["paused"])
-        self.assertEqual(self.events("paused")[-1]["data"]["reason"], "worker: accounting_unavailable")
+            # Failed accounting authorizes no spend and never stops shared social state.
+            result = run.run()
+            self.assertFalse(result['stopped'])
+            self.assertEqual(result['financial_rests'],4)
+        self.assertFalse(society.clock(self.conn)["paused"])
+        self.assertEqual(self.events('paused'), [])
         self.assertEqual(self.posts(), {first: ("pending", 0), second: ("pending", 0)})
         self.assertNotIn("PRIVATE_LEDGER_CANARY", str(run.log))
 
@@ -513,4 +515,4 @@ class LastWordsIsolationTests(WorkerCase):
         run.max_failures = 1
         with patch.object(run, "call", side_effect=GatewayError("provider_failure", sent=True)):
             self.assertTrue(run.run()["stopped"])
-        self.assertTrue(society.clock(self.conn)["paused"])
+        self.assertFalse(society.clock(self.conn)["paused"])

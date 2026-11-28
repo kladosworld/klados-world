@@ -52,3 +52,25 @@ class AdmissionTests(unittest.TestCase):
                     raise RuntimeError('Synthetic rollback')
             self.assertTrue(permit.acquire(blocking=False))
             permit.release()
+
+    @unittest.skipUnless(DSN, 'Disposable PostgreSQL required')
+    def test_web_timeouts_do_not_change_migration_connections(self):
+        with db.connect_web(DSN) as connection:
+            self.assertEqual(connection.execute('SHOW statement_timeout').fetchone()['statement_timeout'],'5s')
+            self.assertEqual(connection.execute('SHOW lock_timeout').fetchone()['lock_timeout'],'2s')
+            self.assertEqual(connection.execute('SHOW idle_in_transaction_session_timeout').fetchone()['idle_in_transaction_session_timeout'],'15s')
+        with db.connect(DSN) as connection:
+            self.assertEqual(connection.execute('SHOW statement_timeout').fetchone()['statement_timeout'],'0')
+
+    def test_transient_database_failures_return_only_controlled_backpressure(self):
+        from psycopg import OperationalError
+        from psycopg.errors import QueryCanceled, LockNotAvailable, DeadlockDetected, SerializationFailure
+        for failure in (OperationalError, QueryCanceled, LockNotAvailable, DeadlockDetected, SerializationFailure):
+            def busy():
+                raise failure('PRIVATE_QUERY_OR_CONFIGURATION')
+            with self.subTest(error=failure.__name__), patch.dict(os.environ,KLADOS_SOCIETY_PUBLIC='1'):
+                with TestClient(create_app(connection_factory=busy)) as client:
+                    response = client.get('/api/society/square')
+            self.assertEqual(response.status_code,503)
+            self.assertEqual(response.headers['retry-after'],'2')
+            self.assertNotIn('PRIVATE',response.text)
