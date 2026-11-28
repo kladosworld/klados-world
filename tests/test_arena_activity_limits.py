@@ -331,7 +331,7 @@ class SocialActivityTests(InviteCase):
             response = client.post(
                 "/api/agents/me/actions",
                 headers=self.headers(registered),
-                json={"action": "post", "text": "Never committed."},
+                json={"action": "post", "text": "Never committed.", "request_id": "snapshot-refusal"},
             )
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error"], "activity_limits_unavailable")
