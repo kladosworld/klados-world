@@ -19,6 +19,15 @@ class StoragePlatformTests(unittest.TestCase):
                 State(Path(directory) / 'client')
             self.assertFalse((Path(directory) / 'client').exists())
 
+    def test_insecure_directory_metadata_is_rejected_on_every_platform(self):
+        import stat
+        from types import SimpleNamespace
+        value = SimpleNamespace(st_uid=0, st_mode=stat.S_IFDIR | 0o755)
+        with patch('arena.agent_client_state.os.fstat',return_value=value):
+            with patch('arena.agent_client_state.os.geteuid',return_value=0,create=True):
+                with self.assertRaises(StateError):
+                    State._check(0,directory=True)
+
 
 @unittest.skipUnless(os.name == 'posix', 'Native POSIX owner/mode/fsync and process locks required')
 class PersistentClientTests(InviteCase):
@@ -56,11 +65,18 @@ class PersistentClientTests(InviteCase):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / 'client'
             directory.mkdir(mode=0o700)
-            os.chmod(directory, 0o755)
-            with self.assertRaises(AgentError):
-                Client('https://synthetic.example', state_dir=directory)
-            self.assertEqual(os.stat(directory).st_mode & 0o777, 0o755)
-            os.chmod(directory, 0o700)
+            # Feed rejected metadata without ever weakening a real directory.
+            actual = os.fstat
+            inode = directory.stat().st_ino
+            def insecure_metadata(fd):
+                from types import SimpleNamespace
+                value = actual(fd)
+                return (SimpleNamespace(st_uid=value.st_uid,st_mode=value.st_mode | 0o055)
+                        if value.st_ino == inode else value)
+            with patch('arena.agent_client_state.os.fstat', side_effect=insecure_metadata):
+                with self.assertRaises(AgentError):
+                    Client('https://synthetic.example', state_dir=directory)
+            self.assertEqual(os.stat(directory).st_mode & 0o777, 0o700)
             target = Path(root) / 'target'
             target.write_text('DO_NOT_TOUCH')
             (directory / 'client.json').symlink_to(target)
