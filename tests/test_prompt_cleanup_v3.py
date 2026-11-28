@@ -93,7 +93,13 @@ class PromptCleanupTests(InviteCase):
         self.tick()
         self.assertTrue(society.claim_turn(self.conn, "alder", 1, self.now))
         root = society_life.act(
-            self.conn, V2, "alder", 1, {"action": "post", "text": "A synthetic question."}, self.now
+            self.conn,
+            V2,
+            "alder",
+            1,
+            {"action": "post", "text": "A synthetic question."},
+            self.now,
+            post_origin="live",
         )["post_id"]
         clean = dict(codes=[], severity="none", evidence="", by="model", charged_microusd=0)
         society_moderation.apply_verdict(self.conn, V2, root, clean, self.now)
@@ -107,6 +113,7 @@ class PromptCleanupTests(InviteCase):
             1,
             {"action": "reply", "post_id": root, "text": "A synthetic answer."},
             self.now,
+            post_origin="live",
         )["post_id"]
         society_moderation.apply_verdict(self.conn, V2, reply, clean, self.now)
         self.conn.commit()

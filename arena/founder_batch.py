@@ -16,7 +16,16 @@ def save(conn, agent_id, tick, decision, settings, charged, origin):
 
 def execute(conn, rules, agent_id, tick, now):
     """Caller commits outcomes and effects together. Never calls an inference provider."""
-    clock = society.clock(conn, lock=True)
+    from arena import operation_locks
+    operation_locks.social(conn)
+    # Inspect the durable decision without locking rows, then take hierarchy locks.
+    pending = conn.execute('SELECT private FROM society_turns WHERE agent_id=%s AND tick=%s',
+                           (agent_id, tick)).fetchone()
+    from tee_arena.society.decisions import INSTITUTION_ACTIONS
+    if pending and any(a.get('action') in INSTITUTION_ACTIONS
+                       for a in pending['private'].get('decision', {}).get('actions', [])):
+        operation_locks.institutions(conn)
+    clock = society.clock(conn)
     turn = conn.execute('''SELECT * FROM society_turns WHERE agent_id=%s AND tick=%s
         FOR UPDATE''', (agent_id, tick)).fetchone()
     if turn is None or turn['status'] != 'claimed' or turn['private'].get('phase') != 'ready':

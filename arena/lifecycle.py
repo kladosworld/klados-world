@@ -35,6 +35,8 @@ def touch(conn, agent_id, now):
 
 
 def refresh(conn, now):
+    from arena import operation_locks
+    operation_locks.institutions(conn)
     from arena import founder_status
     changed = 0
     for agent in conn.execute("SELECT id,kind,created_at FROM society_agents WHERE kind IN ('founder','external') AND status='alive' ORDER BY id").fetchall():

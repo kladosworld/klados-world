@@ -81,6 +81,10 @@ class IndependentTests(InviteCase):
         posts = [self.conn.execute("INSERT INTO society_posts(author_id,tick,text,status,created_at) VALUES (%s,0,%s,'published',%s) RETURNING id",
                                   (target,'Synthetic reviewed root.',self.now)).fetchone()['id'] for target in targets]
         self.conn.commit()
+        from tests.arena_support import attest_public_fixture
+        for post in posts:
+            attest_public_fixture(self.conn, post, self.now)
+        self.conn.commit()
         for post in posts[:10]:
             self.assertEqual(self.submit(agent,action='like',post_id=post).json()['action'],'like')
         self.assertEqual(self.submit(agent,action='like',post_id=posts[10]).status_code,429)

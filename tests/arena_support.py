@@ -108,3 +108,13 @@ class DatabaseCase(unittest.TestCase):
             winner='left', weight=1.0, created_at=NOW)
         record.update(changes)
         return record
+
+
+def attest_public_fixture(conn, post_id, now):
+    """Explicit synthetic provenance and clean verdict; never used by application code."""
+    conn.execute("""INSERT INTO society_post_origins(post_id,origin,created_at)
+        SELECT p.id,CASE WHEN a.kind='external' THEN 'external' ELSE 'live' END,%s
+        FROM society_posts p JOIN society_agents a ON a.id=p.author_id WHERE p.id=%s
+        ON CONFLICT DO NOTHING""", (now, post_id))
+    conn.execute("""INSERT INTO society_findings(post_id,codes,severity,evidence,by,created_at)
+        VALUES (%s,'{}','none','Synthetic fixture clearance','model',%s)""", (post_id, now))

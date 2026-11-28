@@ -142,6 +142,8 @@ class GenericApiTests(WorkerCase):
     def test_the_api_speaks_of_agents_with_their_kind(self):
         post = self.turn("alder", action="post", text="Hello.", note="SECRET-NOTE")["post_id"]
         society_moderation.apply_verdict(self.conn, RULES, post, CLEAN, self.now)
+        from tests.arena_support import attest_public_fixture
+        attest_public_fixture(self.conn, post, self.now)
         self.turn("cedar", action="like", post_id=post)
         feed = society_public.feed(self.conn, RULES)
         self.assertNotIn("founders", feed)

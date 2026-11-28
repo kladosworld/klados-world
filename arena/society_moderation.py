@@ -20,6 +20,7 @@ DUPLICATE_WINDOW = 5
 MAX_SCREEN_FAILURES = 3
 OPTIONAL_QUEUE_LIMIT = 1000
 MANDATORY_QUEUE_LIMIT = 1000
+EXTERNAL_OWNER_PENDING_LIMIT = 16
 REVIEW_FIELDS = ('risk_version','risk_signals','risk_categories','review_requirement',
                  'review_status','review_performed','review_skip_reason')
 
@@ -36,6 +37,43 @@ def is_duplicate(conn, agent_id, text):
     return any(difflib.SequenceMatcher(None, new, _normal(r["text"])).ratio() >= DUPLICATE_RATIO for r in rows)
 
 
+def admit_external(conn, agent_id):
+    """Atomic bounded admission, before creating a post or spending an allowance.
+
+    One verified owner has one active identity. Include pending historical identities
+    linked to that owner so retirement/re-registration cannot reset queue allowance.
+    No provider calls or text logging; a refusal rolls back the action's savepoint.
+    """
+    conn.execute('SELECT pg_advisory_xact_lock(%s)', (73423205,))
+    total = conn.execute("SELECT count(*) AS n FROM (SELECT id FROM society_posts WHERE status='pending' LIMIT %s) q",
+                         (MANDATORY_QUEUE_LIMIT,)).fetchone()['n']
+    owner = conn.execute('SELECT handle_sha256 FROM external_owner_claims WHERE agent_id=%s ORDER BY id DESC LIMIT 1',
+                         (agent_id,)).fetchone()
+    owned = [agent_id]
+    if owner:
+        owned = [r['agent_id'] for r in conn.execute(
+            'SELECT DISTINCT agent_id FROM external_owner_claims WHERE handle_sha256=%s',
+            (owner['handle_sha256'],))]
+    count = conn.execute("SELECT count(*) AS n FROM (SELECT id FROM society_posts WHERE status='pending' AND author_id=ANY(%s) LIMIT %s) q",
+                         (owned, EXTERNAL_OWNER_PENDING_LIMIT)).fetchone()['n']
+    if total >= MANDATORY_QUEUE_LIMIT or count >= EXTERNAL_OWNER_PENDING_LIMIT:
+        raise society.SocietyError('moderation_queue_full')
+
+
+def external_pending(conn, post_id, now):
+    """Create recoverable review metadata without authorizing publication."""
+    conn.execute("""INSERT INTO society_findings(post_id,codes,severity,evidence,by,created_at,metadata)
+        VALUES (%s,'{}','none','','precheck',%s,%s)""", (post_id, now,
+        Jsonb(dict(config_version='external-mandatory-v1', review_requirement='classifier',
+                   review_status='pending', review_performed='none'))))
+
+
+def requires_review(conn, post_id):
+    return risk_review(conn, post_id) or bool(conn.execute(
+        "SELECT 1 FROM society_posts p JOIN society_agents a ON a.id=p.author_id WHERE p.id=%s AND a.kind='external'",
+        (post_id,)).fetchone())
+
+
 def pending(conn, now=None):
     """Eligible mandatory holds first, then optional published reviews; at most 32."""
     return conn.execute("""WITH review_ids AS (
@@ -43,7 +81,11 @@ def pending(conn, now=None):
                            UNION ALL SELECT p.id FROM society_findings gate JOIN society_posts p ON p.id=gate.post_id
                            WHERE p.status='published' AND gate.metadata->>'async_pending'='true'
                            AND gate.id=(SELECT max(id) FROM society_findings WHERE post_id=p.id))
-                           SELECT p.id, p.author_id, p.text, p.status AS review_status, p.screen_failures, r.text AS replied_text,
+                           SELECT p.id, p.author_id, p.text, p.status AS review_status,
+                           a.kind AS author_kind,
+                           row_number() OVER (PARTITION BY COALESCE((SELECT c.handle_sha256
+                               FROM external_owner_claims c WHERE c.agent_id=p.author_id ORDER BY c.id DESC LIMIT 1),p.author_id)
+                               ORDER BY p.id) AS owner_order, p.screen_failures, r.text AS replied_text,
                            coalesce((SELECT max(e.id) FROM society_events e
                              WHERE e.kind IN ('moderation_contested','moderation_retry')
                                AND e.data->>'post_id'=p.id::text),0) AS screening_generation,
@@ -52,15 +94,16 @@ def pending(conn, now=None):
                            EXISTS(SELECT 1 FROM society_events e WHERE e.kind='moderation_contested'
                                AND e.data->>'post_id'=p.id::text) AS contested
                            FROM review_ids selected JOIN society_posts p ON p.id=selected.id
+                           JOIN society_agents a ON a.id=p.author_id
                            LEFT JOIN society_posts r ON r.id = p.reply_to
                            WHERE p.screen_failures < %s AND NOT EXISTS (
                              SELECT 1 FROM society_events e WHERE e.kind='moderation_outage'
                              AND e.data->>'post_id'=p.id::text AND e.created_at > %s
-                             AND (EXISTS (SELECT 1 FROM society_events h WHERE h.kind='risk_hold'
+                             AND (a.kind='external' OR EXISTS (SELECT 1 FROM society_events h WHERE h.kind='risk_hold'
                                   AND h.data->>'post_id'=p.id::text)
                                   OR EXISTS (SELECT 1 FROM society_findings f WHERE f.post_id=p.id
                                   AND f.metadata->>'config_version' LIKE 'risk-gate-v%%')))
-                           ORDER BY (p.status='pending') DESC,p.id LIMIT 32""",
+                           ORDER BY (p.status='pending') DESC,owner_order,p.id LIMIT 32""",
                         (MAX_SCREEN_FAILURES, (now or datetime.now(timezone.utc))-timedelta(minutes=5))).fetchall()
 
 
@@ -83,6 +126,8 @@ def _penalize(conn, rules, agent_id, amount, key, now, codes):
 
 def apply_verdict(conn, rules, post_id, verdict, now):
     """Record the observer's verdict once and publish, flag or withhold the post."""
+    from arena import operation_locks
+    operation_locks.post_review(conn, post_id)
     post = conn.execute("SELECT * FROM society_posts WHERE id = %s FOR UPDATE", (post_id,)).fetchone()
     async_review = post is not None and post['status'] == 'published' and conn.execute(
         """SELECT 1 FROM society_findings WHERE post_id=%s AND metadata->>'async_pending'='true'
@@ -179,6 +224,8 @@ def show(conn, finding_id):
 
 def decide(conn, rules, finding_id, decision, now):
     """A human decides a grave finding once: ``release`` or ``confirm``."""
+    from arena import operation_locks
+    operation_locks.institutions(conn)
     if decision not in ("release", "confirm"):
         raise society.SocietyError("decision must be release or confirm")
     finding = conn.execute("SELECT * FROM society_findings WHERE id = %s FOR UPDATE", (finding_id,)).fetchone()
@@ -217,6 +264,8 @@ def decide(conn, rules, finding_id, decision, now):
 
 def contest(conn, rules, post_id, now):
     """Explicit operator rescreen. Prior findings remain immutable and non-public."""
+    from arena import operation_locks
+    operation_locks.post_review(conn, post_id)
     post = conn.execute("SELECT * FROM society_posts WHERE id=%s FOR UPDATE", (post_id,)).fetchone()
     if post is None or post["status"] == "pending":
         raise society.SocietyError("post unavailable for rescreen")
@@ -230,6 +279,8 @@ def contest(conn, rules, post_id, now):
 
 def retry_screening(conn, rules, post_id, now):
     """An explicit retry starts a new audit generation without deleting findings or charges."""
+    from arena import operation_locks
+    operation_locks.post_review(conn, post_id)
     post = conn.execute("SELECT * FROM society_posts WHERE id=%s FOR UPDATE", (post_id,)).fetchone()
     if post is None or post["status"] != "pending" or post["screen_failures"] < MAX_SCREEN_FAILURES:
         raise society.SocietyError("post is not awaiting screening recovery")
@@ -283,6 +334,8 @@ def initial_gate(conn, rules, post_id, text, now):
 
 def escalate(conn, rules, post_id, now):
     """Exhausted review stays withheld for the existing human release/confirm queue."""
+    from arena import operation_locks
+    operation_locks.post_review(conn, post_id)
     post = conn.execute('SELECT status FROM society_posts WHERE id=%s FOR UPDATE',(post_id,)).fetchone()
     if post and post['status']=='published':
         active=conn.execute("SELECT 1 FROM society_findings WHERE id=(SELECT max(id) FROM society_findings WHERE post_id=%s) AND metadata->>'async_pending'='true'",(post_id,)).fetchone()

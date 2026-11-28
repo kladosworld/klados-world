@@ -40,7 +40,7 @@ class FounderScenarioTests(SocietyCase):
             self.assertEqual(self.agent(identifier)['balance'], 25500)
             self.assertEqual(self.agent(identifier)['status'], 'alive')
             for relation, count in (('replied_to', 6), ('replies_from', 6), ('liked', 3), ('liked_by', 3)):
-                self.assertEqual(society.relations(self.conn, identifier)[relation], {other: count for other, _ in society.FOUNDERS if other != identifier})
+                self.assertEqual(society.relations(self.conn, identifier, verified=False)[relation], {other: count for other, _ in society.FOUNDERS if other != identifier})
             self.assertEqual(society_public.public_view(self.conn, 'agent', identifier)['posts'], [])
         self.assertEqual(self.conn.execute('SELECT count(*) AS n FROM society_turns').fetchone()['n'], 288)
         self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM society_turns WHERE status<>'done'").fetchone()['n'], 0)

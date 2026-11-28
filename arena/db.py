@@ -1,6 +1,8 @@
 """Small psycopg 3 record helpers. Callers own transactions; helpers never commit."""
 from datetime import datetime, timezone
 from pathlib import Path
+import os
+import threading
 
 import psycopg
 from psycopg import sql
@@ -22,9 +24,56 @@ FIELDS = {
 }
 
 
+class DatabaseBusy(Exception):
+    """Bounded local admission exhausted; caller should apply controlled backpressure."""
+
+
+_ADMISSION_LOCK = threading.Lock()
+_ADMISSION = None
+
+
+def _admission():
+    global _ADMISSION
+    with _ADMISSION_LOCK:
+        if _ADMISSION is None:
+            raw = os.environ.get('KLADOS_DB_CONNECTION_LIMIT', '8')
+            if not raw.isascii() or not raw.isdecimal() or not 1 <= int(raw) <= 64:
+                raise DatabaseBusy('Invalid database admission configuration')
+            _ADMISSION = threading.BoundedSemaphore(int(raw))
+        return _ADMISSION
+
+
+class AdmittedConnection(psycopg.Connection):
+    """A permit follows the physical connection, including exceptional context exit."""
+
+    _permit = None
+
+    def close(self):
+        try:
+            super().close()
+        finally:
+            permit, self._permit = self._permit, None
+            if permit is not None:
+                permit.release()
+
+
 def connect(dsn):
-    """Return a connection; use as a context manager to commit or roll back."""
-    return psycopg.connect(dsn, row_factory=dict_row)
+    """Bound connection count and handshake time; callers still own transactions.
+
+    Admission is per process, initialized once. Deployment must allocate the sum of
+    API process limits plus worker/admin headroom below PostgreSQL max_connections.
+    A saturated process refuses quickly rather than accumulating waiting sockets.
+    """
+    permit = _admission()
+    if not permit.acquire(timeout=0.25):
+        raise DatabaseBusy('Database admission saturated')
+    try:
+        conn = AdmittedConnection.connect(dsn, row_factory=dict_row, connect_timeout=5)
+    except BaseException:
+        permit.release()
+        raise
+    conn._permit = permit
+    return conn
 
 
 def migrate(conn):

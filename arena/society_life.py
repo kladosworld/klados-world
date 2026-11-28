@@ -10,6 +10,7 @@ module publishes them; public pages must read only posts, likes, energy and even
 from psycopg.types.json import Jsonb
 
 from arena import activity_limits, society, eras
+from arena.visibility import context_posts
 from tee_arena.society import economy
 
 SQUARE_SIZE = 20
@@ -33,8 +34,8 @@ def _alive_agent(conn, agent_id, *, acting=False):
     return row
 
 
-def _post(conn, post_id):
-    row = conn.execute("SELECT * FROM society_posts WHERE id = %s AND status = 'published' AND created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z')", (post_id,)).fetchone()
+def _post(conn, post_id, *, verified=True):
+    row = conn.execute(context_posts(verified=verified) + "SELECT * FROM visible_posts WHERE id = %s", (post_id,)).fetchone()
     if row is None:
         raise society.SocietyError("no_such_post")
     return row
@@ -71,6 +72,11 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
     the same founder today, not enough energy) becomes a rest with an error code and
     costs nothing. The turn is always closed, exactly once.
     """
+    from arena import operation_locks
+    operation_locks.social(conn)
+    from tee_arena.society.decisions import INSTITUTION_ACTIONS
+    if decision['action'] in INSTITUTION_ACTIONS:
+        operation_locks.institutions(conn)
     turn = conn.execute("SELECT status FROM society_turns WHERE agent_id = %s AND tick = %s FOR UPDATE",
                         (agent_id, tick)).fetchone()
     if turn is None or turn["status"] != "claimed":
@@ -87,6 +93,11 @@ def act(conn, rules, agent_id, tick, decision, now, *, charged_microusd=0, priva
 
 def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post_origin=None, limits=None):
     """Shared transactional mutations; caller owns turn/receipt and authentication."""
+    from arena import operation_locks
+    operation_locks.social(conn)
+    from tee_arena.society.decisions import INSTITUTION_ACTIONS
+    if decision['action'] in INSTITUTION_ACTIONS:
+        operation_locks.institutions(conn)
     outcome = {"action": decision["action"]}
     try:
         with conn.transaction():  # savepoint: a refused action leaves nothing behind
@@ -100,15 +111,22 @@ def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post
                     action_key=action_key, origin=post_origin, limits=limits))
             activity_limits.check(conn, rules, agent_id, action, now, limits=limits)
             if action in ("post", "reply"):
-                reply_to = _post(conn, decision["post_id"])["id"] if action == "reply" else None
+                reply_to = _post(conn, decision["post_id"], verified=(rules.persistent or post_origin == 'external'))["id"] if action == "reply" else None
                 from arena.society_moderation import is_duplicate
                 if is_duplicate(conn, agent_id, decision["text"]):
                     raise society.SocietyError("duplicate_post")
+                external = conn.execute('SELECT kind FROM society_agents WHERE id=%s', (agent_id,)).fetchone()['kind'] == 'external'
+                if external:
+                    from arena.society_moderation import admit_external
+                    admit_external(conn, agent_id)
                 society.spend(conn, rules, agent_id, action, action_key, now)
                 outcome["post_id"] = conn.execute(
                     """INSERT INTO society_posts (author_id, tick, reply_to, text, created_at)
                        VALUES (%s, %s, %s, %s, %s) RETURNING id""",
                     (agent_id, tick, reply_to, decision["text"], now)).fetchone()["id"]
+                if external:
+                    from arena.society_moderation import external_pending
+                    external_pending(conn, outcome['post_id'], now)
                 if post_origin is not None:
                     conn.execute("""INSERT INTO society_post_origins (post_id, origin, created_at)
                                     VALUES (%s, %s, %s)""", (outcome["post_id"], post_origin, now))
@@ -116,7 +134,7 @@ def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post
                     from arena.society_moderation import initial_gate
                     initial_gate(conn, rules, outcome['post_id'], decision['text'], now)
             elif action == "like":
-                outcome["paid"] = _like(conn, rules, agent_id, _post(conn, decision["post_id"]), tick, now)
+                outcome["paid"] = _like(conn, rules, agent_id, _post(conn, decision["post_id"], verified=(rules.persistent or post_origin == 'external')), tick, now)
                 from arena import lifecycle
                 lifecycle.touch(conn, agent_id, now)
             if decision.get("note"):
@@ -138,6 +156,7 @@ def apply_action(conn, rules, agent_id, tick, decision, now, *, action_key, post
             "already_liked_post": "already_liked_post",
             "duplicate_post": "duplicate_post",
             "activity_limits_unavailable": "activity_limits_unavailable",
+            "moderation_queue_full": "moderation_queue_full",
         }.get(str(error), "action_refused")
         outcome = {"action": "rest", "error": code, "wanted": decision["action"]}
     return outcome
@@ -161,11 +180,11 @@ def notes(conn, agent_id, limit=NOTES_SHOWN):
     return [row["text"] for row in reversed(rows)]
 
 
-def _square(conn, now_tick, names):
-    rows = conn.execute("""
+def _square(conn, now_tick, names, *, verified=True):
+    rows = conn.execute(context_posts(verified=verified) + """
         SELECT p.id, p.author_id, p.text, p.reply_to, p.tick,
-               (SELECT count(*) FROM society_likes l WHERE l.post_id = p.id) AS likes
-        FROM society_posts p WHERE p.status = 'published' AND p.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') ORDER BY p.id DESC LIMIT %s""", (SQUARE_SIZE,)).fetchall()
+               (SELECT count(*) FROM visible_likes l WHERE l.post_id = p.id) AS likes
+        FROM visible_posts p ORDER BY p.id DESC LIMIT %s""", (SQUARE_SIZE,)).fetchall()
     return [{"post_id": r["id"], "author": names[r["author_id"]], "text": r["text"],
              "reply_to": r["reply_to"], "likes": r["likes"], "hours_ago": now_tick - r["tick"]}
             for r in reversed(rows)]
@@ -189,9 +208,9 @@ def _own_posts(conn, agent_id, tick, limit=5):
             for r in reversed(rows)]
 
 
-def _replies_to(conn, agent_id, tick, names, limit=5):
-    rows = conn.execute("""SELECT r.id, r.author_id, r.text, r.reply_to, r.tick FROM society_posts r
-                           JOIN society_posts p ON p.id = r.reply_to
+def _replies_to(conn, agent_id, tick, names, limit=5, *, verified=True):
+    rows = conn.execute(context_posts(verified=verified) + """SELECT r.id, r.author_id, r.text, r.reply_to, r.tick FROM visible_posts r
+                           JOIN visible_posts p ON p.id = r.reply_to
                            WHERE p.author_id = %s AND r.author_id <> %s AND r.status = 'published' AND r.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') AND p.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z')
                            ORDER BY r.id DESC LIMIT %s""", (agent_id, agent_id, limit)).fetchall()
     return [dict(post_id=r["id"], author=names[r["author_id"]], text=r["text"], reply_to=r["reply_to"],
@@ -251,7 +270,7 @@ def turn_context(conn, rules, agent_id):
                              FROM society_turns
                              WHERE agent_id = %s AND status <> 'claimed' AND tick > COALESCE((SELECT started_tick FROM society_eras ORDER BY id DESC LIMIT 1), 0) ORDER BY tick DESC LIMIT 5""",
                           (agent_id,)).fetchall()
-    square = _square(conn, tick, names)
+    square = _square(conn, tick, names, verified=(rules.persistent or agent["kind"] == "external"))
     liked_posts = {row["post_id"] for row in conn.execute(
         """SELECT post_id FROM society_likes WHERE from_kind='agent' AND from_id=%s
            AND post_id=ANY(%s)""", (agent_id, [post["post_id"] for post in square]))}
@@ -260,7 +279,7 @@ def turn_context(conn, rules, agent_id):
                         and (rules.persistent or row["id"] not in liked_today)}
     for post in square:
         post["can_like"] = post["author"] in eligible_authors and post["post_id"] not in liked_posts
-    relations = society.relations(conn, agent_id)
+    relations = society.relations(conn, agent_id, verified=(rules.persistent or agent["kind"] == "external"))
     context = {
         "you": {"name": agent["name"], "energy": float(rules.energy(agent["balance"])),
                 "age": {"days": lived // 24, "hours": lived % 24, "max_days": rules.max_days},
@@ -286,7 +305,7 @@ def turn_context(conn, rules, agent_id):
                            **{kind: counts.get(peer["id"], 0) for kind, counts in relations.items()}}
                           for peer in others[:RELATIONSHIPS_SHOWN]],
         "your_recent_posts": _own_posts(conn, agent_id, tick),
-        "recent_replies_to_you": _replies_to(conn, agent_id, tick, names),
+        "recent_replies_to_you": _replies_to(conn, agent_id, tick, names, verified=(rules.persistent or agent["kind"] == "external")),
         "your_last_turns": [{"hours_ago": tick - r["tick"], "action": r["action"],
                              "error": r["error"]} for r in recent],
     }
@@ -331,6 +350,7 @@ def reflections_due(conn):
 
 def reflection_context(conn, rules, agent_id, day):
     """The founder's own day in numbers and words: energy, likes, its posts and replies to them."""
+    verified = rules.persistent
     agent = _alive_agent(conn, agent_id)
     first, last = agent["born_tick"] + 24 * day + 1, agent["born_tick"] + 24 * (day + 1)
     names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM society_agents")}
@@ -338,11 +358,11 @@ def reflection_context(conn, rules, agent_id, day):
                             ORDER BY id DESC LIMIT 1""", (agent_id, first)).fetchone()
     end = conn.execute("""SELECT balance_after FROM energy_entries WHERE agent_id = %s AND tick <= %s
                           ORDER BY id DESC LIMIT 1""", (agent_id, last)).fetchone()
-    posts = conn.execute("""SELECT p.id, p.text, p.reply_to,
-                                   (SELECT count(*) FROM society_posts r WHERE r.reply_to = p.id) AS replies
+    posts = conn.execute(context_posts(verified=verified) + """SELECT p.id, p.text, p.reply_to,
+                                   (SELECT count(*) FROM visible_posts r WHERE r.reply_to = p.id) AS replies
                             FROM society_posts p WHERE p.author_id = %s AND p.tick BETWEEN %s AND %s AND p.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z')
                             ORDER BY p.id""", (agent_id, first, last)).fetchall()
-    replies = conn.execute("""SELECT r.author_id, r.text FROM society_posts r JOIN society_posts p ON p.id = r.reply_to
+    replies = conn.execute(context_posts(verified=verified) + """SELECT r.author_id, r.text FROM visible_posts r JOIN visible_posts p ON p.id = r.reply_to
                               WHERE p.author_id = %s AND r.author_id <> %s AND r.status = 'published' AND r.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') AND p.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z')
                                 AND r.tick BETWEEN %s AND %s AND r.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z')
                               ORDER BY r.id LIMIT 10""", (agent_id, agent_id, first, last)).fetchall()

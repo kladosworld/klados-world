@@ -12,6 +12,8 @@ SECURITY_STATES = ('suspended', 'revoked')
 
 
 def _lock(conn, identifier):
+    from arena import operation_locks
+    operation_locks.social(conn)
     conn.execute('SELECT pg_advisory_xact_lock(%s,hashtext(%s))',
                  (activity_limits.LOCK_NAMESPACE, identifier))
 
@@ -90,6 +92,8 @@ def _record(conn, identifier, old, new, source, now, *, reference, approved_by, 
 
 def _change(conn, now, *, target_state, identifier=None, all_founders=False,
             reference, approved_by, apply=False, founders_only=True):
+    from arena import operation_locks
+    operation_locks.institutions(conn)
     if (type(all_founders) is not bool or type(apply) is not bool or target_state not in STATES
             or (identifier is not None and (not isinstance(identifier, str)
                 or not identifier.strip() or len(identifier) > 80))
@@ -141,6 +145,10 @@ def change(conn, now, **kwargs):
 
 def automatic(conn, identifier, target_state, now):
     """Founder lifecycle-only transition. Explicit administrative locks win."""
+    from arena import operation_locks
+    operation_locks.social(conn)
+    if target_state == 'dormant':
+        operation_locks.institutions(conn)
     if target_state not in ('active', 'dormant'):
         raise ValueError('invalid automatic participation state')
     _lock(conn, identifier)

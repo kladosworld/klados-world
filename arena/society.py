@@ -40,6 +40,9 @@ def _utc(now):
 
 
 def clock(conn, *, lock=False):
+    if lock:
+        from arena import operation_locks
+        operation_locks.social(conn, exclusive=True)
     row = conn.execute("SELECT * FROM society_clock" + (" FOR UPDATE" if lock else "")).fetchone()
     if row is None:
         raise SocietyError("the society does not exist yet")
@@ -155,22 +158,23 @@ def energy_history(conn, rules, agent_id, every=6):
             for r in conn.execute(query, (agent_id,))]
 
 
-def relations(conn, agent_id):
+def relations(conn, agent_id, *, verified=True):
     """Observable counts with other agents. Never labels or scores."""
+    from arena.visibility import context_posts
     def counts(query):
-        return {r["other"]: r["n"] for r in conn.execute(query, (agent_id, agent_id))}
+        return {r["other"]: r["n"] for r in conn.execute(context_posts(verified=verified) + query, (agent_id, agent_id))}
     return {
-        "replied_to": counts("""SELECT p.author_id AS other, count(*) AS n FROM society_posts r
-                                JOIN society_posts p ON p.id = r.reply_to
+        "replied_to": counts("""SELECT p.author_id AS other, count(*) AS n FROM visible_posts r
+                                JOIN visible_posts p ON p.id = r.reply_to
                                 WHERE r.author_id = %s AND p.author_id <> %s AND r.status = 'published' AND r.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') AND p.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z')
                                 GROUP BY p.author_id"""),
-        "replies_from": counts("""SELECT r.author_id AS other, count(*) AS n FROM society_posts r
-                                  JOIN society_posts p ON p.id = r.reply_to
+        "replies_from": counts("""SELECT r.author_id AS other, count(*) AS n FROM visible_posts r
+                                  JOIN visible_posts p ON p.id = r.reply_to
                                   WHERE p.author_id = %s AND r.author_id <> %s AND r.status = 'published' AND r.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') AND p.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z')
                                   GROUP BY r.author_id"""),
-        "liked": counts("""SELECT target_id AS other, count(*) AS n FROM society_likes
+        "liked": counts("""SELECT target_id AS other, count(*) AS n FROM visible_likes
                            WHERE from_kind = 'agent' AND from_id = %s AND target_id <> %s AND created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') GROUP BY target_id"""),
-        "liked_by": counts("""SELECT from_id AS other, count(*) AS n FROM society_likes
+        "liked_by": counts("""SELECT from_id AS other, count(*) AS n FROM visible_likes
                               WHERE from_kind = 'agent' AND target_id = %s AND from_id <> %s AND created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') GROUP BY from_id"""),
     }
 
@@ -191,7 +195,7 @@ def fossilize(conn, rules, agent_id, now):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
                  (agent_id, agent["name"], agent["kind"], agent["public_description"], agent["born_tick"],
                   agent["died_tick"], agent["death_cause"], Jsonb(energy_history(conn, rules, agent_id)),
-                  Jsonb(dict(counts)), Jsonb(relations(conn, agent_id)), rules.version, now))
+                  Jsonb(dict(counts)), Jsonb(relations(conn, agent_id, verified=rules.persistent)), rules.version, now))
     if agent['kind'] == 'external':
         conn.execute("UPDATE society_fossils SET last_words_status='missing' WHERE agent_id=%s",
                      (agent_id,))
@@ -280,6 +284,8 @@ def tick(conn, rules, now):
     Returns a summary. Refuses to run while paused or sooner than the minimum gap after
     the previous tick (a retried timer cannot age anyone twice).
     """
+    from arena import operation_locks
+    operation_locks.social(conn, exclusive=True)
     now = _utc(now)
     state = clock(conn, lock=True)
     if state["paused"]:
@@ -311,6 +317,8 @@ def tick(conn, rules, now):
 
 def set_paused(conn, rules, paused, now, reason):
     """Pause or resume. While paused nothing ages; resuming starts a fresh tick gap."""
+    from arena import operation_locks
+    operation_locks.social(conn, exclusive=True)
     now = _utc(now)
     state = clock(conn, lock=True)
     if state["paused"] == paused:

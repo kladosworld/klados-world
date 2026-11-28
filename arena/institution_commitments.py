@@ -268,6 +268,8 @@ def apply_ruling(conn, rules, forum_org_id, payload, tick, now, *, proposal_id):
 
 
 def close_due(conn, rules, now):
+    from arena import operation_locks
+    operation_locks.institutions(conn)
     tick = society.clock(conn)['tick']
     rows = conn.execute("SELECT id FROM society_commitments WHERE status IN ('open','claimed') AND due_tick<=%s ORDER BY id FOR UPDATE", (tick,)).fetchall()
     for row in rows:

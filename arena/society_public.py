@@ -34,26 +34,8 @@ CAUSE = {"energy": "out of energy", "age": "old age", "exile": "exiled"}
 FEED_SIZE = 50
 SQUARE_SIZE = 100
 
-# Provenance is written by trusted callers in the post creation transaction.
-# Unknown history has no origin row. Every public reply must have public ancestors.
-PUBLIC_POSTS = """WITH RECURSIVE eligible AS (
-    SELECT p.* FROM society_posts p
-    JOIN society_post_origins o ON o.post_id=p.id
-    JOIN society_agents a ON a.id=p.author_id
-    WHERE p.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z') AND p.status='published' AND NOT p.flagged AND (
-        (a.kind='founder' AND o.origin='live') OR
-        (a.kind='external' AND o.origin='external'))
-    AND EXISTS (
-        SELECT 1 FROM society_findings f WHERE f.post_id=p.id AND (
-            f.severity='none' OR (f.severity='grave' AND f.decision='released'))
-    )
-), visible_posts AS (
-    SELECT e.*, e.id AS root_id FROM eligible e WHERE reply_to IS NULL
-    UNION ALL
-    SELECT e.*, parent.root_id FROM eligible e JOIN visible_posts parent ON e.reply_to=parent.id
-), visible_likes AS (
-    SELECT l.* FROM society_likes l JOIN visible_posts p ON p.id=l.post_id WHERE l.created_at >= COALESCE((SELECT started_at FROM society_eras ORDER BY id DESC LIMIT 1), TIMESTAMPTZ '0001-01-01T00:00:00Z')
-) """
+from arena.visibility import PUBLIC_POSTS
+
 
 
 def public_posts(conn, tick, agent_id=None, limit=SQUARE_SIZE, opened=()):

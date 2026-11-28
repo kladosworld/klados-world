@@ -71,6 +71,11 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
     website.validate_legal_final(legal_directory)
     app = ArenaApp(docs_url=None, redoc_url=None, openapi_url=None)
 
+    @app.exception_handler(db.DatabaseBusy)
+    async def database_busy(request, error):
+        return JSONResponse({'detail': 'Service busy'}, status_code=503,
+                            headers={'Retry-After': '2', 'Cache-Control': 'no-store'})
+
     static = Path(__file__).with_name('static')
 
     def page_response(filename, path):

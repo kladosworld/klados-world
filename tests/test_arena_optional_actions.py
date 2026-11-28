@@ -65,12 +65,18 @@ class OptionalActionsTests(WorkerCase):
             ids.append(self.conn.execute('''INSERT INTO society_posts
                 (author_id,tick,text,status,created_at) VALUES (%s,0,%s,'published',%s) RETURNING id''',
                 (author, 'Synthetic earlier discussion ' + str(index), self.now-timedelta(hours=2))).fetchone()['id'])
+        from tests.arena_support import attest_public_fixture
+        for post in ids:
+            attest_public_fixture(self.conn, post, self.now-timedelta(hours=2))
         self.conn.commit()
         return ids
 
     def modern(self, script):
         run = self.make(script)
         run.rules = V2
+        transport = patch('arena.worker.gateway_module.OpenRouterProvider', type(self.provider))
+        transport.start()
+        self.addCleanup(transport.stop)
         return run
 
     def test_four_founders_actual_scheduler_one_hour_all_allowances_and_restart(self):
