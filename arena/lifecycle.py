@@ -34,12 +34,14 @@ def touch(conn, agent_id, now):
     return founder_status.touch(conn, agent_id, now)
 
 
-def refresh(conn, now):
+def refresh(conn, now, *, limit=32):
     from arena import operation_locks
     operation_locks.institutions(conn)
     from arena import founder_status
+    if type(limit) is not int or not 1 <= limit <= 128:
+        raise ValueError('Invalid maintenance batch size')
     changed = 0
-    for agent in conn.execute("SELECT id,kind,created_at FROM society_agents WHERE kind IN ('founder','external') AND status='alive' ORDER BY id").fetchall():
+    for agent in conn.execute("SELECT a.id,a.kind,a.created_at FROM society_agents a LEFT JOIN society_maintenance_checks c ON c.agent_id=a.id WHERE a.kind IN ('founder','external') AND a.status='alive' AND a.participation IN ('active','dormant') ORDER BY c.checked_at NULLS FIRST,a.id LIMIT %s", (limit,)).fetchall():
         identifier = agent['id']
         conn.execute('SELECT pg_advisory_xact_lock(%s,hashtext(%s))',
                      (activity_limits.LOCK_NAMESPACE, identifier))
@@ -73,4 +75,5 @@ def refresh(conn, now):
             state=excluded.state,changed_at=CASE WHEN society_agent_lifecycle.state<>excluded.state
                 THEN excluded.changed_at ELSE society_agent_lifecycle.changed_at END""",
             (identifier,last,state,now))
+        conn.execute("INSERT INTO society_maintenance_checks(agent_id,checked_at) VALUES (%s,%s) ON CONFLICT(agent_id) DO UPDATE SET checked_at=excluded.checked_at", (identifier,now))
     return {'changed': changed}

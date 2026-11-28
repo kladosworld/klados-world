@@ -177,6 +177,8 @@ def validate(document):
                 raise LedgerError("Missing or duplicate request id.")
             _amount(event.get("microusd"))
             _timestamp(event.get("at"))
+            if 'lease' in event and (not isinstance(event['lease'],str) or not re.fullmatch(r'[0-9a-f]{32}',event['lease'])):
+                raise LedgerError('Invalid recorded financial lease.')
             reservations[event["reservation"]] = "open"
             requests.add(event["request_id"])
         else:
@@ -228,7 +230,7 @@ class Ledger:
 
         self._append(build)
 
-    def reserve(self, account, microusd, request_id, *, note=""):
+    def reserve(self, account, microusd, request_id, *, note="", authorization=None):
         """Reserve ``microusd`` for one request. Returns the reservation id."""
         _amount(microusd)
         if not isinstance(request_id, str) or not REQUEST.fullmatch(request_id):
@@ -254,8 +256,14 @@ class Ledger:
                 remaining = budget["microusd"] - use["charged"] - use["reserved"]
                 if microusd > remaining:
                     raise CapExceeded("monthly", max(0, remaining), microusd)
+            # This callback runs under the SAME permanent writer lock as cap checks
+            # and the event append. It must do bounded local reads only, no network.
+            lease = authorization() if authorization is not None else None
+            if lease is not None and (not isinstance(lease,str) or not re.fullmatch(r'[0-9a-f]{32}',lease)):
+                raise LedgerError('Invalid financial authorization evidence.')
             return {"kind": "reserve", "account": account, "microusd": microusd, "request_id": request_id,
-                    "reservation": "reservation:" + uuid4().hex, "note": str(note)[:500]}
+                    "reservation": "reservation:" + uuid4().hex, "note": str(note)[:500],
+                    **({'lease':lease} if lease is not None else {})}
 
         return self._append(build)["reservation"]
 

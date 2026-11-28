@@ -9,6 +9,8 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
+from psycopg import OperationalError
+from psycopg.errors import QueryCanceled, LockNotAvailable, DeadlockDetected, SerializationFailure
 
 from arena import db, auth, guest, society_public, website, external_agents, avatars
 from arena.community_pages import fixture
@@ -66,7 +68,7 @@ class ArenaApp(FastAPI):
 
 def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnstile_verifier=None,
                rules_path=None, legal_directory=None, examples=False):
-    connection_factory = connection_factory or (lambda: db.connect(os.environ['ARENA_DATABASE_URL']))
+    connection_factory = connection_factory or (lambda: db.connect_web(os.environ['ARENA_DATABASE_URL']))
     now = now or (lambda: datetime.now(timezone.utc))
     website.validate_legal_final(legal_directory)
     app = ArenaApp(docs_url=None, redoc_url=None, openapi_url=None)
@@ -75,6 +77,9 @@ def create_app(*, connection_factory=None, now=None, oauth_provider=None, turnst
     async def database_busy(request, error):
         return JSONResponse({'detail': 'Service busy'}, status_code=503,
                             headers={'Retry-After': '2', 'Cache-Control': 'no-store'})
+
+    for transient in (OperationalError, QueryCanceled, LockNotAvailable, DeadlockDetected, SerializationFailure):
+        app.add_exception_handler(transient, database_busy)
 
     static = Path(__file__).with_name('static')
 

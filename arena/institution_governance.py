@@ -232,7 +232,7 @@ def close_due(conn, rules, now):
     state = society.clock(conn)
     if state['paused']:
         return {'closed': 0, 'applied': 0}
-    due = conn.execute("SELECT * FROM society_proposals WHERE status='open' AND closes_tick<=%s ORDER BY id FOR UPDATE",
+    due = conn.execute("SELECT * FROM society_proposals WHERE status='open' AND closes_tick<=%s ORDER BY id LIMIT 32 FOR UPDATE",
                        (state['tick'],)).fetchall()
     applied = 0
     for proposal in due:

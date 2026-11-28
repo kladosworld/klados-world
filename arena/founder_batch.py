@@ -31,7 +31,8 @@ def execute(conn, rules, agent_id, tick, now):
     if turn is None or turn['status'] != 'claimed' or turn['private'].get('phase') != 'ready':
         return None
     private = dict(turn['private'])
-    if clock['paused']:
+    from tee_arena import paid_control
+    if clock['paused'] or paid_control.killed():
         return None
     if clock['tick'] != tick:
         private.update(phase='expired', error='tick_expired')

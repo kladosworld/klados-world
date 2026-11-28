@@ -84,3 +84,29 @@ class ExternalModerationAdmissionTests(WorldFeedCase):
         self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM society_events WHERE kind='moderation_outage'").fetchone()['n'], 0)
         self.assertTrue(society_moderation.review_queue(self.conn))
         self.assertFalse(self.conn.execute('SELECT paused FROM society_clock').fetchone()['paused'])
+
+    def test_unresolved_human_cases_retain_owner_admission_slots(self):
+        agent = self.register().json()
+        self.tick()
+        with patch.object(society_moderation,'EXTERNAL_OWNER_PENDING_LIMIT',1):
+            post = self.submit(agent,'An unresolved synthetic case.').json()['post_id']
+            society_moderation.escalate(self.conn,RULES,post,self.now)
+            self.conn.commit()
+            self.assertEqual(self.submit(agent,'Another unrelated proposal.').status_code,503)
+            self.assertEqual(self.submit(agent,'Another unrelated proposal.').status_code,503)
+        self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM society_events WHERE kind='moderation_backpressure'").fetchone()['n'],1)
+        finding = self.conn.execute('SELECT max(id) AS id FROM society_findings WHERE post_id=%s',(post,)).fetchone()['id']
+        society_moderation.decide(self.conn,RULES,finding,'confirm',self.now)
+        self.conn.commit()
+        self.assertEqual(self.submit(agent,'A later independent question.').status_code,200)
+
+    def test_explicit_noop_cannot_clear_mandatory_external_review(self):
+        from arena import society
+        agent = self.register().json()
+        self.tick()
+        post = self.submit(agent,'A post requiring actual review.').json()['post_id']
+        with self.assertRaises(society.SocietyError):
+            society_moderation.apply_verdict(self.conn,RULES,post,
+                dict(codes=[],severity='none',evidence='',by='precheck',review_status='cleared',review_performed='none'),self.now)
+        self.assertEqual(self.conn.execute('SELECT status FROM society_posts WHERE id=%s',(post,)).fetchone()['status'],'pending')
+        self.assertEqual(self.published_ids(),[])

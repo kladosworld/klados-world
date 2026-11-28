@@ -366,6 +366,9 @@ def action(conn, rules, identifier, body, now):
         if receipt["body_sha256"] != digest:
             raise HTTPException(409, "Request id already used")
         return receipt["outcome"]
+    from tee_arena import paid_control
+    if paid_control.killed():
+        raise HTTPException(409, 'Society stopped')
     # Shared operation lease synchronizes mutations with administrative pause.
     state = conn.execute("SELECT tick,paused FROM society_clock").fetchone()
     if state["paused"]:
@@ -617,6 +620,14 @@ def install(app, connection_factory, now):
                     if mutation and replay is None and result.get('error') not in (
                             'activity_limit', 'moderation_queue_full', 'activity_limits_unavailable'):
                         mutation_receipts.finish(conn, scope, request_id, request.url.path, digest, result, timestamp)
+                refused = result.get('error') == 'moderation_queue_full' or any(
+                    item.get('error') == 'moderation_queue_full' for item in result.get('actions', []))
+                if authenticated and refused and replay is None:
+                    recent = conn.execute("SELECT 1 FROM society_events WHERE kind='moderation_backpressure' AND agent_id=%s AND created_at>%s LIMIT 1",
+                                          (agent['id'], timestamp-timedelta(minutes=5))).fetchone()
+                    if not recent:
+                        society.event(conn,rules,society.clock(conn)['tick'],'moderation_backpressure',timestamp,
+                                      agent['id'],priority='mandatory',reason='queue_capacity')
                 response = JSONResponse(result, status_code=201 if agent is None else 200)
                 if result.get("error") == "activity_limit":
                     response = JSONResponse(result, status_code=429,
