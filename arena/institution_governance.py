@@ -227,7 +227,9 @@ def on_text_status(conn, rules, link, status, cleared, now):
 
 def close_due(conn, rules, now):
     """No inference; effect and terminal result share the caller's transaction."""
-    state = society.clock(conn, lock=True)
+    from arena import operation_locks
+    operation_locks.institutions(conn)
+    state = society.clock(conn)
     if state['paused']:
         return {'closed': 0, 'applied': 0}
     due = conn.execute("SELECT * FROM society_proposals WHERE status='open' AND closes_tick<=%s ORDER BY id FOR UPDATE",

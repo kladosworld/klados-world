@@ -229,7 +229,7 @@ class PersistentLifecycleTests(InviteCase):
             society_moderation.apply_verdict(self.conn, V2, post, verdict, self.now)
             if severity == "grave":
                 finding = self.conn.execute(
-                    "SELECT id FROM society_findings WHERE post_id=%s", (post,)
+                    "SELECT id FROM society_findings WHERE post_id=%s ORDER BY id DESC LIMIT 1", (post,)
                 ).fetchone()["id"]
                 self.assertFalse(
                     society_moderation.decide(
@@ -245,7 +245,7 @@ class PersistentLifecycleTests(InviteCase):
             dict(row), dict(status="alive", participation="active", balance=0)
         )
         self.assertEqual(
-            self.conn.execute("SELECT count(*) AS n FROM society_findings").fetchone()[
+            self.conn.execute("SELECT count(*) AS n FROM society_findings WHERE by<>'precheck'").fetchone()[
                 "n"
             ],
             4,

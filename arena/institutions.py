@@ -60,6 +60,8 @@ def _receipt(conn, action_key):
 
 def apply(conn, rules, agent_id, tick, action, now, *, action_key, origin, limits):
     """Validated, per-agent serialized, idempotent executor contract for all streams."""
+    from arena import operation_locks
+    operation_locks.institutions(conn)
     try:
         action = decisions.validate_institution(action)
     except decisions.DecisionError:
@@ -141,8 +143,13 @@ def submit_text(conn, rules, agent, tick, action, object_kind, object_id, text, 
     maximum = 2061 if action['action'] == 'org_found' else 2000
     if not isinstance(text, str) or not 1 <= len(text) <= maximum:
         raise society.SocietyError('institution_text_limit')
+    external = conn.execute('SELECT kind FROM society_agents WHERE id=%s', (agent,)).fetchone()['kind'] == 'external'
+    if external:
+        society_moderation.admit_external(conn, agent)
     post = conn.execute('''INSERT INTO society_posts(author_id,tick,text,created_at)
         VALUES (%s,%s,%s,%s) RETURNING id''', (agent, tick, text, now)).fetchone()['id']
+    if external:
+        society_moderation.external_pending(conn, post, now)
     conn.execute('''INSERT INTO society_institution_texts
         (post_id,object_kind,object_id,actor_id,action,action_key,request_hash,tick,created_at,intent)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
@@ -173,6 +180,8 @@ def on_text_status(conn, rules, post_id, status, now):
     W1/W2 must extend by explicit object_kind branches, never user-provided SQL.
     Reopening a held object after review retains its history and stable identity.
     """
+    from arena import operation_locks
+    operation_locks.post_review(conn, post_id)
     link = conn.execute('SELECT * FROM society_institution_texts WHERE post_id=%s FOR UPDATE',
                         (post_id,)).fetchone()
     post = conn.execute('SELECT author_id,status,flagged FROM society_posts WHERE id=%s', (post_id,)).fetchone()
@@ -232,6 +241,8 @@ def on_text_status(conn, rules, post_id, status, now):
 
 def close_due(conn, rules, now):
     """Deterministic, transaction-owned expiry/closure; never inference."""
+    from arena import operation_locks
+    operation_locks.institutions(conn)
     if society.clock(conn)['paused']:
         return {'closed': 0, 'expired': 0}
     return dict(institution_governance.close_due(conn, rules, now),

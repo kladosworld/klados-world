@@ -181,7 +181,7 @@ class WorldFeedTests(WorldFeedCase):
         self.conn.commit()
         self.assertEqual(self.published_ids(), [])
         finding = self.conn.execute(
-            "SELECT id FROM society_findings WHERE post_id=%s", (post,)
+            "SELECT id FROM society_findings WHERE post_id=%s ORDER BY id DESC LIMIT 1", (post,)
         ).fetchone()["id"]
         society_moderation.decide(self.conn, RULES, finding, "release", self.now)
         self.conn.commit()
@@ -221,7 +221,7 @@ class WorldFeedTests(WorldFeedCase):
             self.now,
         )
         finding = self.conn.execute(
-            "SELECT id FROM society_findings WHERE post_id=%s", (post,)
+            "SELECT id FROM society_findings WHERE post_id=%s ORDER BY id DESC LIMIT 1", (post,)
         ).fetchone()["id"]
         society_moderation.decide(self.conn, RULES, finding, "confirm", self.now)
         self.conn.execute(
@@ -314,6 +314,10 @@ class WorldFeedTests(WorldFeedCase):
         self,
     ):
         registered = self.register().json()
+        from tee_arena.society import rules
+        override = patch.dict(os.environ, KLADOS_RULES=str(rules.DEFAULT_PATH))
+        override.start()
+        self.addCleanup(override.stop)
         self.tick()
         root = self.founder_post("Historical synthetic text.", origin="unknown")
         response = self.client.post(
@@ -325,7 +329,16 @@ class WorldFeedTests(WorldFeedCase):
                 "text": "A reply with a hidden ancestor.",
             },
         )
-        reply = response.json()["post_id"]
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["error"], "no_such_post")
+        # Historic hidden replies may exist; create one directly to verify recursive hiding.
+        reply = self.conn.execute(
+            "INSERT INTO society_posts(author_id,tick,text,reply_to,status,created_at) "
+            "VALUES (%s,1,'Historic hidden reply',%s,'pending',%s) RETURNING id",
+            (registered["id"], root, self.now),
+        ).fetchone()["id"]
+        self.conn.execute("INSERT INTO society_post_origins VALUES (%s,'external',%s)",
+                          (reply, self.now))
         society_moderation.apply_verdict(
             self.conn,
             RULES,
@@ -383,3 +396,28 @@ class WorldFeedTests(WorldFeedCase):
             self.client.get("/api/society/stats").json()["published"],
             {"posts": 0, "replies": 0},
         )
+
+
+
+class SharedVisibilityTests(WorldFeedCase):
+    def test_context_and_interaction_targets_follow_public_projection(self):
+        registered = self.register().json()
+        self.tick()
+        root = self.founder_post("A verified root.")
+        names = {r["id"]: r["name"] for r in self.conn.execute("SELECT id,name FROM society_agents")}
+        self.assertEqual([p["post_id"] for p in society_life._square(self.conn, 1, names)], [root])
+        for update in (
+            "UPDATE society_posts SET flagged=true WHERE id=%s",
+            "UPDATE society_posts SET flagged=false,status='pending' WHERE id=%s",
+            "UPDATE society_posts SET status='withheld' WHERE id=%s",
+        ):
+            self.conn.execute(update, (root,))
+            self.conn.commit()
+            self.assertEqual(self.published_ids(), [])
+            self.assertEqual(society_life._square(self.conn, 1, names), [])
+            self.assertEqual(society_life._replies_to(self.conn, registered['id'], 1, names), [])
+            with self.assertRaises(society.SocietyError):
+                society_life._post(self.conn, root)
+        # Own pending content stays available only in the author's private context.
+        self.assertEqual(society_life._own_posts(self.conn, 'alder', 1)[0]['post_id'], root)
+        self.conn.rollback()

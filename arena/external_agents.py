@@ -114,6 +114,7 @@ def revoke_invite(conn, identifier, now):
 
 
 def control_agent(conn, identifier, action, now):
+    from arena import operation_locks
     if action == "revoke":
         query = "UPDATE agent_tokens SET revoked_at=%s WHERE agent_id=%s RETURNING agent_id"
         params = (now, identifier)
@@ -124,6 +125,10 @@ def control_agent(conn, identifier, action, now):
         raise ValueError("Invalid operator action")
     # Lock token before identity, matching authenticated action lock order.
     conn.execute(query, params)
+    operation_locks.social(conn)
+    operation_locks.institutions(conn)
+    from arena import founder_status
+    founder_status._lock(conn, identifier)
     participation = "revoked" if action == "revoke" else "suspended"
     changed = conn.execute(
         """UPDATE society_agents SET participation=%s WHERE id=%s AND kind=ANY(%s)
@@ -149,6 +154,7 @@ def _usable(invitation, now):
 
 
 def register(conn, rules, body, now):
+    from arena import operation_locks
     description = identity(body)
     digest = auth.digest(body["invite"])
     # Refuse unknown or spent invitations before any shared lock, so unauthenticated
@@ -158,9 +164,10 @@ def register(conn, rules, body, now):
         now,
     ):
         raise HTTPException(403, "Invalid invitation")
+    operation_locks.institutions(conn)
     # Serialize registrations to enforce the global bound across independent web workers.
     conn.execute("SELECT pg_advisory_xact_lock(%s)", (REGISTRATION_LOCK,))
-    state = society.clock(conn, lock=True)
+    state = society.clock(conn)
     invitation = conn.execute(
         "SELECT * FROM agent_invitations WHERE token_digest=%s FOR UPDATE", (digest,)
     ).fetchone()
@@ -290,6 +297,8 @@ def profile(agent, rules):
 
 
 def action(conn, rules, identifier, body, now):
+    from arena import operation_locks
+    operation_locks.social(conn)
     parsed = json.loads(body)
     if not isinstance(parsed, dict):
         raise HTTPException(400, "Invalid request")
@@ -308,6 +317,9 @@ def action(conn, rules, identifier, body, now):
     except decisions.DecisionError:
         raise HTTPException(400, "Invalid action") from None
     digest = hashlib.sha256(json.dumps(decision, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    items = decision['actions'] if batch else [decision]
+    if any(item.get('action') in decisions.INSTITUTION_ACTIONS for item in items):
+        operation_locks.institutions(conn)
     # Match the limiter namespace: direct calls and token rotation share the same exclusion.
     conn.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (activity_limits.LOCK_NAMESPACE, identifier))
     agent = conn.execute("SELECT kind,status,participation FROM society_agents WHERE id=%s", (identifier,)).fetchone()
@@ -324,8 +336,8 @@ def action(conn, rules, identifier, body, now):
         if receipt["body_sha256"] != digest:
             raise HTTPException(409, "Request id already used")
         return receipt["outcome"]
-    # Shared locks permit independent external actions but synchronize with administrative pause.
-    state = conn.execute("SELECT tick,paused FROM society_clock FOR SHARE").fetchone()
+    # Shared operation lease synchronizes mutations with administrative pause.
+    state = conn.execute("SELECT tick,paused FROM society_clock").fetchone()
     if state["paused"]:
         raise HTTPException(409, "Society paused")
     items = decision['actions'] if batch else [decision]
@@ -373,6 +385,8 @@ def check_reactivation(conn, identifier):
     Call before per-agent locks, in the same caller-owned transaction. An explicit
     owner retirement consumes its claim/revokes its token and is not undone here.
     """
+    from arena import operation_locks
+    operation_locks.institutions(conn)
     conn.execute('SELECT pg_advisory_xact_lock(%s)', (REGISTRATION_LOCK,))
     agent=conn.execute("SELECT participation FROM society_agents WHERE id=%s AND kind='external'",(identifier,)).fetchone()
     if agent is None or agent['participation'] != 'retired':
@@ -386,6 +400,8 @@ def check_reactivation(conn, identifier):
 
 def issue_owner_claim(conn, identifier, body, now):
     """Issue one public challenge; no owner/X credential is ever stored or used."""
+    from arena import operation_locks
+    operation_locks.social(conn)
     if not isinstance(body, dict) or set(body) != {'handle'}:
         raise HTTPException(400, 'Invalid owner claim')
     handle = normalize_handle(body['handle'])
@@ -409,6 +425,8 @@ def issue_owner_claim(conn, identifier, body, now):
 
 def verify_owner(conn, identifier, *, challenge, post_url, reference, approved_by, attest, now):
     """Operator attests to public proof. No network lookup or automatic X trust."""
+    from arena import operation_locks
+    operation_locks.institutions(conn)
     if (attest is not True or not isinstance(reference,str) or not 1<=len(reference.strip())<=200
             or not isinstance(approved_by,str) or not 1<=len(approved_by.strip())<=100
             or not isinstance(challenge,str) or not 1<=len(challenge)<=160
@@ -442,9 +460,12 @@ def verify_owner(conn, identifier, *, challenge, post_url, reference, approved_b
 
 def retire(conn, identifier, now, *, reference, approved_by):
     """Explicit owner/operator retirement: one transaction, no identity/history reset."""
+    from arena import operation_locks
     from arena import administration
     # Authentication already locks the token; operators take the same order.
     conn.execute('SELECT token_digest FROM agent_tokens WHERE agent_id=%s FOR UPDATE',(identifier,)).fetchall()
+    operation_locks.social(conn)
+    operation_locks.institutions(conn)
     conn.execute('SELECT pg_advisory_xact_lock(%s)',(REGISTRATION_LOCK,))
     agent=conn.execute("SELECT id FROM society_agents WHERE id=%s AND kind='external'",(identifier,)).fetchone()
     if agent is None:
@@ -457,6 +478,8 @@ def retire(conn, identifier, now, *, reference, approved_by):
 
 
 def submit_profile(conn, identifier, name, description, now):
+    from arena import operation_locks
+    operation_locks.social(conn)
     if observer.precheck(name)[0] or observer.precheck(description)[0]:
         raise HTTPException(400, "Profile requires revision")
     conn.execute("SELECT id FROM society_agents WHERE id=%s FOR UPDATE", (identifier,))
@@ -468,6 +491,8 @@ def submit_profile(conn, identifier, name, description, now):
 
 def review_profile(conn, identifier, *, approve, reference, now, review_id=None):
     """Operator-only, explicit review; no inference or public management endpoint."""
+    from arena import operation_locks
+    operation_locks.institutions(conn)
     if not isinstance(reference, str) or not reference.strip() or len(reference) > 500:
         raise ValueError("An approval reference is required")
     conn.execute("SELECT pg_advisory_xact_lock(%s)", (REGISTRATION_LOCK,))
@@ -551,6 +576,8 @@ def install(app, connection_factory, now):
                 if result.get("error") == "activity_limit":
                     response = JSONResponse(result, status_code=429,
                                             headers={"Retry-After": str(result["retry_after_seconds"])})
+                elif result.get("error") == "moderation_queue_full":
+                    response = JSONResponse(result, status_code=503, headers={'Retry-After': '60'})
                 elif result.get("error") == "activity_limits_unavailable":
                     response = JSONResponse(result, status_code=503)
             except (ValueError, UnicodeError):

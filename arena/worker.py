@@ -177,6 +177,8 @@ class Worker:
                 self.conn.commit()
 
             def hold_signal():
+                from arena import operation_locks
+                operation_locks.post_review(self.conn, post['id'])
                 # A classifier or selected contextual signal changes priority before an
                 # Observer call; an exhausted account must not leave that risk public.
                 current = self.conn.execute('SELECT status FROM society_posts WHERE id=%s FOR UPDATE',
@@ -225,7 +227,22 @@ class Worker:
                 self.conn.rollback()
                 self.log.append({"post": post["id"], "error": "observer call_" + error.category})
                 outage = _observer_wide(error)
-                if error.category=='duplicate_request' and kind is not None:
+                if (post.get('author_kind') == 'external' and error.sent
+                        and error.category in ('accounting_unavailable', 'provider_failure')):
+                    # A request may already be paid/reserved. Never advance its identity
+                    # and submit another paid review after an uncertain settlement/result.
+                    try:
+                        society_moderation.escalate(self.conn, self.rules, post['id'], self.now())
+                        society.event(self.conn, self.rules, society.clock(self.conn)['tick'],
+                                      'moderation_outcome_unknown', self.now(), post_id=post['id'],
+                                      category=error.category)
+                        self.conn.commit()
+                    except Exception:
+                        self.conn.rollback()
+                        self.log.append({'post': post['id'], 'error': 'screening_persistence_failure'})
+                        return 'stop'
+                    continue
+                if error.category=='duplicate_request' and (kind is not None or post.get('author_kind')=='external'):
                     # A prior paid attempt has an uncertain durable outcome. Never
                     # invent a fresh paid ID to recover it: human review or optional drop.
                     try:
@@ -299,7 +316,7 @@ class Worker:
                     WHERE id=(SELECT max(id) FROM society_findings WHERE post_id=%s)
                     AND (metadata->>'async_pending'='true' OR EXISTS(SELECT 1 FROM society_posts p WHERE p.id=post_id AND p.status='pending')) RETURNING id''',
                     (Jsonb(dict(review_status='skipped',review_performed='none',review_skip_reason=category)),post['id'])).fetchone()
-                if changed and society_moderation.risk_review(self.conn, post['id']):
+                if changed and society_moderation.requires_review(self.conn, post['id']):
                     count = self.conn.execute("""SELECT count(*) AS n FROM society_events
                         WHERE kind='moderation_outage' AND data->>'post_id'=%s AND id>%s""",
                         (str(post['id']),post.get('screening_generation',0))).fetchone()['n']
@@ -323,7 +340,7 @@ class Worker:
                 society_moderation.screen_failed(self.conn, post_id)
                 row = self.conn.execute('SELECT screen_failures FROM society_posts WHERE id=%s', (post_id,)).fetchone()
                 if (row and row['screen_failures'] >= society_moderation.MAX_SCREEN_FAILURES
-                        and society_moderation.risk_review(self.conn, post_id)):
+                        and society_moderation.requires_review(self.conn, post_id)):
                     society_moderation.escalate(self.conn, self.rules, post_id, self.now())
             self.conn.commit()
             return True

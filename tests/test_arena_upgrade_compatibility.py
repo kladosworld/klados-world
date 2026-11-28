@@ -51,8 +51,8 @@ class PersistedUpgradeTests(LifeCase):
         self.assertTrue(before['society_notes'])
         self.assertTrue(before['society_strategies'])
         self.assertTrue(before['society_likes'])
-        self.assertEqual(society.relations(self.conn,'alder')['replies_from'],{'birch':1})
-        self.assertEqual(society.relations(self.conn,'alder')['liked_by'],{'cedar':1})
+        self.assertEqual(society.relations(self.conn,'alder',verified=False)['replies_from'],{'birch':1})
+        self.assertEqual(society.relations(self.conn,'alder',verified=False)['liked_by'],{'cedar':1})
 
         def connect():
             connection = db.connect(DSN)

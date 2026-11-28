@@ -72,6 +72,8 @@ class SocialActivityTests(InviteCase):
             RETURNING id""",
             (author, NOW - timedelta(hours=2)),
         ).fetchone()["id"]
+        from tests.arena_support import attest_public_fixture
+        attest_public_fixture(self.conn, post, NOW - timedelta(hours=2))
         self.conn.commit()
         return post
 
