@@ -99,8 +99,10 @@ class FounderOperationalContextTests(InviteCase):
         self.assertEqual({name: rows for name, rows in self.snapshot().items() if name in tables}, before)
 
     def test_worker_reflections_receive_facts_without_extra_calls_or_strategy_rewrites(self):
-        from arena import worker
+        from arena import society, worker
 
+        society.set_paused(self.conn, rules.load(), False, self.now, 'synthetic')
+        self.conn.commit()
         tables = {"society_agents", "society_notes", "society_strategies", "energy_entries"}
         before = {name: rows for name, rows in self.snapshot().items() if name in tables}
         run = worker.Worker(self.conn, rules.load(), SimpleNamespace(providers={}), now=lambda: self.now)

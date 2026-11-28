@@ -43,6 +43,8 @@ class Connection:
             return Result([{'id': 'alder', 'name': 'Alder', 'kind': 'founder',
                             'status': 'alive', 'participation': 'active', 'born_tick': 0, 'died_tick': None,
                             'description': 'An individual identity.'}])
+        if query == 'SELECT count(*) AS n FROM society_agents WHERE kind=ANY(%s)':
+            return Result([{'n': 1}])
         if query.startswith('WITH RECURSIVE'):
             return Result([{'posts':0,'replies':0}]) if 'FILTER (WHERE reply_to' in query else Result([])
         raise AssertionError('Public projection accessed an activity/private table: ' + query)
@@ -66,7 +68,7 @@ class PublicReleaseTests(unittest.TestCase):
                 profile = client.get('/api/society/agents/alder').json()
                 for key in ('posts', 'energy_history'):
                     self.assertEqual(profile[key], [])
-                self.assertEqual(profile['relations'], {})
+                self.assertEqual(profile['relations'], {key: {} for key in ('replied_to', 'replies_from', 'liked', 'liked_by')})
                 self.assertIsNone(profile['last_words'])
                 self.assertIsNone(profile['fossil'])
                 self.assertIsNone(profile['energy'])

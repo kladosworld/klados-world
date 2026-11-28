@@ -471,9 +471,11 @@ class Worker:
                 continue
             self.failures = 0
             try:  # moderation of the last words: a failure stays with this fossil, never a pause
+                # Reservation scope owns its short transaction; provider IO must
+                # not run inside the subsequent persistence transaction.
+                verdict = observer.review(self.observer_gateway, text, model_id=OBSERVER_MODEL,
+                                          account=OBSERVER_ACCOUNT, request_id=request + ".observe")
                 with self.conn.transaction():
-                    verdict = observer.review(self.observer_gateway, text, model_id=OBSERVER_MODEL,
-                                              account=OBSERVER_ACCOUNT, request_id=request + ".observe")
                     outcome = society_death.record(self.conn, self.rules, agent_id, text, verdict, self.now())
                     record = {"agent": agent_id, "last_words": outcome, "codes": verdict["codes"]}
                 self.conn.commit()

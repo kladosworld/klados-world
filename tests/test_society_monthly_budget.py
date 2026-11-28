@@ -331,12 +331,12 @@ class MonthlyTests(unittest.TestCase):
         self.assertEqual(sum(granted), 3)
         self.assertEqual(self.book.budget_status()['reserved_microusd'], 900)
 
-    def test_worker_pauses_immediately_on_accounting_failure(self):
+    def test_worker_refuses_paid_work_without_pausing_society_on_accounting_failure(self):
         from arena import worker
         run = worker.Worker(Mock(), Mock(), Mock())
         with patch.object(worker.society, 'set_paused') as pause:
-            self.assertTrue(run._failed(GatewayError('accounting_unavailable')))
-        pause.assert_called_once()
+            self.assertFalse(run._failed(GatewayError('accounting_unavailable')))
+        pause.assert_not_called()
 
     def test_retroactive_current_month_policy_counts_existing_history(self):
         hold = self.book.reserve('society-agents', 600, 'before-policy')

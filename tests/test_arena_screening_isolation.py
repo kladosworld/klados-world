@@ -83,13 +83,13 @@ class ScreeningIsolationTests(WorkerCase):
         self.assertFalse(society.clock(self.conn)['paused'])
         self.assertEqual(run.failures, 0)
 
-    def test_founder_financial_and_infrastructure_failure_still_pause(self):
+    def test_hosted_failures_do_not_pause_shared_society(self):
         run = self.runner()
         for category in ('credential_unavailable', 'accounting_unavailable', 'stopped', 'model_not_allowed'):
             society.set_paused(self.conn, RULES, False, self.now, 'synthetic-reset')
             self.conn.commit()
-            self.assertTrue(run._failed(GatewayError(category)))
-            self.assertTrue(society.clock(self.conn)['paused'])
+            self.assertEqual(run._failed(GatewayError(category)), category != 'accounting_unavailable')
+            self.assertFalse(society.clock(self.conn)['paused'])
 
     def test_persistence_failure_stops_only_worker_pass(self):
         self.pending_post()
