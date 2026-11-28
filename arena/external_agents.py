@@ -19,7 +19,7 @@ from psycopg.errors import UniqueViolation, LockNotAvailable, QueryCanceled
 from psycopg.types.json import Jsonb
 from starlette.concurrency import run_in_threadpool
 
-from arena import activity_limits, auth, avatars, society, society_life
+from arena import activity_limits, auth, avatars, society, society_life, mutation_receipts
 from tee_arena.society import decisions, observer
 from tee_arena.society import rules as rules_module
 
@@ -287,6 +287,38 @@ def rotate_token(conn, identifier, body, now):
     return {"token": raw}
 
 
+def recover_token(conn, identifier, *, verified_claim_id, expected_token_digest, reference, approved_by, attest, now):
+    """Operator-only recovery after fresh independent ownership verification.
+
+    No public route. Requires an exact still-verified claim and explicit attestation;
+    never unsuspends/revokes/reactivates an identity or changes ownership/counters.
+    The one-time return must go through an operator-controlled private channel.
+    """
+    from arena import founder_status, operation_locks
+    founder_status._approval(reference, approved_by)
+    if (attest is not True or type(verified_claim_id) is not int
+            or not isinstance(expected_token_digest, str)
+            or re.fullmatch(r'[0-9a-f]{64}', expected_token_digest) is None):
+        raise ValueError('Explicit fresh ownership verification required')
+    token = conn.execute('SELECT * FROM agent_tokens WHERE agent_id=%s FOR UPDATE', (identifier,)).fetchone()
+    operation_locks.institutions(conn)
+    agent = conn.execute("SELECT participation,status FROM society_agents WHERE id=%s AND kind='external' FOR UPDATE",
+                          (identifier,)).fetchone()
+    claim = conn.execute("SELECT id FROM external_owner_claims WHERE id=%s AND agent_id=%s AND status='verified' FOR UPDATE",
+                          (verified_claim_id, identifier)).fetchone()
+    if (not token or not hmac.compare_digest(token['token_digest'], expected_token_digest)
+            or token['revoked_at'] or token['suspended'] or not agent or not claim
+            or agent['status'] != 'alive' or agent['participation'] != 'active'):
+        raise ValueError('Verified active ownership required')
+    raw = secrets.token_urlsafe(32)
+    conn.execute('UPDATE agent_tokens SET token_digest=%s,created_at=%s WHERE agent_id=%s',
+                 (auth.digest(raw), now, identifier))
+    society.event(conn, rules_module.load(os.getenv('KLADOS_RULES') or rules_module.DEFAULT_PATH),
+                  society.clock(conn)['tick'], 'external_credential_recovered', now, identifier,
+                  claim_id=verified_claim_id, reference=reference, approved_by=approved_by)
+    return {'id': identifier, 'token': raw}
+
+
 def profile(agent, rules):
     return {key: agent[key] for key in ("id", "name", "kind", "public_description", "status")} | {
         "avatar": avatars.public_key(agent),
@@ -307,8 +339,6 @@ def action(conn, rules, identifier, body, now):
     if expected is not None and (type(expected) is not int or expected < 0):
         raise HTTPException(400, "Invalid expected tick")
     request_id = parsed.pop("request_id", None)
-    if request_id is None:
-        request_id = uuid4().hex  # compatibility: callers need an explicit key to retry safely
     if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", request_id):
         raise HTTPException(400, "Invalid request id")
     batch = 'actions' in parsed
@@ -350,8 +380,8 @@ def action(conn, rules, identifier, body, now):
                 action_key=f'external:{identifier}:{request_id}:{index}', post_origin='external',
                 limits=EXTERNAL_ACTION_LIMITS))
     outcome = {'actions': outcomes} if batch else outcomes[0]
-    if not batch and 'error' in outcome:
-        return outcome  # old single-action retry semantics remain unchanged
+    if not batch and outcome.get('error') in ('activity_limit', 'moderation_queue_full', 'activity_limits_unavailable'):
+        return dict(outcome, request_id=request_id)
     if batch and decision.get('note'):
         conn.execute('INSERT INTO society_notes(agent_id,tick,text,created_at) VALUES (%s,%s,%s,%s)',
                      (identifier, state['tick'], decision['note'], now))
@@ -527,6 +557,11 @@ def install(app, connection_factory, now):
                 conn.execute("SET LOCAL lock_timeout = '2s'")
                 conn.execute("SET LOCAL statement_timeout = '5s'")
                 timestamp = now()
+                mutation = request.method in ('POST', 'PATCH')
+                mutation_identity = mutation_receipts.request_identity(request, body) if mutation else None
+                if mutation_identity:
+                    request_id, digest, parsed = mutation_identity
+                    body = json.dumps(parsed).encode('utf-8')
                 agent = (
                     None
                     if request.url.path.endswith("/register")
@@ -538,7 +573,14 @@ def install(app, connection_factory, now):
                 authenticated = agent is not None
                 # Failed operations roll back to this savepoint while retaining rate accounting.
                 with conn.transaction():
-                    if agent is None:
+                    if mutation and agent is None and not isinstance(parsed.get('invite'), str):
+                        raise HTTPException(400, 'Invalid invitation')
+                    scope = (agent['id'] if agent else 'invite:' + auth.digest(parsed.get('invite', ''))) if mutation else None
+                    replay = (mutation_receipts.begin(conn, scope, request_id, request.url.path, digest)
+                              if mutation else None)
+                    if replay is not None:
+                        result = replay
+                    elif agent is None:
                         result = register(conn, rules, json.loads(body), timestamp)
                     elif request.url.path == "/api/agents/tick":
                         result = tick_check(conn, rules, agent["id"], timestamp)
@@ -572,6 +614,9 @@ def install(app, connection_factory, now):
                                 conn.execute('INSERT INTO external_agent_avatars(agent_id,avatar_key) VALUES (%s,%s) ON CONFLICT(agent_id) DO UPDATE SET avatar_key=excluded.avatar_key', (agent['id'],key))
                                 agent = dict(agent, avatar_key=key)
                         result = profile(agent, rules)
+                    if mutation and replay is None and result.get('error') not in (
+                            'activity_limit', 'moderation_queue_full', 'activity_limits_unavailable'):
+                        mutation_receipts.finish(conn, scope, request_id, request.url.path, digest, result, timestamp)
                 response = JSONResponse(result, status_code=201 if agent is None else 200)
                 if result.get("error") == "activity_limit":
                     response = JSONResponse(result, status_code=429,

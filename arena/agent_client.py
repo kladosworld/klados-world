@@ -3,6 +3,7 @@
 import json
 import random
 import re
+from uuid import uuid4
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
@@ -25,7 +26,7 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 class Client:
-    def __init__(self, base_url, *, token=None, timeout=15):
+    def __init__(self, base_url, *, token=None, timeout=15, state_dir=None):
         url = urlsplit(base_url)
         if (
             url.scheme not in ("http", "https")
@@ -45,9 +46,111 @@ class Client:
         self.token = token
         self.timeout = timeout
         self._opener = build_opener(ProxyHandler({}), _NoRedirect())
+        self._state = None
+        if state_dir is not None:
+            from arena.agent_client_state import State, StateError
+            try:
+                self._state = State(state_dir)
+                with self._state.locked() as (saved, save):
+                    if saved is None:
+                        save(dict(version=1, base_url=self.base_url, token=token, id=None, pending=None))
+                    else:
+                        if saved.get('base_url') != self.base_url or (token and token != saved.get('token')):
+                            raise StateError('Client identity differs from persisted state')
+                        self.token = saved.get('token')
+            except (OSError, ValueError, StateError):
+                raise AgentError('Private client state unavailable') from None
 
-    def _request(self, method, path, body=None, *, authenticated=True):
+    def _request(self, method, path, body=None, *, authenticated=True, request_id=None):
+        mutation = method in ('POST', 'PATCH')
+        key = (request_id or (body.get('request_id') if isinstance(body, dict) else None)
+               or uuid4().hex) if mutation else None
+        if self._state is None:
+            return self._send(method, path, body, authenticated=authenticated, request_id=key)
+        from arena.agent_client_state import StateError
+        try:
+            with self._state.locked() as (saved, save):
+                if saved is None or saved.get('base_url') != self.base_url:
+                    raise StateError('Client state changed')
+                self.token = saved.get('token')
+                operation = dict(method=method, path=path, body=body,
+                                 authenticated=authenticated, request_id=key)
+                if mutation:
+                    pending = saved.get('pending')
+                    if pending is not None and pending != operation:
+                        raise AgentError('A pending request must be resumed first')
+                    saved['pending'] = operation
+                    save(saved)  # Durable before bytes can reach the server.
+                try:
+                    result = self._send(method, path, body, authenticated=authenticated, request_id=key)
+                except AgentError as error:
+                    uncertain_credential = (path in ('register', 'me/credentials/rotate', 'me/retire')
+                                            and error.status in (401, 409))
+                    if mutation and error.status in (400, 401, 403, 404, 409, 422, 429) and not uncertain_credential:
+                        saved['pending'] = None
+                        save(saved)
+                    raise
+                if mutation:
+                    if path in ('register', 'me/credentials/rotate'):
+                        token = result.get('token')
+                        if not isinstance(token, str) or re.fullmatch(r'[A-Za-z0-9_-]{43}', token) is None:
+                            raise AgentError('Credential response uncertain; operator recovery required')
+                        saved['token'] = self.token = token
+                    if path == 'register':
+                        saved['id'] = result.get('id')
+                    if path == 'me/retire':
+                        saved['token'] = self.token = None
+                    saved['pending'] = None
+                    save(saved)
+                if not mutation and path == 'me' and result.get('id') != saved.get('id'):
+                    saved['id'] = result.get('id')
+                    save(saved)
+                return result
+        except (OSError, ValueError, StateError):
+            raise AgentError('Private client state unavailable; outcome may be unknown') from None
+
+    def resume(self):
+        """Explicitly resend the exact durable operation, never minting a replacement ID."""
+        if self._state is None:
+            raise AgentError('Persistent state required')
+        from arena.agent_client_state import StateError
+        try:
+            with self._state.locked() as (saved, _):
+                pending = saved.get('pending') if saved else None
+            if pending is None:
+                raise AgentError('No pending request')
+            return self._request(**pending)
+        except (OSError, ValueError, StateError):
+            raise AgentError('Private client state unavailable') from None
+
+    def adopt_recovered_token(self, identifier, token):
+        """Explicit operator recovery; verify identity before replacing local credentials."""
+        if self._state is None or not isinstance(token, str) or re.fullmatch(r'[A-Za-z0-9_-]{43}', token) is None:
+            raise AgentError('Persistent state and a valid recovered credential required')
+        from arena.agent_client_state import StateError
+        previous = self.token
+        try:
+            with self._state.locked() as (saved, save):
+                if (not saved or saved.get('base_url') != self.base_url
+                        or saved.get('id') not in (None, identifier)):
+                    raise AgentError('Recovered identity differs from persisted identity')
+                self.token = token
+                profile = self._send('GET', 'me')
+                if profile.get('id') != identifier or profile.get('kind') != 'external':
+                    raise AgentError('Recovered identity verification failed')
+                saved.update(token=token, id=identifier, pending=None)
+                save(saved)
+        except (OSError, ValueError, StateError):
+            self.token = previous
+            raise AgentError('Private client state unavailable; recovery outcome uncertain') from None
+        except BaseException:
+            self.token = previous
+            raise
+
+    def _send(self, method, path, body=None, *, authenticated=True, request_id=None):
         headers = {"Accept": "application/json"}
+        if request_id is not None:
+            headers["Idempotency-Key"] = request_id
         if authenticated:
             if not self.token:
                 raise AgentError("Authentication required")

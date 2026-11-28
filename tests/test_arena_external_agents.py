@@ -95,6 +95,19 @@ class ClosedSurfaceTests(unittest.TestCase):
             )
 
 
+class IdentifiedFixtureClient(TestClient):
+    """Legacy scenarios get a new explicit identity; missing-key tests use raw TestClient."""
+    def request(self, method, url, **kwargs):
+        if method.upper() in ('POST', 'PATCH'):
+            from uuid import uuid4
+            headers = dict(kwargs.get('headers') or {})
+            payload = kwargs.get('json')
+            key = payload.get('request_id') if isinstance(payload, dict) else None
+            headers.setdefault('Idempotency-Key', key or uuid4().hex)
+            kwargs['headers'] = headers
+        return super().request(method, url, **kwargs)
+
+
 class InviteCase(DatabaseCase):
     def setUp(self):
         super().setUp()
@@ -110,7 +123,7 @@ class InviteCase(DatabaseCase):
         )
         self.environment.start()
         self.addCleanup(self.environment.stop)
-        self.client = TestClient(
+        self.client = IdentifiedFixtureClient(
             create_app(connection_factory=self.connection, now=lambda: self.now)
         )
         self.client.__enter__()
@@ -658,7 +671,9 @@ class InviteDatabaseTests(InviteCase):
                     json={"action":"post", "text":"Synthetic refusal test."},
                 )
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.json(), {"action":"rest", "error":expected, "wanted":"post"})
+            payload = response.json()
+            self.assertTrue(payload.pop("request_id"))
+            self.assertEqual(payload, {"action":"rest", "error":expected, "wanted":"post"})
             self.assertEqual(response.headers["Cache-Control"], "no-store")
             self.assertNotIn("PRIVATE_CANARY", response.text)
         self.assertEqual(society.audit(self.conn), [])

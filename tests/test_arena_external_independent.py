@@ -103,7 +103,7 @@ class IndependentTests(InviteCase):
         for agent in (first, second):
             self.assertEqual(self.submit(agent, action='rest', request_id='same').status_code,200)
         self.assertEqual(self.submit(first, action='reply', post_id=99999, text='No parent', request_id='retry').json()['error'],'no_such_post')
-        self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM external_action_receipts WHERE request_id='retry'").fetchone()['n'],0)
+        self.assertEqual(self.conn.execute("SELECT count(*) AS n FROM external_action_receipts WHERE request_id='retry'").fetchone()['n'],1)
         post = self.submit(first, action='post', text=TEXTS[0]).json()['post_id']
         self.assertEqual(self.conn.execute('SELECT status FROM society_posts WHERE id=%s',(post,)).fetchone()['status'],'pending')
         self.assertEqual(self.submit(second, action='reply', post_id=post, text='Unreviewed parent').json()['error'],'no_such_post')
